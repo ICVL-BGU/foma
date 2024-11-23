@@ -1,0 +1,8 @@
+prefix=/home/icvl/fov_ws/devel
+
+Name: fov
+Description: Description of fov
+Version: 0.0.0
+Cflags: -I/home/icvl/fov_ws/devel/include
+Libs: -L${prefix}/lib 
+Requires: 

@@ -1,0 +1,75 @@
+from time import sleep
+from serial import Serial
+from etc.PololuQik import *
+from etc.ResetPin import *
+import numpy as np
+
+
+DEFAULT_UART_PORT = "/dev/ttyS0"
+DEFAULT_MOTOR_SPEED = 127
+
+"""
+TopMotor - M0 on motorTopBottom
+BottomMotor - M1 on motorTopBottom
+RightMotor - M0 on motorRightLeft
+LeftMotor - M1 on motorRightLeft
+
+We'll set the default driving directin to top left
+"""
+
+class MotorControl(Serial):
+    def __init__(self, resetPins: tuple, port = DEFAULT_UART_PORT, speed = DEFAULT_MOTOR_SPEED, baudrate = 115200, timeout = 0.020):
+        super().__init__(port = port, baudrate = baudrate, timeout = timeout)
+        if not self.is_open:
+            self.open()
+        #init motor controllers instances
+        self.motorTopBottom = PololuQik2s15v9(serial = self, resetPin = ResetPin(resetPins[0]), addr = 0x0C , multi_device = True)
+        self.motorRightLeft = PololuQik2s15v9(serial = self, resetPin = ResetPin(resetPins[1]), addr = 0x0A , multi_device = True) # 0x0A
+        
+        self.speed = speed
+
+        #set controllers to different IDs to avoid collision due to daisy-chain connection
+        self.motorTopBottom.turnOn()
+        self.motorRightLeft.turnOn()
+
+    def move_by_angle(self, angle: int, speed = None):
+        if not speed:
+            speed = self.speed
+
+        angle = angle % 360
+
+        hSpeed = speed * np.sin(angle * np.pi/180)
+        vSpeed = speed * np.cos(angle * np.pi/180)
+
+        self.motorRightLeft.setSpeeds(-hSpeed, hSpeed)
+        self.motorTopBottom.setSpeeds(vSpeed, -vSpeed)
+        
+    def move_by_components(self, horizontal_component: float, vertical_component: float, speed = None):
+        if not speed:
+            speed = self.speed
+        
+        hSpeed = int(speed * horizontal_component)
+        vSpeed = int(speed * vertical_component)
+        self.motorRightLeft.setSpeeds(-hSpeed, hSpeed)
+        self.motorTopBottom.setSpeeds(vSpeed, -vSpeed)
+
+    def move_by_wheel(self, wheel: str, speed = None):
+        if not speed:
+            speed = self.speed
+
+        if wheel == 'top':
+            self.motorTopBottom.setSpeeds(speed,0)
+        elif wheel == 'bottom':
+            self.motorTopBottom.setSpeeds(0,speed)
+        elif wheel == 'left':
+            self.motorRightLeft.setSpeeds(0,speed)
+        elif wheel == 'right':
+            self.motorRightLeft.setSpeeds(speed,0)
+        else:
+            raise ValueError("Invalid wheel, received: {}, allowed wheels are: ('top','bottom','left','right'), case sensitive.".format(wheel))
+        
+    def rotate(self, direction: float):
+        speed = int(self.speed * direction / max(1, abs(direction)))
+        # print(speed)
+        self.motorRightLeft.setSpeeds(speed, speed)
+        self.motorTopBottom.setSpeeds(speed, speed)

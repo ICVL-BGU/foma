@@ -1,0 +1,9 @@
+# Request
+sensor_msgs/Image image
+int8 id
+
+---
+
+# Response
+bool success
+string message
