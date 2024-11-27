@@ -222,9 +222,9 @@ class MainWindow(QMainWindow):
         # Add lights slider?
 
     def __init_subscriptions_and_services(self):
-        self.fish_image_sub = rospy.Subscriber('fish_camera/image', Image, self.read_fish_image)
+        self.fish_image_sub = rospy.Subscriber('fish_camera/image', Image, lambda img: self.update_image(img, self.__fish_image))
         self.fish_dir_sub = rospy.Subscriber('fish_detection/direction', UInt16, self.update_direction)
-        self.stitched_image_pub = rospy.Subscriber('ceiling_cameras/stitched_image', Image, self.update_room_image)
+        self.stitched_image_pub = rospy.Subscriber('ceiling_cameras/stitched_image', Image, lambda img: self.update_image(img, self.__room_image))
         self.feed = rospy.ServiceProxy('fish_feeder/feed', Trigger)
         self.dim_lights = rospy.ServiceProxy('light_dimmer/change', Light)
         self.fish_camera_control = rospy.ServiceProxy('fish_camera/system_toggle', SetBool)
@@ -249,20 +249,20 @@ class MainWindow(QMainWindow):
         self.motor_control(state)
 
 
-    def read_fish_image(self, img_msg: Image):
-        try:
-            img = self.bridge.imgmsg_to_cv2(img_msg)
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            self.TL_layout.update(img)
-        except CvBridgeError as e:
-            rospy.logwarn(e)
+    # def read_fish_image(self, img_msg: Image):
+    #     try:
+    #         img = self.bridge.imgmsg_to_cv2(img_msg)
+    #         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    #         self.TL_layout.update(img)
+    #     except CvBridgeError as e:
+    #         rospy.logwarn(e)
 
     def update_direction(self, dir:UInt16):
         pass
 
-    def update_room_image(self, img_msg: Image):
+    def update_image(self, img_msg: Image, destination: QLabel):
         """
-        Callback to update the room camera image on the GUI.
+        Callback to update the camera image on the GUI.
         """
         try:
             # Convert the ROS Image message to a numpy array
@@ -284,18 +284,18 @@ class MainWindow(QMainWindow):
             # Scale the image to fit the QLabel
             pixmap = QPixmap.fromImage(q_image)
             scaled_pixmap = pixmap.scaled(
-                self.__room_image.size(),
+                destination.size(),
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation
             )
             
             # Update the QLabel with the scaled QPixmap
-            self.__room_image.setPixmap(scaled_pixmap)
+            destination.setPixmap(scaled_pixmap)
             
         except CvBridgeError as e:
             rospy.logwarn(f"Error converting image message: {e}")
         except Exception as e:
-            rospy.logwarn(f"Unexpected error in update_room_image: {e}")
+            rospy.logwarn(f"Unexpected error in update_image: {e}")
 
 
     def resizeEvent(self, event):
