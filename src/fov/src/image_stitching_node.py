@@ -29,7 +29,7 @@ class ImageStitchingNode:
             rospy.Subscriber(topic, Image, self.image_callback, callback_args=topic)
 
         # Publisher for the stitched image
-        self.stitched_image_pub = rospy.Publisher("stitched_image", Image, queue_size=10)
+        self.stitched_image_pub = rospy.Publisher("image_stitcher/image", Image, queue_size=10)
 
         rospy.on_shutdown(self.__on_shutdown)
 
