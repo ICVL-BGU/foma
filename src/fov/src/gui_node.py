@@ -1,28 +1,35 @@
 #!/usr/bin/env python3
 
+# General imports
 import sys
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget
-from PyQt5.QtCore import Qt, QSize
+import rospy
+import cv2
+
+# PyQt5 imports
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
     QWidget,
     QGridLayout,
     QFrame,
-    QDesktopWidget,
     QSizePolicy,
+    QLabel,
+    QPushButton,
+    QSlider,
+    QVBoxLayout,
     )
 
-from GUIClasses.GUIClasses import *
-import rospy
+# ROS imports
 from sensor_msgs.msg import Image
 from std_msgs.msg import UInt16
-from std_srvs.srv import Trigger
-from fov.srv import Light
-from abstract_node import AbstractNode
-import cv2
+from std_srvs.srv import Trigger, SetBool
 from cv_bridge import CvBridge, CvBridgeError
-from std_srvs.srv import SetBool, SetBoolRequest, SetBoolResponse
+
+# Custom ROS messages
+from fov.srv import Light
+     
 
         
 
