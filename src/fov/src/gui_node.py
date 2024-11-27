@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import sys
+import numpy as np
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtWidgets import (
@@ -11,6 +12,8 @@ from PyQt5.QtWidgets import (
     QFrame,
     QDesktopWidget,
     QSizePolicy,
+    QGroupBox,
+    QRadioButton,
     )
 
 from GUIClasses.GUIClasses import *
@@ -23,6 +26,7 @@ from abstract_node import AbstractNode
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
 from std_srvs.srv import SetBool, SetBoolRequest, SetBoolResponse
+from fov.msg import FishState
 
         
 
@@ -82,6 +86,7 @@ class MainWindow(QMainWindow):
         self.__BL_layout.addWidget(self.__lights_slider, 1, 0, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__feed_label, 0, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__feed_button, 1, 1, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__direction_group, 0, 2, 2, 1, alignment=Qt.AlignCenter)
 
         self.__BL_widget = QFrame()
         self.__BL_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
@@ -212,6 +217,20 @@ class MainWindow(QMainWindow):
         self.__room_image_label.setFont(font)
         self.__room_image_label.setAlignment(Qt.AlignHCenter)
         self.__room_image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        # Add radio buttons for toggling direction display
+        self.__show_direction_rb = QRadioButton("Yes")
+        self.__hide_direction_rb = QRadioButton("No")
+        self.__show_direction_rb.setChecked(True)
+
+        # Create and add radio buttons to layout
+        direction_layout = QGridLayout()
+        direction_layout.addWidget(self.__show_direction_rb, 0, 0, alignment=Qt.AlignCenter)
+        direction_layout.addWidget(self.__hide_direction_rb, 1, 0, alignment=Qt.AlignCenter)
+        
+        # Create a group box for the radio buttons and set the layout
+        self.__direction_group = QGroupBox("Display Direction")
+        self.__direction_group.setLayout(direction_layout)
         
     def __set_buttons_state(self, state:tuple):
         self.__start_button.setDisabled(state[0])
@@ -223,7 +242,7 @@ class MainWindow(QMainWindow):
 
     def __init_subscriptions_and_services(self):
         self.fish_image_sub = rospy.Subscriber('fish_camera/image', Image, lambda img: self.update_image(img, self.__fish_image))
-        self.fish_dir_sub = rospy.Subscriber('fish_detection/direction', UInt16, self.update_direction)
+        self.fish_dir_sub = rospy.Subscriber('fish_detection/state', FishState, self.update_state)
         self.stitched_image_pub = rospy.Subscriber('ceiling_cameras/stitched_image', Image, lambda img: self.update_image(img, self.__room_image))
         self.feed = rospy.ServiceProxy('fish_feeder/feed', Trigger)
         self.dim_lights = rospy.ServiceProxy('light_dimmer/change', Light)
@@ -257,8 +276,69 @@ class MainWindow(QMainWindow):
     #     except CvBridgeError as e:
     #         rospy.logwarn(e)
 
-    def update_direction(self, dir:UInt16):
-        pass
+    def update_state(self, state: FishState):
+        """
+        Update the GUI image based on the FishState message.
+
+        Args:
+            state (FishState): The state containing the direction and position of the fish.
+        """
+        # Check if direction display is enabled before doing any work
+        if not self.show_direction_rb.isChecked():
+            rospy.loginfo("Direction display is disabled. Skipping updates.")
+            return
+
+        # Ensure the fish image exists
+        if self.__fish_image.pixmap() is None:
+            rospy.logwarn("No image available to update")
+            return
+
+        # Convert QLabel's pixmap to a numpy array
+        pixmap = self.__fish_image.pixmap()
+        if pixmap is None:
+            rospy.logwarn("No pixmap available")
+            return
+        image = pixmap.toImage()
+
+        # Convert QImage to numpy array
+        width = image.width()
+        height = image.height()
+        ptr = image.bits()
+        ptr.setsize(image.byteCount())
+        image_array = np.array(ptr).reshape(height, width, 4)  # Assume ARGB32 format
+
+        # Convert to BGR for OpenCV processing
+        frame = cv2.cvtColor(image_array, cv2.COLOR_BGRA2BGR)
+
+        # Draw the position on the frame
+        position = (state.x, state.y)
+        cv2.circle(frame, position, 5, (0, 0, 255), -1)  # Red circle
+
+        # Annotate the direction near the position
+        direction_text = f"Dir: {state.direction}"
+        cv2.putText(frame, direction_text, (position[0] + 10, position[1] - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+
+        # Optionally draw an arrow to indicate direction
+        end_point = (position[0] + int(30 * np.cos(np.radians(state.direction))),
+                    position[1] - int(30 * np.sin(np.radians(state.direction))))
+        cv2.arrowedLine(frame, position, end_point, (0, 255, 0), 2, tipLength=0.3)
+
+        # Convert back to QImage
+        image_with_annotations = cv2.cvtColor(frame, cv2.COLOR_BGR2BGRA)
+        qimage = QImage(image_with_annotations.data, image_with_annotations.shape[1],
+                        image_with_annotations.shape[0], QImage.Format_ARGB32)
+
+        # Resize the image to fit the QLabel
+        resized_pixmap = QPixmap.fromImage(qimage).scaled(
+            self.__fish_image.width(),
+            self.__fish_image.height(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation
+        )
+
+        # Update the QLabel with the new image
+        self.__fish_image.setPixmap(resized_pixmap)
 
     def update_image(self, img_msg: Image, destination: QLabel):
         """
