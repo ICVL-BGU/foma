@@ -6,7 +6,7 @@ import rospy
 import cv2
 
 # PyQt5 imports
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer, QEvent
 from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtWidgets import (
     QApplication,
@@ -19,9 +19,11 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QSlider,
     QVBoxLayout,
+    QDialog,
     )
 
 # ROS imports
+from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Image
 from std_msgs.msg import UInt16
 from std_srvs.srv import Trigger, SetBool
@@ -134,7 +136,6 @@ class MainWindow(QMainWindow):
         # self.showMaximized()
         # self.setCentralWidget(widget)
 
-
     def __init_widgets(self):
         # Start button init
         self.__start_button = QPushButton()
@@ -231,7 +232,7 @@ class MainWindow(QMainWindow):
     def __init_subscriptions_and_services(self):
         self.fish_image_sub = rospy.Subscriber('fish_camera/image', Image, self.read_fish_image)
         self.fish_dir_sub = rospy.Subscriber('fish_detection/direction', UInt16, self.update_direction)
-        self.stitched_image_pub = rospy.Subscriber('ceiling_cameras/stitched_image', Image, self.update_room_image)
+        self.stitched_image_sub = rospy.Subscriber('ceiling_cameras/stitched_image', Image, self.update_room_image)
         self.feed = rospy.ServiceProxy('fish_feeder/feed', Trigger)
         self.dim_lights = rospy.ServiceProxy('light_dimmer/change', Light)
         self.fish_camera_control = rospy.ServiceProxy('fish_camera/system_toggle', SetBool)
@@ -240,6 +241,7 @@ class MainWindow(QMainWindow):
         self.fish_detection_control = rospy.ServiceProxy('fish_detection/system_toggle', SetBool)
         self.light_dimmer_control = rospy.ServiceProxy('light_dimmer/system_toggle', SetBool)
         self.motor_control = rospy.ServiceProxy('motor_control/system_toggle', SetBool)
+        self.manual_control_cmd = rospy.Publisher('/gui/manual_control_cmd', Twist, queue_size=10)
 
     def __systems_toggle(self, state: bool):
         rospy.wait_for_service('fish_camera/system_toggle')
@@ -255,6 +257,115 @@ class MainWindow(QMainWindow):
         rospy.wait_for_service('motor_control/system_toggle')
         self.motor_control(state)
 
+    def __init_manual_control_window(self):
+        self.__manual_control_window = QDialog(self)
+        self.__manual_control_window.setWindowTitle("Manual Robot Control")
+        self.__manual_control_window.setFixedSize(300, 300)
+        self.__manual_control_window.setWindowModality(Qt.ApplicationModal)
+
+        def on_close(event):
+            self.__velocity = Twist()
+            self.manual_control_cmd.publish(self.__velocity)
+
+            # Stop the timer
+            if self.__timer:
+                self.__timer.stop()
+                self.__timer = None
+
+            # Clean up the widget reference
+            self.__manual_control_window = None
+
+            # Accept the close event
+            event.accept()
+
+        def on_key_press(event):
+            """
+            Handle key press events for robot control.
+            """
+            key = event.key()
+            event_type = True if event.type() == QEvent.KeyPress else False
+            if key == Qt.Key_W:  # Forward
+                self.__update_velocity("forward", event_type)
+            elif key == Qt.Key_S:  # Backward
+                self.__update_velocity("backward", event_type)
+            elif key == Qt.Key_A:  # Left
+                self.__update_velocity("left", event_type)
+            elif key == Qt.Key_D:  # Right
+                self.__update_velocity("right", event_type)
+            elif key == Qt.Key_Q:  # Counterclockwise rotation
+                self.__update_velocity("ccw", event_type)
+            elif key == Qt.Key_E:  # Clockwise rotation
+                self.__update_velocity("cw", event_type)
+            else:
+                event.ignore()
+
+        self.__manual_control_window.closeEvent = on_close
+        self.__manual_control_window.keyPressEvent = on_key_press
+        self.__manual_control_window.keyReleaseEvent = on_key_press
+
+        control_layout = QGridLayout()
+
+        # Direction buttons
+        self.__velocity = Twist()
+        forward_button = QPushButton("↑")
+        backward_button = QPushButton("↓")
+        left_button = QPushButton("←")
+        right_button = QPushButton("→")
+        cw_button = QPushButton("↻")
+        ccw_button = QPushButton("↺")
+
+        control_layout.addWidget(forward_button, 0, 1)
+        control_layout.addWidget(backward_button, 2, 1)
+        control_layout.addWidget(left_button, 1, 0)
+        control_layout.addWidget(right_button, 1, 2)
+        control_layout.addWidget(cw_button, 1, 3)
+        control_layout.addWidget(ccw_button, 1, 4)
+
+        forward_button.pressed.connect(lambda: self.__update_velocity("forward", True))
+        forward_button.released.connect(lambda: self.__update_velocity("forward", False))
+        backward_button.pressed.connect(lambda: self.__update_velocity("backward", True))
+        backward_button.released.connect(lambda: self.__update_velocity("backward", False))
+        left_button.pressed.connect(lambda: self.__update_velocity("left", True))
+        left_button.released.connect(lambda: self.__update_velocity("left", False))
+        right_button.pressed.connect(lambda: self.__update_velocity("right", True))
+        right_button.released.connect(lambda: self.__update_velocity("right", False))
+        cw_button.pressed.connect(lambda: self.__update_velocity("cw", True))
+        cw_button.released.connect(lambda: self.__update_velocity("cw", False))
+        ccw_button.pressed.connect(lambda: self.__update_velocity("ccw", True))
+        ccw_button.released.connect(lambda: self.__update_velocity("ccw", False))
+
+        self.__manual_control_window.setLayout(control_layout)
+        
+        self.__timer = QTimer(self)
+        self.__timer.timeout.connect(lambda: self.manual_control_cmd.publish(self.__velocity))
+        self.__timer.start(100)  # Call every 100ms
+
+        self.__manual_control_window.show()
+
+
+    def __update_velocity(self, direction, is_pressed):
+        """
+        Update robot velocity based on button presses.
+        """
+        linear_speed = 0.5
+        angular_speed = 1.0
+
+        if direction == "forward":
+            self.__velocity.linear.x = linear_speed if is_pressed else 0
+        elif direction == "backward":
+            self.__velocity.linear.x = -linear_speed if is_pressed else 0
+        elif direction == "left":
+            self.__velocity.linear.y = linear_speed if is_pressed else 0
+        elif direction == "right":
+            self.__velocity.linear.y = -linear_speed if is_pressed else 0
+        elif direction == "cw":
+            self.__velocity.angular.z = -angular_speed if is_pressed else 0
+        elif direction == "ccw":
+            self.__velocity.angular.z = angular_speed if is_pressed else 0
+
+        # Publish the velocity to the robot
+        self.manual_control_cmd.publish(self.__velocity)
+        
 
     def read_fish_image(self, img_msg: Image):
         try:
@@ -344,6 +455,7 @@ class MainWindow(QMainWindow):
     def __shutdown(self):
         QApplication.quit()
         rospy.signal_shutdown("Closing GUI")
+
 
 if __name__ == "__main__":
     rospy.init_node('gui_node')
