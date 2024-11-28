@@ -1,5 +1,5 @@
 // Define the PWM output pin
-const int pwmPin = 9; // Use pin 9 or another PWM-capable pin on Arduino Nano
+const int pwmPin = 2; // Use pin 9 or another PWM-capable pin on Arduino Nano
 
 void setup() {
   Serial.begin(9600); // Start the serial communication at 9600 baud
