@@ -14,17 +14,17 @@ class ImageStitchingNode:
         rospy.init_node('image_stitching_node', anonymous=False)
 
         # Define the camera topics based on a fixed naming convention
-        self.sub_topic_format = "/ceiling_camera_{}/image"
+        self.sub_topic_format = "cameras/ceiling_camera_{}/image"
     
         # Create a dictionary to store the latest images from each camera
         self.images = {i:None for i in range(1, 6) }
-        self.changed = {i:False for _ in range(1, 6)}
+        self.changed = {i:False for i in range(1, 6)}
         # Subscribe to each camera's image topic
         self.bridge = CvBridge()
         for i in range(1, 6):
             rospy.Subscriber(self.sub_topic_format.format(i), Image, self.image_callback, callback_args=i)
 
-        param_dir = r'src\fov\src\etc'
+        param_dir = r'/home/icvl/fov_ws/src/fov/src/etc'
 
         self.calib_params = pickle.load(open(os.path.join(param_dir, "calib_params.pkl"), "rb"))
         self.homographies = pickle.load(open(os.path.join(param_dir, "homographies.pkl"), "rb"))

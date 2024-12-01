@@ -21,7 +21,6 @@ class CeilingCameraNode(AbstractNode):
 
         # Set up the image publisher
         self.image_pub = rospy.Publisher(f'ceiling_camera_{self.camera_id}/image', Image, queue_size=10)
-
         # OpenCV bridge
         self.bridge = CvBridge()
 
