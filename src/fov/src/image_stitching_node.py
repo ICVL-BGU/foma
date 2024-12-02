@@ -23,13 +23,13 @@ class ImageStitchingNode:
         self.calib_params = pickle.load(open(os.path.join(param_dir, "calib_params.pkl"), "rb"))
         self.homographies = pickle.load(open(os.path.join(param_dir, "homographies.pkl"), "rb"))
         self.lir = pickle.load(open(os.path.join(param_dir, "lir.pkl"), "rb"))
-        self.width, self.height = None, None
+        # self.width, self.height = None, None
         # Create a dictionary to store the latest images from each camera
         self.raw_images = {i:None for i in range(1, 6)}
         self.images = {i:None for i in range(1, 6)}
         self.received = {i:False for i in range(1, 6)}
         self.processed = {i:False for i in range(1, 6)}
-        self.__parameters_set = False
+        self.parameters_set = False
         # Subscribe to each camera's image topic
         self.bridge = CvBridge()
         for i in range(1, 6):
@@ -47,7 +47,7 @@ class ImageStitchingNode:
             self.raw_images[index] = self.bridge.imgmsg_to_cv2(msg, "bgr8")
             if self.raw_images[index] is not None:
                 self.received[index] = True
-                if self.__parameters_set:
+                if self.parameters_set:
                     self.process_image(index)
                     self.processed[index] = True
                     self.received[index] = False
@@ -58,7 +58,7 @@ class ImageStitchingNode:
         rate = rospy.Rate(12)  # 10 Hz
         while not rospy.is_shutdown():
             # Check if all cameras have provided images
-            if not self.__parameters_set and all(self.received.values()):
+            if not self.parameters_set and all(self.received.values()):
                 self.__calculate_parameters()
                 rospy.loginfo("Calculated parameters.")
             if any(self.processed.values()):
@@ -115,7 +115,7 @@ class ImageStitchingNode:
         self.blender = cv2.detail_FeatherBlender()
         self.blender.setSharpness(1.0 / 50.0)  # Adjust sharpness for better blending
         self.blender.prepare((0, 0, self.height, self.width))
-        self.__parameters_set = True
+        self.parameters_set = True
 
     def process_image(self, index):
         K, D, mtx = self.calib_params[index]['K'], self.calib_params[index]['D'], self.calib_params[index]['mtx']
@@ -144,16 +144,17 @@ class ImageStitchingNode:
         for i in range(1, 6):
             if self.processed[i]:
                 self.blender.feed(cv2.UMat(self.images[i].astype(np.int16)), cv2.UMat(self.masks[i]), (0, 0))
-                result, _ = self.blender.blend(None, None)
-                result = result.get() if isinstance(result, cv2.UMat) else result
-                rospy.logwarn(f"Blending returned: {result}")
-                stitched_img = cv2.normalize(result, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-                stitched_img = np.clip(stitched_img, 0, 255).astype(np.uint8)
-                stitched_image_rgb = cv2.cvtColor(stitched_img, cv2.COLOR_BGR2RGB)
+                self.processed[i] = False
 
-                x, y, w, h = self.lir
-                self.image = stitched_image_rgb[y:y+h, x:x+w]
-                self.changed[i] = False
+        result, _ = self.blender.blend(None, None)
+        result = result.get() if isinstance(result, cv2.UMat) else result
+        rospy.logwarn(f"Blending returned: {result}")
+        stitched_img = cv2.normalize(result, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        stitched_img = np.clip(stitched_img, 0, 255).astype(np.uint8)
+        stitched_image_rgb = cv2.cvtColor(stitched_img, cv2.COLOR_BGR2RGB)
+
+        x, y, w, h = self.lir
+        self.image = stitched_image_rgb[y:y+h, x:x+w]
 
     def __on_shutdown(self):
         rospy.loginfo("Shutting down Image Stitching Node.")
