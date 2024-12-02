@@ -28,6 +28,7 @@ class CeilingCameraNode(AbstractNode):
         rospy.on_shutdown(self.__on_shutdown)
 
     def run(self):
+        rate = rospy.Rate(12)  # 10 Hz
         while not rospy.is_shutdown():
             try:
                 ret, img = self.camera.read()
@@ -40,7 +41,8 @@ class CeilingCameraNode(AbstractNode):
             except CvBridgeError as e:
                 rospy.logerr(f"Camera {self.camera_id}: CV Bridge Error - {e}")
 
-            rospy.sleep(0.05)
+            # rospy.sleep(0.05)
+            rate.sleep()
 
     def __on_shutdown(self):
         rospy.loginfo(f"Ceiling Camera {self.camera_id}: Releasing camera.")
