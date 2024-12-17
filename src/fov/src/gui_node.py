@@ -231,7 +231,7 @@ class MainWindow(QMainWindow):
     def __init_subscriptions_and_services(self):
         self.fish_image_sub = rospy.Subscriber('fish_camera/image', Image, self.read_fish_image)
         self.fish_dir_sub = rospy.Subscriber('fish_detection/direction', UInt16, self.update_direction)
-        self.stitched_image_pub = rospy.Subscriber('ceiling_cameras/stitched_image', Image, self.update_room_image)
+        self.stitched_image_pub = rospy.Subscriber('image_stitcher/image', Image, self.update_room_image)
         self.feed = rospy.ServiceProxy('fish_feeder/feed', Trigger)
         self.dim_lights = rospy.ServiceProxy('light_dimmer/change', Light)
         self.fish_camera_control = rospy.ServiceProxy('fish_camera/system_toggle', SetBool)
