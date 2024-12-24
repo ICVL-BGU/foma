@@ -1,0 +1,6 @@
+int8 idx
+int8 xmin
+int8 xmax
+int8 ymin
+int8 ymax
+---
