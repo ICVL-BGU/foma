@@ -41,6 +41,7 @@ if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_
   file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/fov/srv" TYPE FILE FILES
     "/home/icvl/fov_ws/src/fov/srv/Check.srv"
     "/home/icvl/fov_ws/src/fov/srv/Light.srv"
+    "/home/icvl/fov_ws/src/fov/srv/Coordinate.srv"
     )
 endif()
 
