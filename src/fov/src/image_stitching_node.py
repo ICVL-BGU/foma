@@ -28,13 +28,6 @@ class ImageStitchingNode:
             rospy.Subscriber(self.sub_topic_format.format(i), Image, self.image_callback, callback_args=i)
 
         # Load calibration parameters
-        param_dir = r'/home/icvl/fov_ws/src/fov/src/etc'
-
-        self.calib_params = pickle.load(open(os.path.join(param_dir, "calib_params.pkl"), "rb"))
-        self.homographies = pickle.load(open(os.path.join(param_dir, "homographies.pkl"), "rb"))
-        self.lir = pickle.load(open(os.path.join(param_dir, "lir.pkl"), "rb"))
-
-        self.base_idx = 3
         self.parameters_set = False
         self.coordinates = {}
         self.masks = [None]*5
