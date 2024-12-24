@@ -37,7 +37,7 @@
     <!-- <node pkg="fov" type="fish_detection_node.py" name="fish_detection_node" output="screen"/> -->
 
     <!-- Node 3 -->
-    <node pkg="fov" type="gui_node.py" name="gui_node" output="screen"/>
+    <!-- <node pkg="fov" type="gui_node.py" name="gui_node" output="screen"/> -->
 
     <!-- Node 4 -->
     <!-- <node pkg="fov" type="lidar_node.py" name="lidar_node" output="screen"/> -->

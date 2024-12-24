@@ -55,6 +55,7 @@ include fov/CMakeFiles/fov_generate_messages_eus.dir/progress.make
 
 fov/CMakeFiles/fov_generate_messages_eus: /home/icvl/fov_ws/devel/share/roseus/ros/fov/srv/Check.l
 fov/CMakeFiles/fov_generate_messages_eus: /home/icvl/fov_ws/devel/share/roseus/ros/fov/srv/Light.l
+fov/CMakeFiles/fov_generate_messages_eus: /home/icvl/fov_ws/devel/share/roseus/ros/fov/srv/Coordinate.l
 fov/CMakeFiles/fov_generate_messages_eus: /home/icvl/fov_ws/devel/share/roseus/ros/fov/manifest.l
 
 
@@ -68,13 +69,22 @@ fov/CMakeFiles/fov_generate_messages_eus: /home/icvl/fov_ws/devel/share/roseus/r
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/fov_ws/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Generating EusLisp code from fov/Light.srv"
 	cd /home/icvl/fov_ws/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/geneus/cmake/../../../lib/geneus/gen_eus.py /home/icvl/fov_ws/src/fov/srv/Light.srv -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/fov_ws/devel/share/roseus/ros/fov/srv
 
+/home/icvl/fov_ws/devel/share/roseus/ros/fov/srv/Coordinate.l: /opt/ros/noetic/lib/geneus/gen_eus.py
+/home/icvl/fov_ws/devel/share/roseus/ros/fov/srv/Coordinate.l: /home/icvl/fov_ws/src/fov/srv/Coordinate.srv
+/home/icvl/fov_ws/devel/share/roseus/ros/fov/srv/Coordinate.l: /opt/ros/noetic/share/std_msgs/msg/MultiArrayDimension.msg
+/home/icvl/fov_ws/devel/share/roseus/ros/fov/srv/Coordinate.l: /opt/ros/noetic/share/std_msgs/msg/UInt8MultiArray.msg
+/home/icvl/fov_ws/devel/share/roseus/ros/fov/srv/Coordinate.l: /opt/ros/noetic/share/std_msgs/msg/MultiArrayLayout.msg
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/fov_ws/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Generating EusLisp code from fov/Coordinate.srv"
+	cd /home/icvl/fov_ws/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/geneus/cmake/../../../lib/geneus/gen_eus.py /home/icvl/fov_ws/src/fov/srv/Coordinate.srv -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/fov_ws/devel/share/roseus/ros/fov/srv
+
 /home/icvl/fov_ws/devel/share/roseus/ros/fov/manifest.l: /opt/ros/noetic/lib/geneus/gen_eus.py
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/fov_ws/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Generating EusLisp manifest code for fov"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/fov_ws/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Generating EusLisp manifest code for fov"
 	cd /home/icvl/fov_ws/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/geneus/cmake/../../../lib/geneus/gen_eus.py -m -o /home/icvl/fov_ws/devel/share/roseus/ros/fov fov std_msgs
 
 fov_generate_messages_eus: fov/CMakeFiles/fov_generate_messages_eus
 fov_generate_messages_eus: /home/icvl/fov_ws/devel/share/roseus/ros/fov/srv/Check.l
 fov_generate_messages_eus: /home/icvl/fov_ws/devel/share/roseus/ros/fov/srv/Light.l
+fov_generate_messages_eus: /home/icvl/fov_ws/devel/share/roseus/ros/fov/srv/Coordinate.l
 fov_generate_messages_eus: /home/icvl/fov_ws/devel/share/roseus/ros/fov/manifest.l
 fov_generate_messages_eus: fov/CMakeFiles/fov_generate_messages_eus.dir/build.make
 
