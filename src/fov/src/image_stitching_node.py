@@ -21,7 +21,6 @@ class ImageStitchingNode:
     
         # Create a dictionary to store the latest images from each camera
         self.images = {i:None for i in range(1, 6) }
-        self.changed = {i:False for i in range(1, 6)}
         # Subscribe to each camera's image topic
         self.bridge = CvBridge()
         for i in range(1, 6):
@@ -36,6 +35,9 @@ class ImageStitchingNode:
         self.stitched_image_pub = rospy.Publisher("image_stitcher/image", Image, queue_size=10)
         rospy.Service('image_stitcher/coordinates', Coordinate, self.set_coordinates)
 
+        self.iteration = 0
+        self.avg = 0
+
         rospy.on_shutdown(self.__on_shutdown)
 
     def set_coordinates(self, data: CoordinateRequest):
@@ -49,12 +51,7 @@ class ImageStitchingNode:
 
     def image_callback(self, msg, index):
         try:
-            # Convert the ROS Image message to OpenCV format
-
-            # t0=time.time()
             self.images[index] = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-            # rospy.loginfo(f"Converting: {time.time()-t0}")
-            self.changed[index] = True
 
         except CvBridgeError as e:
             rospy.logerr(f"Error converting image from topic {self.sub_topic_format.format(index)}: {e}")
@@ -70,8 +67,8 @@ class ImageStitchingNode:
                     stitched_img = self.stitch_images()
                     if stitched_img is not None:
                         # Publish the stitched image
-                        x, y, w, h = self.lir
-                        self.image = stitched_img[y:y+h, x:x+w]
+                        # x, y, w, h = self.lir
+                        self.image = stitched_img #[y:y+h, x:x+w]
                         stitched_msg = self.bridge.cv2_to_imgmsg(self.image, "bgr8")
                         self.stitched_image_pub.publish(stitched_msg)
                             
@@ -102,52 +99,59 @@ class ImageStitchingNode:
         overall_translation = np.array([[1, 0, -min_x], [0, 1, -min_y], [0, 0, 1]], dtype=np.float32)
         for i in range(1, 6):
             x_min, y_min = self.coordinates[i]['x.min'], self.coordinates[i]['y.min']
-            x_max, y_max = self.coordinates[i]['x.max'], self.coordinates[i]['y.max']
+            # x_max, y_max = self.coordinates[i]['x.max'], self.coordinates[i]['y.max']
             t = [x_min, y_min]
             self.H_translates[i] = np.array([[1, 0, t[0]], [0, 1, t[1]], [0, 0, 1]], dtype=np.float32)
             self.H_translates[i] = overall_translation @ self.H_translates[i]
             self.masks[i-1] = cv2.warpPerspective(self.masks[i-1], self.H_translates[i], (self.output_width, self.output_height), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+            # warpPerspective(self.masks[i-1], self.H_translates[i], (self.output_width, self.output_height), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+            # self.masks[i-1] = cv2.GaussianBlur(self.masks[i-1], (5, 5), 0)
+
+        # self.blender = cv2.detail_FeatherBlender()
+        # self.blender.setSharpness(1.0 / 50.0)  # Adjust sharpness for better blending
+        # self.blender.prepare((0, 0, self.output_height, self.output_width))
 
         self.calc_lir()
-
+        x, y, w, h = self.lir
+        for i in range(5):
+            self.masks[i] = self.masks[i][y:y+h, x:x+w]
         self.parameters_set = True
 
     def calc_lir(self):
-        stitched_img = self.stitch_images()
-        
-        mask = cv2.cvtColor(stitched_img, cv2.COLOR_BGR2GRAY)
-        _, mask = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)
+        combined_mask = np.zeros((self.output_height, self.output_width), dtype=np.uint8)
+        for mask in self.masks:
+            combined_mask = cv2.bitwise_or(combined_mask, mask)
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        largest_contour = max(contours, key=cv2.contourArea)
+        mask_bool = combined_mask.astype(bool)  # Convert mask to boolean array
+        self.lir = lir.lir(mask_bool)
+        # rospy.loginfo(f"LIR: {self.lir}")
 
-        # Fill the contour to ensure no internal black pixels
-        cv2.drawContours(mask, [largest_contour], -1, 255, thickness=cv2.FILLED)
-
-        mask_bool = mask.astype(bool)  # Convert mask to boolean array
-        self.lir = lir.lir(mask_bool, largest_contour[:, 0, :])
-
-    def feather_blending(self, images, masks, output_shape):
-        blender = cv2.detail_FeatherBlender()
-        blender.setSharpness(1.0 / 50.0)  # Adjust sharpness for better blending
-        blender.prepare((0, 0, output_shape[1], output_shape[0]))
-        for img, mask in zip(images, masks):
+    def feather_blending(self, images):
+        blender = cv2.detail_FeatherBlender(1.0 / 50.0)        
+        _, _, w, h = self.lir
+        blender.prepare((0,0, w, h))
+        for img, mask in zip(images, self.masks):
             blender.feed(cv2.UMat(img.astype(np.int16)), cv2.UMat(mask), (0, 0))
-        result, result_mask = blender.blend(None, None)
+        result, _ = blender.blend(None, None)
         return result.get() if isinstance(result, cv2.UMat) else result
 
     def stitch_images(self, num_bands=5, sigma=1):
+        x, y, w, h = self.lir
         translated_images = []
         for i in range(1, 6):
             translated_image = cv2.warpPerspective(self.images[i], self.H_translates[i], (self.output_width, self.output_height), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+            translated_image = translated_image[y:y+h, x:x+w]
             translated_images.append(translated_image)
 
         t0=time.time()
-        result = self.feather_blending(translated_images, self.masks, (self.output_height, self.output_width))
-        rospy.loginfo(f"Blending: {time.time()-t0}")
+        result = self.feather_blending(translated_images)
+        t1 = time.time()
+        rospy.loginfo(f"Blending: {t1-t0}")
         stitched_img = cv2.normalize(result, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
         stitched_img = np.clip(stitched_img, 0, 255).astype(np.uint8)
-        return cv2.cvtColor(stitched_img, cv2.COLOR_BGR2RGB)
+        self.iteration += 1
+        self.avg = self.avg*(self.iteration-1)/self.iteration+(t1-t0)/self.iteration
+        return stitched_img #cv2.cvtColor(stitched_img, cv2.COLOR_BGR2RGB)
 
         # Save the images before translation
         # for i, img in self.images.items():
@@ -163,6 +167,7 @@ class ImageStitchingNode:
 
     def __on_shutdown(self):
         rospy.loginfo("Shutting down Image Stitching Node.")
+        rospy.loginfo(f"Average time for blending: {self.avg}")
 
 
 if __name__ == "__main__":

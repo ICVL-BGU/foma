@@ -33,7 +33,7 @@ class CeilingCameraNode(AbstractNode):
         # Load calibration parameters
         param_dir = r'/home/icvl/fov_ws/src/fov/src/etc'
         self.base_idx = 3
-        self.resize_factor = 0.5
+        self.resize_factor = 0.3
         self.calib_params = pickle.load(open(os.path.join(param_dir, "calib_params.pkl"), "rb"))[self.camera_id]
 
         # Load homography and calculate the scaling matrix
