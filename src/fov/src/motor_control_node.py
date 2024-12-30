@@ -33,7 +33,7 @@ class MotorControlNode(AbstractNode):
         self.hBlocked, self.vBlocked = False, False # True, True
         rospy.on_shutdown(self.__on_shutdown)
 
-    def __manual_overide(self, request:SetBoolRequest)
+    def __manual_overide(self, request:SetBoolRequest):
         self.__manual_mode = request.data
         return SetBoolResponse(success = True, message = "Motor control turned {}.".format("manual" if request.data else "auto"))
 

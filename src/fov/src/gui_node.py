@@ -91,7 +91,9 @@ class MainWindow(QMainWindow):
         self.__BL_layout.addWidget(self.__lights_slider, 1, 0, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__feed_label, 0, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__feed_button, 1, 1, alignment=Qt.AlignCenter)
-
+        self.__BL_layout.addWidget(self.__manual_control_label, 0, 2, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__manual_control_button, 1, 2, alignment=Qt.AlignCenter)
+        
         self.__BL_widget = QFrame()
         self.__BL_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
         self.__BL_widget.setLineWidth(2)
@@ -193,6 +195,20 @@ class MainWindow(QMainWindow):
         font.setPointSize(13)
         self.__lights_label.setFont(font)
         self.__lights_label.setAlignment(Qt.AlignHCenter)
+
+        # Manual Control button init
+        self.__manual_control_button = QPushButton()
+        self.__manual_control_button.setText("Manual Control")
+        self.__manual_control_button.setDisabled(False)
+        self.__manual_control_button.setMaximumHeight(50)
+        self.__manual_control_button.clicked.connect(self.__init_manual_control_window)
+
+        # Manual Control label init
+        self.__manual_control_label = QLabel("Manual Control")
+        font = self.__manual_control_label.font()
+        font.setPointSize(13)
+        self.__manual_control_label.setFont(font)
+        self.__manual_control_label.setAlignment(Qt.AlignHCenter)
 
         # Fish image init
         self.__fish_image = QLabel() #TODO : add resize+update
