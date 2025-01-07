@@ -3,11 +3,8 @@
 import rospy
 from abstract_node import AbstractNode
 from std_srvs.srv import Trigger, TriggerRequest, TriggerResponse
-# import RPi.GPIO as GPIO
+import RPi.GPIO as GPIO
 from gpiozero import PWMOutputDevice, BadPinFactory
-import PololuStepper as PS
-
-# print(dir(PS))
 
 class FeederNode(AbstractNode):
     def __init__(self):
@@ -22,13 +19,13 @@ class FeederNode(AbstractNode):
         dir_pin = 18
         step_pin = 27
         enable_pin = 4 
-        self.feeder = PS.DRV8834(steps_per_revolution, dir_pin, step_pin, enable_pin)
+        self.feeder = DRV8834(steps_per_revolution, dir_pin, step_pin, enable_pin)
         
         microsteps = 4  # You can adjust this as needed
         
         # Initialize the driver with the current RPM and microsteps
         rpm = 30  # Rotations per minute
-        self.feeder.begin(rpm, microsteps)
+        feeder.begin(rpm, microsteps)
         try:
             self.out = PWMOutputDevice(pin = 17, initial_value = 0.5, frequency = 700)
         except BadPinFactory as e:
@@ -41,6 +38,5 @@ class FeederNode(AbstractNode):
     
 if __name__ == "__main__":
     rospy.init_node('feeder_node')
-    rospy.loginfo("Feeder Node: node created.")
-    feeder_node = FeederNode()
+    ceiling_cam_handler = FeederNode()
     rospy.spin()
