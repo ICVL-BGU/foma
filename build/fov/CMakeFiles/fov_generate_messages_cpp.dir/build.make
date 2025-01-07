@@ -55,6 +55,7 @@ include fov/CMakeFiles/fov_generate_messages_cpp.dir/progress.make
 
 fov/CMakeFiles/fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/Check.h
 fov/CMakeFiles/fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/Light.h
+fov/CMakeFiles/fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/Coordinate.h
 
 
 /home/icvl/FOMA/devel/include/fov/Check.h: /opt/ros/noetic/lib/gencpp/gen_cpp.py
@@ -71,9 +72,20 @@ fov/CMakeFiles/fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/Ligh
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Generating C++ code from fov/Light.srv"
 	cd /home/icvl/FOMA/src/fov && /home/icvl/FOMA/build/catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gencpp/cmake/../../../lib/gencpp/gen_cpp.py /home/icvl/FOMA/src/fov/srv/Light.srv -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/include/fov -e /opt/ros/noetic/share/gencpp/cmake/..
 
+/home/icvl/FOMA/devel/include/fov/Coordinate.h: /opt/ros/noetic/lib/gencpp/gen_cpp.py
+/home/icvl/FOMA/devel/include/fov/Coordinate.h: /home/icvl/FOMA/src/fov/srv/Coordinate.srv
+/home/icvl/FOMA/devel/include/fov/Coordinate.h: /opt/ros/noetic/share/std_msgs/msg/MultiArrayLayout.msg
+/home/icvl/FOMA/devel/include/fov/Coordinate.h: /opt/ros/noetic/share/std_msgs/msg/MultiArrayDimension.msg
+/home/icvl/FOMA/devel/include/fov/Coordinate.h: /opt/ros/noetic/share/std_msgs/msg/UInt8MultiArray.msg
+/home/icvl/FOMA/devel/include/fov/Coordinate.h: /opt/ros/noetic/share/gencpp/msg.h.template
+/home/icvl/FOMA/devel/include/fov/Coordinate.h: /opt/ros/noetic/share/gencpp/srv.h.template
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Generating C++ code from fov/Coordinate.srv"
+	cd /home/icvl/FOMA/src/fov && /home/icvl/FOMA/build/catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gencpp/cmake/../../../lib/gencpp/gen_cpp.py /home/icvl/FOMA/src/fov/srv/Coordinate.srv -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/include/fov -e /opt/ros/noetic/share/gencpp/cmake/..
+
 fov_generate_messages_cpp: fov/CMakeFiles/fov_generate_messages_cpp
 fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/Check.h
 fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/Light.h
+fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/Coordinate.h
 fov_generate_messages_cpp: fov/CMakeFiles/fov_generate_messages_cpp.dir/build.make
 
 .PHONY : fov_generate_messages_cpp

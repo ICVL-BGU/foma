@@ -1,6 +1,6 @@
 # generated from genmsg/cmake/pkg-genmsg.cmake.em
 
-message(STATUS "fov: 0 messages, 2 services")
+message(STATUS "fov: 0 messages, 3 services")
 
 set(MSG_I_FLAGS "-Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg")
 
@@ -27,6 +27,11 @@ add_custom_target(_fov_generate_messages_check_deps_${_filename}
   COMMAND ${CATKIN_ENV} ${PYTHON_EXECUTABLE} ${GENMSG_CHECK_DEPS_SCRIPT} "fov" "/home/icvl/FOMA/src/fov/srv/Light.srv" ""
 )
 
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
+add_custom_target(_fov_generate_messages_check_deps_${_filename}
+  COMMAND ${CATKIN_ENV} ${PYTHON_EXECUTABLE} ${GENMSG_CHECK_DEPS_SCRIPT} "fov" "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" "std_msgs/MultiArrayLayout:std_msgs/MultiArrayDimension:std_msgs/UInt8MultiArray"
+)
+
 #
 #  langs = gencpp;geneus;genlisp;gennodejs;genpy
 #
@@ -47,6 +52,12 @@ _generate_srv_cpp(fov
   ""
   ${CATKIN_DEVEL_PREFIX}/${gencpp_INSTALL_DIR}/fov
 )
+_generate_srv_cpp(fov
+  "/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
+  "${MSG_I_FLAGS}"
+  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg"
+  ${CATKIN_DEVEL_PREFIX}/${gencpp_INSTALL_DIR}/fov
+)
 
 ### Generating Module File
 _generate_module_cpp(fov
@@ -63,6 +74,8 @@ add_dependencies(fov_generate_messages fov_generate_messages_cpp)
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Check.srv" NAME_WE)
 add_dependencies(fov_generate_messages_cpp _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Light.srv" NAME_WE)
+add_dependencies(fov_generate_messages_cpp _fov_generate_messages_check_deps_${_filename})
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
 add_dependencies(fov_generate_messages_cpp _fov_generate_messages_check_deps_${_filename})
 
 # target for backward compatibility
@@ -88,6 +101,12 @@ _generate_srv_eus(fov
   ""
   ${CATKIN_DEVEL_PREFIX}/${geneus_INSTALL_DIR}/fov
 )
+_generate_srv_eus(fov
+  "/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
+  "${MSG_I_FLAGS}"
+  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg"
+  ${CATKIN_DEVEL_PREFIX}/${geneus_INSTALL_DIR}/fov
+)
 
 ### Generating Module File
 _generate_module_eus(fov
@@ -104,6 +123,8 @@ add_dependencies(fov_generate_messages fov_generate_messages_eus)
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Check.srv" NAME_WE)
 add_dependencies(fov_generate_messages_eus _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Light.srv" NAME_WE)
+add_dependencies(fov_generate_messages_eus _fov_generate_messages_check_deps_${_filename})
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
 add_dependencies(fov_generate_messages_eus _fov_generate_messages_check_deps_${_filename})
 
 # target for backward compatibility
@@ -129,6 +150,12 @@ _generate_srv_lisp(fov
   ""
   ${CATKIN_DEVEL_PREFIX}/${genlisp_INSTALL_DIR}/fov
 )
+_generate_srv_lisp(fov
+  "/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
+  "${MSG_I_FLAGS}"
+  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg"
+  ${CATKIN_DEVEL_PREFIX}/${genlisp_INSTALL_DIR}/fov
+)
 
 ### Generating Module File
 _generate_module_lisp(fov
@@ -145,6 +172,8 @@ add_dependencies(fov_generate_messages fov_generate_messages_lisp)
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Check.srv" NAME_WE)
 add_dependencies(fov_generate_messages_lisp _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Light.srv" NAME_WE)
+add_dependencies(fov_generate_messages_lisp _fov_generate_messages_check_deps_${_filename})
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
 add_dependencies(fov_generate_messages_lisp _fov_generate_messages_check_deps_${_filename})
 
 # target for backward compatibility
@@ -170,6 +199,12 @@ _generate_srv_nodejs(fov
   ""
   ${CATKIN_DEVEL_PREFIX}/${gennodejs_INSTALL_DIR}/fov
 )
+_generate_srv_nodejs(fov
+  "/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
+  "${MSG_I_FLAGS}"
+  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg"
+  ${CATKIN_DEVEL_PREFIX}/${gennodejs_INSTALL_DIR}/fov
+)
 
 ### Generating Module File
 _generate_module_nodejs(fov
@@ -186,6 +221,8 @@ add_dependencies(fov_generate_messages fov_generate_messages_nodejs)
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Check.srv" NAME_WE)
 add_dependencies(fov_generate_messages_nodejs _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Light.srv" NAME_WE)
+add_dependencies(fov_generate_messages_nodejs _fov_generate_messages_check_deps_${_filename})
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
 add_dependencies(fov_generate_messages_nodejs _fov_generate_messages_check_deps_${_filename})
 
 # target for backward compatibility
@@ -211,6 +248,12 @@ _generate_srv_py(fov
   ""
   ${CATKIN_DEVEL_PREFIX}/${genpy_INSTALL_DIR}/fov
 )
+_generate_srv_py(fov
+  "/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
+  "${MSG_I_FLAGS}"
+  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg"
+  ${CATKIN_DEVEL_PREFIX}/${genpy_INSTALL_DIR}/fov
+)
 
 ### Generating Module File
 _generate_module_py(fov
@@ -227,6 +270,8 @@ add_dependencies(fov_generate_messages fov_generate_messages_py)
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Check.srv" NAME_WE)
 add_dependencies(fov_generate_messages_py _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Light.srv" NAME_WE)
+add_dependencies(fov_generate_messages_py _fov_generate_messages_check_deps_${_filename})
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
 add_dependencies(fov_generate_messages_py _fov_generate_messages_check_deps_${_filename})
 
 # target for backward compatibility

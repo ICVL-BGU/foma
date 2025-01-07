@@ -55,6 +55,7 @@ include fov/CMakeFiles/fov_generate_messages_nodejs.dir/progress.make
 
 fov/CMakeFiles/fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Check.js
 fov/CMakeFiles/fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Light.js
+fov/CMakeFiles/fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Coordinate.js
 
 
 /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Check.js: /opt/ros/noetic/lib/gennodejs/gen_nodejs.py
@@ -67,9 +68,18 @@ fov/CMakeFiles/fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennode
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Generating Javascript code from fov/Light.srv"
 	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gennodejs/cmake/../../../lib/gennodejs/gen_nodejs.py /home/icvl/FOMA/src/fov/srv/Light.srv -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv
 
+/home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Coordinate.js: /opt/ros/noetic/lib/gennodejs/gen_nodejs.py
+/home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Coordinate.js: /home/icvl/FOMA/src/fov/srv/Coordinate.srv
+/home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Coordinate.js: /opt/ros/noetic/share/std_msgs/msg/MultiArrayLayout.msg
+/home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Coordinate.js: /opt/ros/noetic/share/std_msgs/msg/MultiArrayDimension.msg
+/home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Coordinate.js: /opt/ros/noetic/share/std_msgs/msg/UInt8MultiArray.msg
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Generating Javascript code from fov/Coordinate.srv"
+	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gennodejs/cmake/../../../lib/gennodejs/gen_nodejs.py /home/icvl/FOMA/src/fov/srv/Coordinate.srv -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv
+
 fov_generate_messages_nodejs: fov/CMakeFiles/fov_generate_messages_nodejs
 fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Check.js
 fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Light.js
+fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Coordinate.js
 fov_generate_messages_nodejs: fov/CMakeFiles/fov_generate_messages_nodejs.dir/build.make
 
 .PHONY : fov_generate_messages_nodejs

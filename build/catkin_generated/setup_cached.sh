@@ -7,7 +7,10 @@
 # new environment variables
 
 # modified environment variables
-export PKG_CONFIG_PATH='/opt/ros/noetic/lib/pkgconfig'
+export CMAKE_PREFIX_PATH="/home/icvl/FOMA/devel:$CMAKE_PREFIX_PATH"
+export LD_LIBRARY_PATH="/home/icvl/FOMA/devel/lib:$LD_LIBRARY_PATH"
+export PKG_CONFIG_PATH="/home/icvl/FOMA/devel/lib/pkgconfig:$PKG_CONFIG_PATH"
 export PWD='/home/icvl/FOMA/build'
-export PYTHONPATH='/opt/ros/noetic/lib/python3/dist-packages'
-export ROS_PACKAGE_PATH='/home/icvl/FOMA/src:/opt/ros/noetic/share'
+export PYTHONPATH="/home/icvl/FOMA/devel/lib/python3/dist-packages:$PYTHONPATH"
+export ROSLISP_PACKAGE_DIRECTORIES='/home/icvl/FOMA/devel/share/common-lisp'
+export ROS_PACKAGE_PATH="/home/icvl/FOMA/src:$ROS_PACKAGE_PATH"
