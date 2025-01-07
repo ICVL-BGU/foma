@@ -1,6 +1,7 @@
 # generated from genmsg/cmake/pkg-genmsg.cmake.em
 
 message(STATUS "fov: 0 messages, 3 services")
+message(STATUS "fov: 0 messages, 3 services")
 
 set(MSG_I_FLAGS "-Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg")
 
@@ -77,6 +78,8 @@ get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Light.srv" NAME_WE
 add_dependencies(fov_generate_messages_cpp _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
 add_dependencies(fov_generate_messages_cpp _fov_generate_messages_check_deps_${_filename})
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
+add_dependencies(fov_generate_messages_cpp _fov_generate_messages_check_deps_${_filename})
 
 # target for backward compatibility
 add_custom_target(fov_gencpp)
@@ -123,6 +126,8 @@ add_dependencies(fov_generate_messages fov_generate_messages_eus)
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Check.srv" NAME_WE)
 add_dependencies(fov_generate_messages_eus _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Light.srv" NAME_WE)
+add_dependencies(fov_generate_messages_eus _fov_generate_messages_check_deps_${_filename})
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
 add_dependencies(fov_generate_messages_eus _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
 add_dependencies(fov_generate_messages_eus _fov_generate_messages_check_deps_${_filename})
@@ -175,6 +180,8 @@ get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Light.srv" NAME_WE
 add_dependencies(fov_generate_messages_lisp _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
 add_dependencies(fov_generate_messages_lisp _fov_generate_messages_check_deps_${_filename})
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
+add_dependencies(fov_generate_messages_lisp _fov_generate_messages_check_deps_${_filename})
 
 # target for backward compatibility
 add_custom_target(fov_genlisp)
@@ -224,6 +231,8 @@ get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Light.srv" NAME_WE
 add_dependencies(fov_generate_messages_nodejs _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
 add_dependencies(fov_generate_messages_nodejs _fov_generate_messages_check_deps_${_filename})
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
+add_dependencies(fov_generate_messages_nodejs _fov_generate_messages_check_deps_${_filename})
 
 # target for backward compatibility
 add_custom_target(fov_gennodejs)
@@ -270,6 +279,8 @@ add_dependencies(fov_generate_messages fov_generate_messages_py)
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Check.srv" NAME_WE)
 add_dependencies(fov_generate_messages_py _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Light.srv" NAME_WE)
+add_dependencies(fov_generate_messages_py _fov_generate_messages_check_deps_${_filename})
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
 add_dependencies(fov_generate_messages_py _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
 add_dependencies(fov_generate_messages_py _fov_generate_messages_check_deps_${_filename})
