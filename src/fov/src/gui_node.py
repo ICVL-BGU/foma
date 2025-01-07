@@ -173,7 +173,7 @@ class MainWindow(QMainWindow):
         self.__feed_button = QPushButton()
         self.__feed_button.setText("Feed")
         # self.__feed_button.setDisabled(True)
-        self.__feed_button.clicked.connect(lambda:self.feed)
+        self.__feed_button.clicked.connect(lambda:self.feed())
 
         # Feed button label init
         self.__feed_label = QLabel("Manual Feed")
