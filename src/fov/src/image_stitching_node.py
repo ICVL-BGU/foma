@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import ros
 import rospy
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
@@ -43,6 +44,8 @@ class ImageStitchingNode:
     def set_coordinates(self, data: CoordinateRequest):
         # rospy.loginfo("Got here")
         self.coordinates[data.idx] = {'x.min': data.xmin, 'y.min': data.ymin, 'x.max': data.xmax, 'y.max': data.ymax}
+        # rospy.loginfo(f"Coordinates for camera {data.idx} received.")
+        # rospy.loginfo(f"Coordinates: {self.coordinates[data.idx]}")
         flattened_mask = np.frombuffer(data.mask.data, dtype=np.uint8)
         self.masks[data.idx - 1] = np.array(flattened_mask, dtype = np.uint8).reshape(data.mask.layout.dim[0].size, data.mask.layout.dim[1].size)
         if len(self.coordinates) == 5:
@@ -64,15 +67,18 @@ class ImageStitchingNode:
                 try:
                     pass
                     # Stitch images
+                    # t0 = time.time()
                     stitched_img = self.stitch_images()
+                    # rospy.loginfo(f"Stitching took {time.time()-t0}")
                     if stitched_img is not None:
                         # Publish the stitched image
                         # x, y, w, h = self.lir
                         self.image = stitched_img #[y:y+h, x:x+w]
+                        
                         stitched_msg = self.bridge.cv2_to_imgmsg(self.image, "bgr8")
                         self.stitched_image_pub.publish(stitched_msg)
-                            
-                        # output_dir = "/home/icvl/fov_ws/src/fov/output"
+                        # rospy.loginfo("Stitched image published.")
+                        # output_dir = "/home/icvl/FOMA/src/fov/output"
                         # if not os.path.exists(output_dir):
                         #     os.makedirs(output_dir)
                         
@@ -92,20 +98,30 @@ class ImageStitchingNode:
         max_x = max(self.coordinates[i]['x.max'] for i in range(1, 6))
         max_y = max(self.coordinates[i]['y.max'] for i in range(1, 6))
 
+        # rospy.loginfo(f"Min x: {min_x}, Min y: {min_y}, Max x: {max_x}, Max y: {max_y}")
+
         self.output_width = max_x - min_x
         self.output_height = max_y - min_y
 
+        # rospy.loginfo(f"Output width: {self.output_width}, Output height: {self.output_height}")
+
         # Adjust the translation matrices to account for the overall translation
         overall_translation = np.array([[1, 0, -min_x], [0, 1, -min_y], [0, 0, 1]], dtype=np.float32)
+        # rospy.loginfo(f"Overall translation: {overall_translation}")
+        output_dir = "/home/icvl/FOMA/src/fov/output/masks"
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
         for i in range(1, 6):
             x_min, y_min = self.coordinates[i]['x.min'], self.coordinates[i]['y.min']
-            # x_max, y_max = self.coordinates[i]['x.max'], self.coordinates[i]['y.max']
             t = [x_min, y_min]
             self.H_translates[i] = np.array([[1, 0, t[0]], [0, 1, t[1]], [0, 0, 1]], dtype=np.float32)
             self.H_translates[i] = overall_translation @ self.H_translates[i]
             self.masks[i-1] = cv2.warpPerspective(self.masks[i-1], self.H_translates[i], (self.output_width, self.output_height), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
-            # warpPerspective(self.masks[i-1], self.H_translates[i], (self.output_width, self.output_height), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
-            # self.masks[i-1] = cv2.GaussianBlur(self.masks[i-1], (5, 5), 0)
+
+            # Write each mask to disk
+            mask_path = os.path.join(output_dir, f"mask_{i}.png")
+            cv2.imwrite(mask_path, self.masks[i-1])
 
         # self.blender = cv2.detail_FeatherBlender()
         # self.blender.setSharpness(1.0 / 50.0)  # Adjust sharpness for better blending
@@ -143,14 +159,31 @@ class ImageStitchingNode:
             translated_image = translated_image[y:y+h, x:x+w]
             translated_images.append(translated_image)
 
-        t0=time.time()
+        # t0=time.time()
+        # stitched_img = np.zeros((h, w, 3), dtype=np.float32)
+        # mask_sum = np.zeros((h, w), dtype=np.float32)
+
+        # for img, mask in zip(translated_images, self.masks):
+        #     mask_float = mask.astype(np.float32) / 255.0
+        #     for c in range(3):  # For each color channel
+        #         stitched_img[:, :, c] += img[:, :, c] * mask_float
+        #     mask_sum += mask_float
+
+        # # Avoid division by zero
+        # mask_sum[mask_sum == 0] = 1
+        # for c in range(3):
+        #     stitched_img[:, :, c] /= mask_sum
+
+        # stitched_img = np.clip(stitched_img, 0, 255).astype(np.uint8)
         result = self.feather_blending(translated_images)
-        t1 = time.time()
-        rospy.loginfo(f"Blending: {t1-t0}")
+        # # t1 = time.time()
+        # # rospy.loginfo(f"Blending: {t1-t0}")
         stitched_img = cv2.normalize(result, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+
+        # stitched_img = cv2.normalize(stitched_img, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
         stitched_img = np.clip(stitched_img, 0, 255).astype(np.uint8)
-        self.iteration += 1
-        self.avg = self.avg*(self.iteration-1)/self.iteration+(t1-t0)/self.iteration
+        # self.iteration += 1
+        # self.avg = self.avg*(self.iteration-1)/self.iteration+(t1-t0)/self.iteration
         return stitched_img #cv2.cvtColor(stitched_img, cv2.COLOR_BGR2RGB)
 
         # Save the images before translation

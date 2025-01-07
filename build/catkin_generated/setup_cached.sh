@@ -7,4 +7,4 @@
 # new environment variables
 
 # modified environment variables
-export PWD='/home/icvl/fov_ws/build'
+export PWD='/home/icvl/FOMA/build'

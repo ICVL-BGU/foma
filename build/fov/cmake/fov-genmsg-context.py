@@ -1,7 +1,7 @@
 # generated from genmsg/cmake/pkg-genmsg.context.in
 
 messages_str = ""
-services_str = "/home/icvl/fov_ws/src/fov/srv/Check.srv;/home/icvl/fov_ws/src/fov/srv/Light.srv;/home/icvl/fov_ws/src/fov/srv/Coordinate.srv"
+services_str = "/home/icvl/FOMA/src/fov/srv/Check.srv;/home/icvl/FOMA/src/fov/srv/Light.srv;/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
 pkg_name = "fov"
 dependencies_str = "std_msgs"
 langs = "gencpp;geneus;genlisp;gennodejs;genpy"
