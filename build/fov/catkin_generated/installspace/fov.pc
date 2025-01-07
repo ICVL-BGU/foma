@@ -1,8 +1,0 @@
-prefix=/home/icvl/fov_ws/install
-
-Name: fov
-Description: Description of fov
-Version: 0.0.0
-Cflags: -I${prefix}/include
-Libs: -L${prefix}/lib 
-Requires: 
