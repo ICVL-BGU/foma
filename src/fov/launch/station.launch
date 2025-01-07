@@ -31,7 +31,7 @@
         </node>
     </group>
     <!-- Node 1 -->
-    <node pkg="fov" type="image_stitching_node.py" name="image_stitching_node" output="screen"/>
+    <!-- <node pkg="fov" type="ceiling_camera_node.py" name="ceiling_camera_node" output="screen"/> -->
 
     <!-- Node 2 -->
     <!-- <node pkg="fov" type="fish_detection_node.py" name="fish_detection_node" output="screen"/> -->
