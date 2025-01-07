@@ -29,7 +29,7 @@ add_custom_target(_fov_generate_messages_check_deps_${_filename}
 
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
 add_custom_target(_fov_generate_messages_check_deps_${_filename}
-  COMMAND ${CATKIN_ENV} ${PYTHON_EXECUTABLE} ${GENMSG_CHECK_DEPS_SCRIPT} "fov" "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" "std_msgs/MultiArrayLayout:std_msgs/MultiArrayDimension:std_msgs/UInt8MultiArray"
+  COMMAND ${CATKIN_ENV} ${PYTHON_EXECUTABLE} ${GENMSG_CHECK_DEPS_SCRIPT} "fov" "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" "std_msgs/MultiArrayLayout:std_msgs/UInt8MultiArray:std_msgs/MultiArrayDimension"
 )
 
 #
@@ -55,7 +55,7 @@ _generate_srv_cpp(fov
 _generate_srv_cpp(fov
   "/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
   "${MSG_I_FLAGS}"
-  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg"
+  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg"
   ${CATKIN_DEVEL_PREFIX}/${gencpp_INSTALL_DIR}/fov
 )
 
@@ -104,7 +104,7 @@ _generate_srv_eus(fov
 _generate_srv_eus(fov
   "/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
   "${MSG_I_FLAGS}"
-  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg"
+  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg"
   ${CATKIN_DEVEL_PREFIX}/${geneus_INSTALL_DIR}/fov
 )
 
@@ -153,7 +153,7 @@ _generate_srv_lisp(fov
 _generate_srv_lisp(fov
   "/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
   "${MSG_I_FLAGS}"
-  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg"
+  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg"
   ${CATKIN_DEVEL_PREFIX}/${genlisp_INSTALL_DIR}/fov
 )
 
@@ -202,7 +202,7 @@ _generate_srv_nodejs(fov
 _generate_srv_nodejs(fov
   "/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
   "${MSG_I_FLAGS}"
-  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg"
+  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg"
   ${CATKIN_DEVEL_PREFIX}/${gennodejs_INSTALL_DIR}/fov
 )
 
@@ -251,7 +251,7 @@ _generate_srv_py(fov
 _generate_srv_py(fov
   "/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
   "${MSG_I_FLAGS}"
-  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg"
+  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg"
   ${CATKIN_DEVEL_PREFIX}/${genpy_INSTALL_DIR}/fov
 )
 
