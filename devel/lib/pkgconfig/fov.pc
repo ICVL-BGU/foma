@@ -1,8 +1,8 @@
-prefix=/home/icvl/fov_ws/devel
+prefix=/home/icvl/FOMA/devel
 
 Name: fov
 Description: Description of fov
 Version: 0.0.0
-Cflags: -I/home/icvl/fov_ws/devel/include
+Cflags: -I/home/icvl/FOMA/devel/include
 Libs: -L${prefix}/lib 
 Requires: 

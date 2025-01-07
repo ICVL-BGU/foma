@@ -1,4 +1,4 @@
-prefix=/home/icvl/fov_ws/install
+prefix=/home/icvl/FOMA/install
 
 Name: fov
 Description: Description of fov

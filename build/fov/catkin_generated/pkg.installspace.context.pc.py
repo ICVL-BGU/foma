@@ -4,5 +4,5 @@ PROJECT_PKG_CONFIG_INCLUDE_DIRS = "${prefix}/include".split(';') if "${prefix}/i
 PROJECT_CATKIN_DEPENDS = "".replace(';', ' ')
 PKG_CONFIG_LIBRARIES_WITH_PREFIX = "".split(';') if "" != "" else []
 PROJECT_NAME = "fov"
-PROJECT_SPACE_DIR = "/home/icvl/fov_ws/install"
+PROJECT_SPACE_DIR = "/home/icvl/FOMA/install"
 PROJECT_VERSION = "0.0.0"

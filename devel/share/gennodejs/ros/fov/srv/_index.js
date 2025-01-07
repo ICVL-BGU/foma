@@ -1,12 +1,12 @@
 
 "use strict";
 
+let EPDImage = require('./EPDImage.js')
 let Light = require('./Light.js')
 let Check = require('./Check.js')
-let EPDImage = require('./EPDImage.js')
 
 module.exports = {
+  EPDImage: EPDImage,
   Light: Light,
   Check: Check,
-  EPDImage: EPDImage,
 };
