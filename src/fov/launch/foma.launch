@@ -3,20 +3,20 @@
     <!-- <node pkg="fov" type="ceiling_camera_node.py" name="ceiling_camera_node" output="screen"/> -->
 
     <!-- Node 2 -->
-    <node pkg="fov" type="fish_detection_node.py" name="fish_detection_node" output="screen"/>
+    <!-- <node pkg="fov" type="fish_detection_node.py" name="fish_detection_node" output="screen"/> -->
 
     <!-- Node 3 -->
     <!-- <node pkg="fov" type="gui_node.py" name="gui_node" output="screen"/> -->
 
     <!-- Node 4 -->
-    <node pkg="fov" type="lidar_node.py" name="lidar_node" output="screen"/>
+    <!-- <node pkg="fov" type="lidar_node.py" name="lidar_node" output="screen"/> -->
 
     <!-- Node 5 -->
     <node pkg="fov" type="motor_control_node.py" name="motor_control_node" output="screen"/>
 
     <!-- Node 6 -->
-    <node pkg="fov" type="video_camera_node.py" name="video_camera_node" output="screen"/>
+    <!-- <node pkg="fov" type="video_camera_node.py" name="video_camera_node" output="screen"/> -->
 
     <!-- Node 7 -->
-    <node pkg="fov" type="feeder_node.py" name="feeder_node" output="screen"/>
+    <!-- <node pkg="fov" type="feeder_node.py" name="feeder_node" output="screen"/> -->
 </launch>

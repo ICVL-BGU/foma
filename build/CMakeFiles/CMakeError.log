@@ -1,5 +1,6 @@
 Performing C SOURCE FILE Test CMAKE_HAVE_LIBC_PTHREAD failed with the following output:
 Change Dir: /home/icvl/FOMA/build/CMakeFiles/CMakeTmp
+Change Dir: /home/icvl/FOMA/build/CMakeFiles/CMakeTmp
 
 Run Build Command(s):/usr/bin/make cmTC_812a2/fast && /usr/bin/make -f CMakeFiles/cmTC_812a2.dir/build.make CMakeFiles/cmTC_812a2.dir/build
 make[1]: Entering directory '/home/icvl/FOMA/build/CMakeFiles/CMakeTmp'
@@ -39,6 +40,7 @@ int main(void)
 }
 
 Determining if the function pthread_create exists in the pthreads failed with the following output:
+Change Dir: /home/icvl/FOMA/build/CMakeFiles/CMakeTmp
 Change Dir: /home/icvl/FOMA/build/CMakeFiles/CMakeTmp
 
 Run Build Command(s):/usr/bin/make cmTC_282ec/fast && /usr/bin/make -f CMakeFiles/cmTC_282ec.dir/build.make CMakeFiles/cmTC_282ec.dir/build
