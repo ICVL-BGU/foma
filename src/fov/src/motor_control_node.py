@@ -16,7 +16,7 @@ class MotorControlNode(AbstractNode):
     def __init__(self):
         super().__init__('motor_control', 'Motor control')
         self.fish_dir_sub = rospy.Subscriber('fish_detection/direction', UInt16, self.update_direction)
-        # self.lidar_sub = rospy.Subscriber('lidar/scans', LaserScan, self.update_lidar, queue_size=10)
+        self.lidar_sub = rospy.Subscriber('lidar/scans', LaserScan, self.update_lidar, queue_size=10)
         self.manual_subscriber = rospy.Subscriber('gui/manual_control', Twist, self.__manual_control) 
         self.manual_mode_service = rospy.Service('motor_control/motor_mode_control', SetBool, self.__manual_overide)
         self.bypass_lidar_service = rospy.Service('motor_control/bypass_lidar', SetBool, self.__bypass_lidar)
@@ -33,7 +33,7 @@ class MotorControlNode(AbstractNode):
         self.__lidar_bypassed = False
         
         self.hComponent, self.vComponent = 0, 0
-        self.hBlocked, self.vBlocked = False, False # True, True
+        self.fBlocked, self.lBlocked, self.bBlocked, self.rBlocked = True, True, True, True
         rospy.on_shutdown(self.__on_shutdown)
 
     def __bypass_lidar(self, request:SetBoolRequest):
@@ -52,43 +52,55 @@ class MotorControlNode(AbstractNode):
 
     def move_by_components(self, hComponent, vComponent):
         if not self.__lidar_bypassed:
-            hComponent = 0 if self.hBlocked else hComponent
-            vComponent = 0 if self.vBlocked else vComponent
+            if hComponent > 0 and self.fBlocked:
+                hComponent = 0
+            elif hComponent < 0 and self.bBlocked:
+                hComponent = 0
+            if vComponent > 0 and self.rBlocked:
+                vComponent = 0
+            elif vComponent < 0 and self.lBlocked:
+                vComponent = 0
         self.motor_control.move_by_components(hComponent, vComponent)                
 
     def update_direction(self, direction: UInt16):
         # Process fish direction and adjust motors accordingly
         self.direction = direction.data
+        self.hComponent, self.vComponent = self.__split_components()
 
     def update_lidar(self, scans:LaserScan):
+        # rospy.loginfo("Got here")
         # Process lidar data and adjust motors to avoid obstacles
         self.scans = scans.ranges
-        if self.direction is None:
-            return
+        # if self.direction is None:
+        #     return
+        self.fBlocked = self.__check_angel_range(range(-45,45))# or self.__check_angel_range(range(305,360))
+        self.lBlocked = self.__check_angel_range(range(45,135))
+        self.bBlocked = self.__check_angel_range(range(135,225))
+        self.rBlocked = self.__check_angel_range(range(225,315))
         # low, high = self.direction - 90, self.direction + 90
-        if self.direction in range(0,90):
-            self.vBlocked = self.__check_angel_range(range(0,45)) or self.__check_angel_range(range(305,360))
-            self.hBlocked = self.__check_angel_range(range(45,135))
+        # if self.direction in range(0,90):
+        #     self.vBlocked = self.__check_angel_range(range(0,45)) or self.__check_angel_range(range(305,360))
+        #     self.hBlocked = self.__check_angel_range(range(45,135))
         
-        elif self.direction in range(90,180):
-            self.vBlocked = self.__check_angel_range(range(135,225))
-            self.hBlocked = self.__check_angel_range(range(45,135))
+        # elif self.direction in range(90,180):
+        #     self.vBlocked = self.__check_angel_range(range(135,225))
+        #     self.hBlocked = self.__check_angel_range(range(45,135))
             
-        elif self.direction in range(180,270):
-            self.vBlocked = self.__check_angel_range(range(135,225))
-            self.hBlocked = self.__check_angel_range(range(225,315))
+        # elif self.direction in range(180,270):
+        #     self.vBlocked = self.__check_angel_range(range(135,225))
+        #     self.hBlocked = self.__check_angel_range(range(225,315))
             
-        elif self.direction in range(270,360) :
-            self.vBlocked = self.__check_angel_range(range(0,45)) or self.__check_angel_range(range(305,360))
-            self.hBlocked = self.__check_angel_range(range(225,315))
+        # elif self.direction in range(270,360) :
+        #     self.vBlocked = self.__check_angel_range(range(0,45)) or self.__check_angel_range(range(305,360))
+        #     self.hBlocked = self.__check_angel_range(range(225,315))
 
-        else:
-            rospy.logerr("MotorControlNode: Wrong direction, stopping motors.")
-            self.hComponent, self.vComponent = 0,0
-            return
+        # else:
+        #     rospy.logerr("MotorControlNode: Wrong direction, stopping motors.")
+        #     self.hComponent, self.vComponent = 0,0
+        #     return
         
         # Splits the speed components according to fish's direction
-        self.hComponent, self.vComponent = self.__split_components()
+        # self.hComponent, self.vComponent = self.__split_components()
 
 
     def __check_angel_range(self, angle_range):
@@ -128,13 +140,13 @@ class MotorControlNode(AbstractNode):
             if twist.angular.z != 0 and twist.linear.x ==0 and twist.linear.y==0:
                 self.motor_control.rotate(twist.angular.z)
             else:
-                self.motor_control.move_by_components(horizontal_component, vertical_component)
+                self.move_by_components(horizontal_component, vertical_component)
 
     
     def __on_shutdown(self):
         if self.motor_control:
             rospy.logwarn("MotorControlNode: Stopping motors.")
-            self.hBlocked, self.vBlocked = True, True
+            # self.hBlocked, self.vBlocked = True, True
             self.motor_control.move_by_components(0, 0)
 
 if __name__ == "__main__":

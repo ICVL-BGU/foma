@@ -394,13 +394,13 @@ class MainWindow(QMainWindow):
         """
 
         if direction == "forward":
-            self.__velocity.linear.x = self.__manual_speed if is_pressed else 0
-        elif direction == "backward":
-            self.__velocity.linear.x = -self.__manual_speed if is_pressed else 0
-        elif direction == "left":
             self.__velocity.linear.y = self.__manual_speed if is_pressed else 0
-        elif direction == "right":
+        elif direction == "left":
+            self.__velocity.linear.x = -self.__manual_speed if is_pressed else 0
+        elif direction == "backward":
             self.__velocity.linear.y = -self.__manual_speed if is_pressed else 0
+        elif direction == "right":
+            self.__velocity.linear.x = self.__manual_speed if is_pressed else 0
         elif direction == "cw":
             self.__velocity.angular.z = self.__manual_speed if is_pressed else 0
         elif direction == "ccw":

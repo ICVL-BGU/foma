@@ -6,7 +6,7 @@ from abstract_node import AbstractNode
 from adafruit_rplidar import RPLidar, RPLidarException
 import numpy as np
 
-LIDAR_OFFSET = 0
+LIDAR_OFFSET = 90
 
 class LIDARNode(AbstractNode):
     def __init__(self):
@@ -52,7 +52,8 @@ class LIDARNode(AbstractNode):
                     
                     # Populate the distances into the ranges field
                     laser_scan.ranges = self.scans
-                    
+                    # print(laser_scan.ranges)
+                    # print(np.argmin(laser_scan.ranges))
                     self.lidar_pub.publish(laser_scan)
             
             except RPLidarException as e:

@@ -5,7 +5,7 @@
     <!-- Camera Nodes -->
     <group ns="cameras">
         <!-- Launch 5 camera nodes -->
-        <node pkg="fov" type="ceiling_camera_node.py" name="ceiling_camera_1" output="screen">
+        <!-- <node pkg="fov" type="ceiling_camera_node.py" name="ceiling_camera_1" output="screen">
             <param name="camera_id" value="1" />
             <param name="camera_ip" value="$(arg base_ip)1:554" />
         </node>
@@ -28,7 +28,7 @@
         <node pkg="fov" type="ceiling_camera_node.py" name="ceiling_camera_5" output="screen">
             <param name="camera_id" value="5" />
             <param name="camera_ip" value="$(arg base_ip)5:554" />
-        </node>
+        </node> -->
     </group>
     <!-- Node 1 -->
     <!-- <node pkg="fov" type="ceiling_camera_node.py" name="ceiling_camera_node" output="screen"/> -->
@@ -37,7 +37,7 @@
     <!-- <node pkg="fov" type="fish_detection_node.py" name="fish_detection_node" output="screen"/> -->
 
     <!-- Node 3 -->
-    <!-- <node pkg="fov" type="gui_node.py" name="gui_node" output="screen"/> -->
+    <node pkg="fov" type="gui_node.py" name="gui_node" output="screen"/>
 
     <!-- Node 4 -->
     <!-- <node pkg="fov" type="lidar_node.py" name="lidar_node" output="screen"/> -->
