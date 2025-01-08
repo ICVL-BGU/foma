@@ -1,4 +1,6 @@
 file(REMOVE_RECURSE
+  "/home/icvl/FOMA/devel/lib/python3/dist-packages/fov/msg/_FishState.py"
+  "/home/icvl/FOMA/devel/lib/python3/dist-packages/fov/msg/__init__.py"
   "/home/icvl/FOMA/devel/lib/python3/dist-packages/fov/srv/_Check.py"
   "/home/icvl/FOMA/devel/lib/python3/dist-packages/fov/srv/_Coordinate.py"
   "/home/icvl/FOMA/devel/lib/python3/dist-packages/fov/srv/_Light.py"

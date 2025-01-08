@@ -1,5 +1,6 @@
 file(REMOVE_RECURSE
   "/home/icvl/FOMA/devel/share/roseus/ros/fov/manifest.l"
+  "/home/icvl/FOMA/devel/share/roseus/ros/fov/msg/FishState.l"
   "/home/icvl/FOMA/devel/share/roseus/ros/fov/srv/Check.l"
   "/home/icvl/FOMA/devel/share/roseus/ros/fov/srv/Coordinate.l"
   "/home/icvl/FOMA/devel/share/roseus/ros/fov/srv/Light.l"
