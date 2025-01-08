@@ -67,14 +67,14 @@ set(fov_CONFIG_INCLUDED TRUE)
 
 # set variables for source/devel/install prefixes
 if("FALSE" STREQUAL "TRUE")
-  set(fov_SOURCE_PREFIX /home/icvl/fov_ws/src/fov)
-  set(fov_DEVEL_PREFIX /home/icvl/fov_ws/devel)
+  set(fov_SOURCE_PREFIX /home/icvl/FOMA/src/fov)
+  set(fov_DEVEL_PREFIX /home/icvl/FOMA/devel)
   set(fov_INSTALL_PREFIX "")
   set(fov_PREFIX ${fov_DEVEL_PREFIX})
 else()
   set(fov_SOURCE_PREFIX "")
   set(fov_DEVEL_PREFIX "")
-  set(fov_INSTALL_PREFIX /home/icvl/fov_ws/install)
+  set(fov_INSTALL_PREFIX /home/icvl/FOMA/install)
   set(fov_PREFIX ${fov_INSTALL_PREFIX})
 endif()
 
@@ -154,7 +154,7 @@ foreach(library ${libraries})
     set(lib_path "")
     set(lib "${library}-NOTFOUND")
     # since the path where the library is found is returned we have to iterate over the paths manually
-    foreach(path /home/icvl/fov_ws/install/lib;/opt/ros/noetic/lib)
+    foreach(path /home/icvl/FOMA/install/lib;/home/icvl/FOMA/devel/lib;/opt/ros/noetic/lib)
       find_library(lib ${library}
         PATHS ${path}
         NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)

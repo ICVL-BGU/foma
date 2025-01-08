@@ -7,7 +7,7 @@ import cv2
 
 # PyQt5 imports
 from PyQt5.QtCore import Qt, QTimer, QEvent
-from PyQt5.QtGui import QPixmap, QImage
+from PyQt5.QtGui import QPixmap, QImage, QDoubleValidator
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -20,6 +20,8 @@ from PyQt5.QtWidgets import (
     QSlider,
     QVBoxLayout,
     QDialog,
+    QCheckBox,
+    QLineEdit,
     )
 
 # ROS imports
@@ -257,7 +259,9 @@ class MainWindow(QMainWindow):
         self.fish_detection_control = rospy.ServiceProxy('fish_detection/system_toggle', SetBool)
         self.light_dimmer_control = rospy.ServiceProxy('light_dimmer/system_toggle', SetBool)
         self.motor_control = rospy.ServiceProxy('motor_control/system_toggle', SetBool)
-        self.manual_control_cmd = rospy.Publisher('/gui/manual_control_cmd', Twist, queue_size=10)
+        self.motor_mode_control = rospy.ServiceProxy('motor_control/motor_mode_control', SetBool)
+        self.manual_control_cmd = rospy.Publisher('gui/manual_control', Twist, queue_size=10)
+        self.__manual_speed = 0.5
 
     def __systems_toggle(self, state: bool):
         rospy.wait_for_service('fish_camera/system_toggle')
@@ -274,6 +278,8 @@ class MainWindow(QMainWindow):
         self.motor_control(state)
 
     def __init_manual_control_window(self):
+        rospy.wait_for_service('motor_control/motor_mode_control')
+        self.motor_mode_control(True)
         self.__manual_control_window = QDialog(self)
         self.__manual_control_window.setWindowTitle("Manual Robot Control")
         self.__manual_control_window.setFixedSize(300, 300)
@@ -290,6 +296,7 @@ class MainWindow(QMainWindow):
 
             # Clean up the widget reference
             self.__manual_control_window = None
+            self.motor_mode_control(False)
 
             # Accept the close event
             event.accept()
@@ -329,13 +336,34 @@ class MainWindow(QMainWindow):
         right_button = QPushButton("→")
         cw_button = QPushButton("↻")
         ccw_button = QPushButton("↺")
+        bypass_lidar_label = QLabel("Bypass LIDAR")
+        bypass_lidar_checkbox = QCheckBox()
+        speed_control_label = QLabel("Speed Control")
+        speed_control_textbox = QLineEdit()
+        speed_control_button = QPushButton("Set")
+        
+        speed_control_textbox.setPlaceholderText("0.5")
+        speed_control_textbox.setValidator(QDoubleValidator(0.0, 1.0, 2))
+        def set_speed():
+            try:
+                speed = float(speed_control_textbox.text())
+                rospy.loginfo(f"Speed set to: {speed}")
+                self.__manual_speed = speed
+            except ValueError:
+                rospy.logwarn("Invalid speed value")
 
-        control_layout.addWidget(forward_button, 0, 1)
-        control_layout.addWidget(backward_button, 2, 1)
+        control_layout.addWidget(forward_button, 0, 1, 1, 2)
+        control_layout.addWidget(backward_button, 2, 1, 1, 2)
         control_layout.addWidget(left_button, 1, 0)
-        control_layout.addWidget(right_button, 1, 2)
-        control_layout.addWidget(cw_button, 1, 3)
-        control_layout.addWidget(ccw_button, 1, 4)
+        control_layout.addWidget(right_button, 1, 3)
+        control_layout.addWidget(cw_button, 1, 1)
+        control_layout.addWidget(ccw_button, 1, 2)
+        control_layout.addWidget(bypass_lidar_label, 3, 0, 1, 2)
+        control_layout.addWidget(bypass_lidar_checkbox, 3, 2, 1, 2)
+        control_layout.addWidget(speed_control_label, 4, 0, 1, 2)
+        control_layout.addWidget(speed_control_textbox, 4, 2)
+        control_layout.addWidget(speed_control_button, 4, 3)
+
 
         forward_button.pressed.connect(lambda: self.__update_velocity("forward", True))
         forward_button.released.connect(lambda: self.__update_velocity("forward", False))
@@ -349,6 +377,7 @@ class MainWindow(QMainWindow):
         cw_button.released.connect(lambda: self.__update_velocity("cw", False))
         ccw_button.pressed.connect(lambda: self.__update_velocity("ccw", True))
         ccw_button.released.connect(lambda: self.__update_velocity("ccw", False))
+        speed_control_button.clicked.connect(set_speed)
 
         self.__manual_control_window.setLayout(control_layout)
         
@@ -363,24 +392,23 @@ class MainWindow(QMainWindow):
         """
         Update robot velocity based on button presses.
         """
-        linear_speed = 0.5
-        angular_speed = 1.0
 
         if direction == "forward":
-            self.__velocity.linear.x = linear_speed if is_pressed else 0
+            self.__velocity.linear.x = self.__manual_speed if is_pressed else 0
         elif direction == "backward":
-            self.__velocity.linear.x = -linear_speed if is_pressed else 0
+            self.__velocity.linear.x = -self.__manual_speed if is_pressed else 0
         elif direction == "left":
-            self.__velocity.linear.y = linear_speed if is_pressed else 0
+            self.__velocity.linear.y = self.__manual_speed if is_pressed else 0
         elif direction == "right":
-            self.__velocity.linear.y = -linear_speed if is_pressed else 0
+            self.__velocity.linear.y = -self.__manual_speed if is_pressed else 0
         elif direction == "cw":
-            self.__velocity.angular.z = -angular_speed if is_pressed else 0
+            self.__velocity.angular.z = self.__manual_speed if is_pressed else 0
         elif direction == "ccw":
-            self.__velocity.angular.z = angular_speed if is_pressed else 0
+            self.__velocity.angular.z = -self.__manual_speed if is_pressed else 0
 
         # Publish the velocity to the robot
         self.manual_control_cmd.publish(self.__velocity)
+        # rospy.loginfo(f"Velocity: {self.__velocity}")
         
 
     def read_fish_image(self, img_msg: Image):
