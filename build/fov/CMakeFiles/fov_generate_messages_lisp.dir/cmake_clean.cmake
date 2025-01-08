@@ -1,4 +1,5 @@
 file(REMOVE_RECURSE
+  "/home/icvl/FOMA/devel/share/common-lisp/ros/fov/msg/FishState.lisp"
   "/home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Check.lisp"
   "/home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Coordinate.lisp"
   "/home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Light.lisp"

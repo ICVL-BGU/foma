@@ -4,6 +4,7 @@
 import sys
 import rospy
 import cv2
+import numpy as np
 
 # PyQt5 imports
 from PyQt5.QtCore import Qt, QTimer, QEvent
@@ -22,6 +23,8 @@ from PyQt5.QtWidgets import (
     QDialog,
     QCheckBox,
     QLineEdit,
+    QGroupBox,
+    QRadioButton,
     )
 
 # ROS imports
@@ -30,6 +33,7 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import UInt16
 from std_srvs.srv import Trigger, SetBool
 from cv_bridge import CvBridge, CvBridgeError
+from fov.msg import FishState
 
 # Custom ROS messages
 from fov.srv import Light
@@ -95,6 +99,7 @@ class MainWindow(QMainWindow):
         self.__BL_layout.addWidget(self.__feed_button, 1, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__manual_control_label, 0, 2, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__manual_control_button, 1, 2, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__direction_group, 0, 3, 2, 1, alignment=Qt.AlignCenter)
         
         self.__BL_widget = QFrame()
         self.__BL_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
@@ -263,7 +268,7 @@ class MainWindow(QMainWindow):
 
     def __init_subscriptions_and_services(self):
         self.fish_image_sub = rospy.Subscriber('fish_camera/image', Image, self.read_fish_image)
-        self.fish_dir_sub = rospy.Subscriber('fish_detection/direction', UInt16, self.update_direction)
+        self.fish_dir_sub = rospy.Subscriber('fish_detection/direction', FishState, self.update_state)
         self.stitched_image_pub = rospy.Subscriber('image_stitcher/image', Image, self.update_room_image)
         self.feed = rospy.ServiceProxy('fish_feeder/feed', Trigger)
         self.dim_lights = rospy.ServiceProxy('light_dimmer/change', Light)
@@ -428,8 +433,10 @@ class MainWindow(QMainWindow):
     def read_fish_image(self, img_msg: Image):
         try:
             img = self.bridge.imgmsg_to_cv2(img_msg)
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            self.TL_layout.update(img)
+            # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            q_image = QImage(img.data, img.shape[1], img.shape[0], QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(q_image)
+            self.__fish_image.setPixmap(pixmap)
         except CvBridgeError as e:
             rospy.logwarn(e)
 
@@ -496,6 +503,44 @@ class MainWindow(QMainWindow):
 
         # Update the QLabel with the new image
         self.__fish_image.setPixmap(resized_pixmap)
+
+    def update_room_image(self, img_msg: Image):
+        """
+        Callback to update the room camera image on the GUI.
+        """
+        try:
+            # Convert the ROS Image message to a numpy array
+            img = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="passthrough")
+            
+            # Check the shape to ensure it's compatible with OpenCV's BGR format
+            if img.ndim == 3 and img.shape[2] == 3:
+                # Assume the image is BGR and proceed
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            else:
+                rospy.logwarn("Unexpected image format, expected 3-channel image.")
+                return
+            
+            # Convert to QImage
+            height, width, channel = img.shape
+            bytes_per_line = 3 * width
+            q_image = QImage(img.data, width, height, bytes_per_line, QImage.Format_RGB888)
+            
+            # Scale the image to fit the QLabel
+            pixmap = QPixmap.fromImage(q_image)
+            scaled_pixmap = pixmap.scaled(
+                self.__room_image.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            
+            # Update the QLabel with the scaled QPixmap
+            self.__room_image.setPixmap(scaled_pixmap)
+            
+        except CvBridgeError as e:
+            rospy.logwarn(f"Error converting image message: {e}")
+        except Exception as e:
+            rospy.logwarn(f"Unexpected error in update_room_image: {e}")
+
 
     def update_image(self, img_msg: Image, destination: QLabel):
         """
