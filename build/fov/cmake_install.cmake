@@ -1,8 +1,8 @@
-# Install script for directory: /home/icvl/fov_ws/src/fov
+# Install script for directory: /home/icvl/FOMA/src/fov
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
-  set(CMAKE_INSTALL_PREFIX "/home/icvl/fov_ws/install")
+  set(CMAKE_INSTALL_PREFIX "/home/icvl/FOMA/install")
 endif()
 string(REGEX REPLACE "/$" "" CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
 
@@ -39,55 +39,56 @@ endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
   file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/fov/srv" TYPE FILE FILES
-    "/home/icvl/fov_ws/src/fov/srv/Check.srv"
-    "/home/icvl/fov_ws/src/fov/srv/Light.srv"
+    "/home/icvl/FOMA/src/fov/srv/Check.srv"
+    "/home/icvl/FOMA/src/fov/srv/Light.srv"
+    "/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
     )
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/fov/cmake" TYPE FILE FILES "/home/icvl/fov_ws/build/fov/catkin_generated/installspace/fov-msg-paths.cmake")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/fov/cmake" TYPE FILE FILES "/home/icvl/FOMA/build/fov/catkin_generated/installspace/fov-msg-paths.cmake")
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/include" TYPE DIRECTORY FILES "/home/icvl/fov_ws/devel/include/fov")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/include" TYPE DIRECTORY FILES "/home/icvl/FOMA/devel/include/fov")
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/roseus/ros" TYPE DIRECTORY FILES "/home/icvl/fov_ws/devel/share/roseus/ros/fov")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/roseus/ros" TYPE DIRECTORY FILES "/home/icvl/FOMA/devel/share/roseus/ros/fov")
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/common-lisp/ros" TYPE DIRECTORY FILES "/home/icvl/fov_ws/devel/share/common-lisp/ros/fov")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/common-lisp/ros" TYPE DIRECTORY FILES "/home/icvl/FOMA/devel/share/common-lisp/ros/fov")
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/gennodejs/ros" TYPE DIRECTORY FILES "/home/icvl/fov_ws/devel/share/gennodejs/ros/fov")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/gennodejs/ros" TYPE DIRECTORY FILES "/home/icvl/FOMA/devel/share/gennodejs/ros/fov")
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
-  execute_process(COMMAND "/usr/bin/python3" -m compileall "/home/icvl/fov_ws/devel/lib/python3/dist-packages/fov")
+  execute_process(COMMAND "/usr/bin/python3" -m compileall "/home/icvl/FOMA/devel/lib/python3/dist-packages/fov")
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/python3/dist-packages" TYPE DIRECTORY FILES "/home/icvl/fov_ws/devel/lib/python3/dist-packages/fov")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/python3/dist-packages" TYPE DIRECTORY FILES "/home/icvl/FOMA/devel/lib/python3/dist-packages/fov")
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/pkgconfig" TYPE FILE FILES "/home/icvl/fov_ws/build/fov/catkin_generated/installspace/fov.pc")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/pkgconfig" TYPE FILE FILES "/home/icvl/FOMA/build/fov/catkin_generated/installspace/fov.pc")
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/fov/cmake" TYPE FILE FILES "/home/icvl/fov_ws/build/fov/catkin_generated/installspace/fov-msg-extras.cmake")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/fov/cmake" TYPE FILE FILES "/home/icvl/FOMA/build/fov/catkin_generated/installspace/fov-msg-extras.cmake")
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
   file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/fov/cmake" TYPE FILE FILES
-    "/home/icvl/fov_ws/build/fov/catkin_generated/installspace/fovConfig.cmake"
-    "/home/icvl/fov_ws/build/fov/catkin_generated/installspace/fovConfig-version.cmake"
+    "/home/icvl/FOMA/build/fov/catkin_generated/installspace/fovConfig.cmake"
+    "/home/icvl/FOMA/build/fov/catkin_generated/installspace/fovConfig-version.cmake"
     )
 endif()
 
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
-  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/fov" TYPE FILE FILES "/home/icvl/fov_ws/src/fov/package.xml")
+  file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/share/fov" TYPE FILE FILES "/home/icvl/FOMA/src/fov/package.xml")
 endif()
 
