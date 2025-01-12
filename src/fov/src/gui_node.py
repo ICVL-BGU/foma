@@ -97,8 +97,9 @@ class MainWindow(QMainWindow):
         self.__BL_layout.addWidget(self.__lights_slider, 1, 0, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__feed_label, 0, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__feed_button, 1, 1, alignment=Qt.AlignCenter)
-        self.__BL_layout.addWidget(self.__manual_control_label, 0, 2, alignment=Qt.AlignCenter)
-        self.__BL_layout.addWidget(self.__manual_control_button, 1, 2, alignment=Qt.AlignCenter)
+        # self.__BL_layout.addWidget(self.__manual_control_label, 0, 2, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__manual_control_button, 0, 2, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__feed_loading_button, 1, 2, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__direction_group, 0, 3, 2, 1, alignment=Qt.AlignCenter)
         
         self.__BL_widget = QFrame()
@@ -112,7 +113,6 @@ class MainWindow(QMainWindow):
         self.__BR_layout.addWidget(self.__stop_button, 0, 1, alignment=Qt.AlignCenter)
         self.__BR_layout.addWidget(self.__reset_button, 1, 0, alignment=Qt.AlignCenter)
         self.__BR_layout.addWidget(self.__close_button, 1, 1, alignment=Qt.AlignCenter)
-        self.__BR_layout.addWidget(self.__feed_loading_button, 2, 0, 2, 2, alignment=Qt.AlignCenter)
 
         self.__BR_widget = QFrame()
         self.__BR_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
@@ -422,6 +422,11 @@ class MainWindow(QMainWindow):
         self.__feeding_load_window.setWindowModality(Qt.ApplicationModal)
         step = -1
 
+        def empty_feeder():
+            for _ in range(30):
+                self.feed()
+                rospy.sleep(0.1)
+
         def on_key_press(event):
             """
             Handle key press events for robot control.
@@ -438,11 +443,14 @@ class MainWindow(QMainWindow):
                 for _ in range(6):
                     self.feed()
                 step += 1
-                step_label.setText(f"Step: {step}/4")
+                step_label.setText(f"Step: {step}/5")
             elif step == 4:
                 for _ in range(4):
                     self.feed()
                 step =-1
+                empty_button.setDisabled(False)
+                step_label.setText("Finished Loading")
+                enter_label.setVisible(False)
 
         self.__feeding_load_window.keyPressEvent = on_key_press
 
@@ -450,23 +458,27 @@ class MainWindow(QMainWindow):
 
         empty_button = QPushButton("Empty Feeder")
         start_load_button = QPushButton("Start Load")
-        step_label = QLabel(f"Step: {0}/5")
+        step_label = QLabel()
         enter_label = QLabel("Press Enter to continue")
         step_label.setVisible(False)
         enter_label.setVisible(False)
 
         def on_start_click():
             nonlocal step
+            empty_button.setDisabled(True)
+            step_label.setText("Step: 0/5")
             step_label.setVisible(True)
             enter_label.setVisible(True)
             step = 0
+            self.__feeding_load_window.setFocusPolicy(Qt.StrongFocus)
+            self.__feeding_load_window.setFocus()
         
         control_layout.addWidget(empty_button, 0, 0)
         control_layout.addWidget(start_load_button, 1, 0)
         control_layout.addWidget(step_label, 2, 0)
         control_layout.addWidget(enter_label, 3, 0)
 
-        empty_button.pressed.connect(lambda: [self.feed() for _ in range(30)])
+        empty_button.pressed.connect(empty_feeder)
         start_load_button.pressed.connect(on_start_click)
 
         self.__feeding_load_window.setLayout(control_layout)
