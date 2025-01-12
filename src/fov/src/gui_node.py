@@ -97,8 +97,9 @@ class MainWindow(QMainWindow):
         self.__BL_layout.addWidget(self.__lights_slider, 1, 0, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__feed_label, 0, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__feed_button, 1, 1, alignment=Qt.AlignCenter)
-        self.__BL_layout.addWidget(self.__manual_control_label, 0, 2, alignment=Qt.AlignCenter)
-        self.__BL_layout.addWidget(self.__manual_control_button, 1, 2, alignment=Qt.AlignCenter)
+        # self.__BL_layout.addWidget(self.__manual_control_label, 0, 2, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__manual_control_button, 0, 2, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__feed_loading_button, 1, 2, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__direction_group, 0, 3, 2, 1, alignment=Qt.AlignCenter)
         
         self.__BL_widget = QFrame()
@@ -216,6 +217,12 @@ class MainWindow(QMainWindow):
         font.setPointSize(13)
         self.__manual_control_label.setFont(font)
         self.__manual_control_label.setAlignment(Qt.AlignHCenter)
+
+        self.__feed_loading_button = QPushButton()
+        self.__feed_loading_button.setText("Load Feeder")
+        self.__feed_loading_button.setDisabled(False)
+        self.__feed_loading_button.setMaximumHeight(50)
+        self.__feed_loading_button.clicked.connect(self.__init_feeding_load_window)
 
         # Fish image init
         self.__fish_image = QLabel() #TODO : add resize+update
@@ -406,6 +413,76 @@ class MainWindow(QMainWindow):
 
         self.__manual_control_window.show()
 
+
+    def __init_feeding_load_window(self):
+        rospy.wait_for_service('fish_feeder/feed')
+        self.__feeding_load_window = QDialog(self)
+        self.__feeding_load_window.setWindowTitle("Load feeder")
+        self.__feeding_load_window.setFixedSize(300, 300)
+        self.__feeding_load_window.setWindowModality(Qt.ApplicationModal)
+        step = -1
+
+        def empty_feeder():
+            for _ in range(30):
+                self.feed()
+                rospy.sleep(0.1)
+
+        def on_key_press(event):
+            """
+            Handle key press events for robot control.
+            """
+            key = event.key()
+            if key == Qt.Key_Return and step!=-1:  # Enter
+                next_step()
+            else:
+                event.ignore()
+        
+        def next_step():
+            nonlocal step
+            if step in range(4):
+                for _ in range(6):
+                    self.feed()
+                step += 1
+                step_label.setText(f"Step: {step}/5")
+            elif step == 4:
+                for _ in range(4):
+                    self.feed()
+                step =-1
+                empty_button.setDisabled(False)
+                step_label.setText("Finished Loading")
+                enter_label.setVisible(False)
+
+        self.__feeding_load_window.keyPressEvent = on_key_press
+
+        control_layout = QGridLayout()
+
+        empty_button = QPushButton("Empty Feeder")
+        start_load_button = QPushButton("Start Load")
+        step_label = QLabel()
+        enter_label = QLabel("Press Enter to continue")
+        step_label.setVisible(False)
+        enter_label.setVisible(False)
+
+        def on_start_click():
+            nonlocal step
+            empty_button.setDisabled(True)
+            step_label.setText("Step: 0/5")
+            step_label.setVisible(True)
+            enter_label.setVisible(True)
+            step = 0
+            self.__feeding_load_window.setFocusPolicy(Qt.StrongFocus)
+            self.__feeding_load_window.setFocus()
+        
+        control_layout.addWidget(empty_button, 0, 0)
+        control_layout.addWidget(start_load_button, 1, 0)
+        control_layout.addWidget(step_label, 2, 0)
+        control_layout.addWidget(enter_label, 3, 0)
+
+        empty_button.pressed.connect(empty_feeder)
+        start_load_button.pressed.connect(on_start_click)
+
+        self.__feeding_load_window.setLayout(control_layout)
+        self.__feeding_load_window.show()
 
     def __update_velocity(self, direction, is_pressed):
         """
