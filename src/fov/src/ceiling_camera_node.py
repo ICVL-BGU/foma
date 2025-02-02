@@ -76,15 +76,15 @@ class CeilingCameraNode(AbstractNode):
             mask[y:y+h, x:x+w] = 255
             
             self.mask = cv2.warpPerspective(mask, self.homography, (self.output_width, self.output_height), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
-            while True:
-                try:
-                    self.coordinate_set = rospy.ServiceProxy('/image_stitcher/coordinates', Coordinate)
-                    rospy.wait_for_service('/image_stitcher/coordinates', timeout = 10.0)
-                except rospy.ROSException as e:
-                    rospy.logerr(f"Service unavailable: {e}")
-                else:
-                    rospy.loginfo("Connected to service succesfully")
-                    break
+            # while True:
+            #     try:
+            #         self.coordinate_set = rospy.ServiceProxy('/image_stitcher/coordinates', Coordinate)
+            #         rospy.wait_for_service('/image_stitcher/coordinates', timeout = 10.0)
+            #     except rospy.ROSException as e:
+            #         rospy.logerr(f"Service unavailable: {e}")
+            #     else:
+            #         rospy.loginfo("Connected to service succesfully")
+            #         break
 
             # Publish the image
             undistorted_img = cv2.undistort(img, self.calib_params['K'], self.calib_params['D'], None, self.calib_params['mtx'])
@@ -104,33 +104,37 @@ class CeilingCameraNode(AbstractNode):
             mask_msg.layout.dim[1].stride = self.mask.shape[1]
             mask_msg.data = self.mask.flatten().tolist()
 
-            self.coordinate_set(CoordinateRequest(idx=self.camera_id, 
-                                                xmin=self.coordinates['xmin'], 
-                                                ymin=self.coordinates['ymin'], 
-                                                xmax=self.coordinates['xmax'], 
-                                                ymax=self.coordinates['ymax'], 
-                                                mask = mask_msg))
+            # self.coordinate_set(CoordinateRequest(idx=self.camera_id, 
+            #                                     xmin=self.coordinates['xmin'], 
+            #                                     ymin=self.coordinates['ymin'], 
+            #                                     xmax=self.coordinates['xmax'], 
+            #                                     ymax=self.coordinates['ymax'], 
+            #                                     mask = mask_msg))
 
         else:
             rospy.logerr(f"Camera {self.camera_id}: No image captured.")
             rospy.signal_shutdown("No image captured.")
 
     def run(self):
+        rate = rospy.Rate(15)
         while not rospy.is_shutdown():
             try:
                 ret, img = self.camera.read()
                 if ret:
-                    # Publish the image
-                    undistorted_img = cv2.undistort(img, self.calib_params['K'], self.calib_params['D'], None, self.calib_params['mtx'])
-                    warped_image = cv2.warpPerspective(undistorted_img, self.homography, (self.output_width, self.output_height), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
-                    img_msg = self.bridge.cv2_to_imgmsg(warped_image, "bgr8")
+                    resized = cv2.resize(img, (0, 0), fx=self.resize_factor, fy=self.resize_factor)
+                    img_msg = self.bridge.cv2_to_imgmsg(resized, "bgr8")
                     self.image_pub.publish(img_msg)
+                    # Publish the image
+                    # undistorted_img = cv2.undistort(img, self.calib_params['K'], self.calib_params['D'], None, self.calib_params['mtx'])
+                    # warped_image = cv2.warpPerspective(undistorted_img, self.homography, (self.output_width, self.output_height), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+                    # img_msg = self.bridge.cv2_to_imgmsg(warped_image, "bgr8")
+                    # self.image_pub.publish(img_msg)
                 else:
                     rospy.logwarn(f"Camera {self.camera_id}: No image captured.")
             except CvBridgeError as e:
                 rospy.logerr(f"Camera {self.camera_id}: CV Bridge Error - {e}")
 
-            rospy.sleep(0.05)
+            rate.sleep()
 
     def __on_shutdown(self):
         rospy.loginfo(f"Ceiling Camera {self.camera_id}: Releasing camera.")

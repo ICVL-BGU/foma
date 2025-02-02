@@ -1,11 +1,14 @@
 <launch>   
     <!-- Base RTSP URL -->
     <arg name="base_ip" default="rtsp://admin:icvl2023@1.1.2.10" />
-
+    <node pkg="fov" type="ceiling_camera_node.py" name="ceiling_camera_3" output="screen">
+        <param name="camera_id" value="3" />
+        <param name="camera_ip" value="$(arg base_ip)3:554" />
+    </node>
     <!-- Camera Nodes -->
     <group ns="cameras">
-        <!-- Launch 5 camera nodes
-        <node pkg="fov" type="ceiling_camera_node.py" name="ceiling_camera_1" output="screen">
+        Launch 5 camera nodes
+        <!-- <node pkg="fov" type="ceiling_camera_node.py" name="ceiling_camera_1" output="screen">
             <param name="camera_id" value="1" />
             <param name="camera_ip" value="$(arg base_ip)1:554" />
         </node>
