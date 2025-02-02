@@ -31,7 +31,7 @@ class CeilingCameraNode(AbstractNode):
         self.bridge = CvBridge()
         
         # Load calibration parameters
-        param_dir = r'/home/icvl/fov_ws/src/fov/src/etc'
+        param_dir = r'/home/icvl/FOMA/src/fov/src/etc'
         self.base_idx = 3
         self.resize_factor = 0.5
         self.calib_params = pickle.load(open(os.path.join(param_dir, "calib_params.pkl"), "rb"))[self.camera_id]

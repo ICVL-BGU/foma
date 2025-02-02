@@ -404,6 +404,19 @@ class MainWindow(QMainWindow):
         ccw_button.pressed.connect(lambda: self.__update_velocity("ccw", True))
         ccw_button.released.connect(lambda: self.__update_velocity("ccw", False))
         speed_control_button.clicked.connect(set_speed)
+        # def toggle_lidar_bypass(state):
+        #     try:
+        #         rospy.wait_for_service('lidar/bypass')
+        #         lidar_bypass_service = rospy.ServiceProxy('lidar/bypass', SetBool)
+        #         response = lidar_bypass_service(state)
+        #         if response.success:
+        #             rospy.loginfo(f"LIDAR bypass set to: {state}")
+        #         else:
+        #             rospy.logwarn(f"Failed to set LIDAR bypass to: {state}")
+        #     except rospy.ServiceException as e:
+        #         rospy.logwarn(f"Service call failed: {e}")
+
+        # bypass_lidar_checkbox.stateChanged.connect(lambda state: toggle_lidar_bypass(state == Qt.Checked))
 
         self.__manual_control_window.setLayout(control_layout)
         

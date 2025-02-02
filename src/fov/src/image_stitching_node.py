@@ -75,7 +75,7 @@ class ImageStitchingNode:
                         stitched_msg = self.bridge.cv2_to_imgmsg(self.image, "bgr8")
                         self.stitched_image_pub.publish(stitched_msg)
                             
-                        # output_dir = "/home/icvl/fov_ws/src/fov/output"
+                        # output_dir = "/home/icvl/FOMA/src/fov/output"
                         # if not os.path.exists(output_dir):
                         #     os.makedirs(output_dir)
                         
