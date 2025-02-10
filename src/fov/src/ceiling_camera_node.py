@@ -14,15 +14,15 @@ import os
 class CeilingCameraNode(AbstractNode):
     def __init__(self):
         # Initialize the node with a name
-        super().__init__(f'ceiling_camera_node', f'Ceiling Camera Node')
+        super().__init__('ceiling_camera_node', 'Ceiling Camera Node')
 
         
-        rospy.loginfo(f"Ceiling Camera Node: Node started.")
+        rospy.loginfo("Ceiling Camera Node: Node started.")
         # Initialize the camera
         self.camera = cv2.VideoCapture("rtsp://admin:icvl2023@1.1.2.103:554")
 
         # Set up the image publisher
-        self.image_pub = rospy.Publisher(f'ceiling_camera/image', Image, queue_size=10)
+        self.image_pub = rospy.Publisher('ceiling_camera/image', Image, queue_size=10)
         
         # OpenCV bridge
         self.bridge = CvBridge()
