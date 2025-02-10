@@ -7,4 +7,7 @@
 
     <!-- Node 3 -->
     <node pkg="fov" type="gui_node.py" name="gui_node" output="screen"/>
+
+    <!-- Node 4 -->
+    <node pkg="fov" type="localization_node.py" name="localization_node" output="screen"/>
 </launch>

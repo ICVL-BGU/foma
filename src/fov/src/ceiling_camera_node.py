@@ -29,7 +29,7 @@ class CeilingCameraNode(AbstractNode):
         
         # Load calibration parameters
         # param_dir = r'/home/icvl/FOMA/src/fov/src/etc'
-        self.resize_factor = 0.5
+        self.resize_factor = 1
 
         # self.calib_params = pickle.load(open(os.path.join(param_dir, "calib_params.pkl"), "rb"))[self.camera_id]
 
