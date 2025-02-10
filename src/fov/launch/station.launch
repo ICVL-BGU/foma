@@ -1,53 +1,10 @@
 <launch>   
-    <!-- Base RTSP URL -->
-    <arg name="base_ip" default="rtsp://admin:icvl2023@1.1.2.10" />
-
-    <!-- Camera Nodes -->
-    <group ns="cameras">
-        <!-- Launch 5 camera nodes
-        <node pkg="fov" type="ceiling_camera_node.py" name="ceiling_camera_1" output="screen">
-            <param name="camera_id" value="1" />
-            <param name="camera_ip" value="$(arg base_ip)1:554" />
-        </node>
-
-        <node pkg="fov" type="ceiling_camera_node.py" name="ceiling_camera_2" output="screen">
-            <param name="camera_id" value="2" />
-            <param name="camera_ip" value="$(arg base_ip)2:554" />
-        </node>
-
-        <node pkg="fov" type="ceiling_camera_node.py" name="ceiling_camera_3" output="screen">
-            <param name="camera_id" value="3" />
-            <param name="camera_ip" value="$(arg base_ip)3:554" />
-        </node>
-
-        <node pkg="fov" type="ceiling_camera_node.py" name="ceiling_camera_4" output="screen">
-            <param name="camera_id" value="4" />
-            <param name="camera_ip" value="$(arg base_ip)4:554" />
-        </node>
-
-        <node pkg="fov" type="ceiling_camera_node.py" name="ceiling_camera_5" output="screen">
-            <param name="camera_id" value="5" />
-            <param name="camera_ip" value="$(arg base_ip)5:554" />
-        </node> -->
-    </group>
     <!-- Node 1 -->
-    <!-- <node pkg="fov" type="image_stitching_node.py" name="image_stitching_node" output="screen"/> -->
+    <node pkg="fov" type="ceiling_camera_node.py" name="ceiling_camera" output="screen"/>
 
     <!-- Node 2 -->
     <!-- <node pkg="fov" type="fish_detection_node.py" name="fish_detection_node" output="screen"/> -->
 
     <!-- Node 3 -->
     <node pkg="fov" type="gui_node.py" name="gui_node" output="screen"/>
-
-    <!-- Node 4 -->
-    <!-- <node pkg="fov" type="lidar_node.py" name="lidar_node" output="screen"/> -->
-
-    <!-- Node 5 -->
-    <!-- <node pkg="fov" type="motor_control_node.py" name="motor_control_node" output="screen"/> -->
-
-    <!-- Node 6 -->
-    <!-- <node pkg="fov" type="video_camera_node.py" name="video_camera_node" output="screen"/> -->
-
-    <!-- Node 7 -->
-    <!-- <node pkg="fov" type="feeder_node.py" name="feeder_node" output="screen"/> -->
 </launch>
