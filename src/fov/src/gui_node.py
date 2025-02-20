@@ -28,7 +28,7 @@ from PyQt5.QtWidgets import (
     )
 
 # ROS imports
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, Point
 from sensor_msgs.msg import Image
 from std_msgs.msg import UInt16
 from std_srvs.srv import Trigger, SetBool
@@ -54,6 +54,13 @@ class MainWindow(QMainWindow):
 
         self.__init_widgets()
         self.__init_layouts()
+        self.__init_attributes()
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_room_image)
+        self.timer.start(30)  # Update every 30ms (adjust as needed)
+        # self.latest_fish_image = None
+        # self.latest_room_image = None
 
         # main_layout = QGridLayout()
         # main_layout.addWidget(self.__TL_widget,0,0)
@@ -67,6 +74,11 @@ class MainWindow(QMainWindow):
         # main_layout.setColumnStretch(0, 1)  # Left column
         # main_layout.setColumnStretch(1, 1)  # Right column
 
+    def __init_attributes(self):
+        self.__img_location = None
+        self.__real_location = None
+        self.__velocity = Twist()
+        self.__room_image = None
 
     def __init_layouts(self):
         # Top-Left (Fish Camera)
@@ -82,7 +94,7 @@ class MainWindow(QMainWindow):
         # Top-Right (Room Camera)
         self.__TR_layout = QVBoxLayout()
         self.__TR_layout.addWidget(self.__room_image_label, alignment=Qt.AlignCenter)
-        self.__TR_layout.addWidget(self.__room_image)#, alignment=Qt.AlignCenter)
+        self.__TR_layout.addWidget(self.__room_image_display)#, alignment=Qt.AlignCenter)
         # self.__TR_layout.addStretch()
 
         self.__TR_widget = QFrame()
@@ -239,9 +251,9 @@ class MainWindow(QMainWindow):
         self.__fish_image.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         # Room image init
-        self.__room_image = QLabel() #TODO : add resize+update
-        self.__room_image.setScaledContents(True)
-        self.__room_image.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.__room_image_display = QLabel() #TODO : add resize+update
+        self.__room_image_display.setScaledContents(True)
+        self.__room_image_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
         # Room image label init
         self.__room_image_label = QLabel("Room Camera")
@@ -276,10 +288,12 @@ class MainWindow(QMainWindow):
     def __init_subscriptions_and_services(self):
         self.fish_image_sub = rospy.Subscriber('fish_camera/image', Image, self.read_fish_image)
         self.fish_dir_sub = rospy.Subscriber('fish_detection/direction', FishState, self.update_state)
-        self.stitched_image_pub = rospy.Subscriber('ceiling_camera/image', Image, self.update_room_image)
+        self.stitched_image_pub = rospy.Subscriber('ceiling_camera/image', Image, self.set_room_image)
         # self.stitched_image_pub = rospy.Subscriber('image_stitcher/image', Image, self.update_room_image)
+        self.img_location_sub = rospy.Subscriber('localization/img_location', Point, self.update_img_location)
+        self.real_location_sub = rospy.Subscriber('localization/real_location', Point, self.update_real_location)
         self.feed = rospy.ServiceProxy('fish_feeder/feed', Trigger)
-        self.dim_lights = rospy.ServiceProxy('light_dimmer/change', Light)
+        # self.dim_lights = rospy.ServiceProxy('light_dimmer/change', Light)
         self.fish_camera_control = rospy.ServiceProxy('fish_camera/system_toggle', SetBool)
         self.ceiling_cameras_control = rospy.ServiceProxy('ceiling_cameras/system_toggle', SetBool)
         self.lidar_control = rospy.ServiceProxy('lidar/system_toggle', SetBool)
@@ -356,7 +370,7 @@ class MainWindow(QMainWindow):
         control_layout = QGridLayout()
 
         # Direction buttons
-        self.__velocity = Twist()
+        # self.__velocity = Twist()
         forward_button = QPushButton("↑")
         backward_button = QPushButton("↓")
         left_button = QPushButton("←")
@@ -595,42 +609,66 @@ class MainWindow(QMainWindow):
         # Update the QLabel with the new image
         self.__fish_image.setPixmap(resized_pixmap)
 
-    def update_room_image(self, img_msg: Image):
-        """
-        Callback to update the room camera image on the GUI.
-        """
+    def set_room_image(self, img_msg: Image):
         try:
-            # Convert the ROS Image message to a numpy array
-            img = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="passthrough")
-            
-            # Check the shape to ensure it's compatible with OpenCV's BGR format
-            if img.ndim == 3 and img.shape[2] == 3:
-                # Assume the image is BGR and proceed
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            else:
-                rospy.logwarn("Unexpected image format, expected 3-channel image.")
-                return
-            
-            # Convert to QImage
-            height, width, channel = img.shape
-            bytes_per_line = 3 * width
-            q_image = QImage(img.data, width, height, bytes_per_line, QImage.Format_RGB888)
-            
-            # Scale the image to fit the QLabel
-            pixmap = QPixmap.fromImage(q_image)
-            scaled_pixmap = pixmap.scaled(
-                self.__room_image.size(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            
-            # Update the QLabel with the scaled QPixmap
-            self.__room_image.setPixmap(scaled_pixmap)
-            
+            self.__room_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="rgb8") # was passthrough
+            if self.__img_location:
+                center_x = self.__img_location.x
+                center_y = self.__img_location.y
+                cv2.circle(self.__room_image, (int(center_x), int(center_y)), 5, (0, 255, 0), -1)
+            # self.update_room_image() 
         except CvBridgeError as e:
             rospy.logwarn(f"Error converting image message: {e}")
         except Exception as e:
             rospy.logwarn(f"Unexpected error in update_room_image: {e}")
+
+    def update_img_location(self, location: Point):
+        self.__img_location = location
+        # center_x = location.x
+        # center_y = location.y
+        # cv2.circle(self.__room_image, (int(center_x), int(center_y)), 5, (0, 255, 0), -1)
+        # self.update_room_image()
+
+    def update_real_location(self, location: Point):
+        self.__real_location = location
+
+    def update_room_image(self):
+        """
+        Callback to update the room camera image on the GUI.
+        """
+        if self.__room_image is not None:
+            try:
+                # Convert the ROS Image message to a numpy array
+                # img = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="passthrough")
+                
+                # Check the shape to ensure it's compatible with OpenCV's BGR format
+                # if self.__room_image.ndim == 3 and self.__room_image.shape[2] == 3:
+                #     # Assume the image is BGR and proceed
+                #     self.__room_image = cv2.cvtColor(self.__room_image, cv2.COLOR_BGR2RGB)
+                # else:
+                #     rospy.logwarn("Unexpected image format, expected 3-channel image.")
+                #     return
+                
+                # Convert to QImage
+                height, width, channel = self.__room_image.shape
+                bytes_per_line = 3 * width
+                q_image = QImage(self.__room_image.data, width, height, bytes_per_line, QImage.Format_RGB888)
+                
+                # Scale the image to fit the QLabel
+                pixmap = QPixmap.fromImage(q_image)
+                scaled_pixmap = pixmap.scaled(
+                    self.__room_image_display.size(),
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
+                )
+                
+                # Update the QLabel with the scaled QPixmap
+                self.__room_image_display.setPixmap(scaled_pixmap)
+                
+            except CvBridgeError as e:
+                rospy.logwarn(f"Error converting image message: {e}")
+            except Exception as e:
+                rospy.logwarn(f"Unexpected error in update_room_image: {e}")
 
 
     def update_image(self, img_msg: Image, destination: QLabel):
@@ -672,13 +710,13 @@ class MainWindow(QMainWindow):
 
 
     def resizeEvent(self, event):
-        if self.__room_image.pixmap():
-            scaled_pixmap = self.__room_image.pixmap().scaled(
-                self.__room_image.size(),
+        if self.__room_image_display.pixmap():
+            scaled_pixmap = self.__room_image_display.pixmap().scaled(
+                self.__room_image_display.size(),
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation
             )
-            self.__room_image.setPixmap(scaled_pixmap)
+            self.__room_image_display.setPixmap(scaled_pixmap)
         if self.__fish_image.pixmap():
             scaled_pixmap = self.__fish_image.pixmap().scaled(
                 self.__fish_image.size(),
