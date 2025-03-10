@@ -195,7 +195,7 @@ class MainWindow(QMainWindow):
         self.__lights_slider.setTickPosition(QSlider.TicksAbove|QSlider.TicksBelow)
         self.__lights_slider.setPageStep(1)
         self.__lights_slider.setMaximumHeight(50)
-        self.__lights_slider.valueChanged.connect(lambda val:self.dim_lights(val/self.__lights_slider.maximum()))
+        self.__lights_slider.valueChanged.connect(lambda val:self.dim_lights(int(255*val/self.__lights_slider.maximum())))
 
         # Lights slider label init
         self.__lights_label = QLabel("Lights dimming")

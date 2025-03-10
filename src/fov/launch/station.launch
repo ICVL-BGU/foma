@@ -6,5 +6,8 @@
     <!-- <node pkg="fov" type="fish_detection_node.py" name="fish_detection_node" output="screen"/> -->
 
     <!-- Node 3 -->
-    <node pkg="fov" type="gui_node.py" name="gui_node" output="screen"/>
+    <node pkg="fov" type="gui_node.py" name="gui" output="screen"/>
+
+    <!-- Node 4 -->
+    <node pkg="fov" type="light_dimmer_node.py" name="light_dimmer" output="screen"/>
 </launch>

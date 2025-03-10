@@ -41,20 +41,20 @@ class LightDimmerNode(AbstractNode):
 
         # If still not open, return an error response
         if not self.serial_port or not self.serial_port.is_open:
-            return LightResponse(success=False, message="Serial port is not available.")
+            return LightResponse(result=False)#, message="Serial port is not available.")
 
         try:
             # Ensure data is within the valid range (0-255)
             value = max(0, min(255, int(data.data)))
 
             # Send the value via serial
-            self.serial_port.write(f"{value}\n".encode('utf-8'))
+            self.serial_port.write(f"{value}".encode('utf-8'))
 
             rospy.loginfo(f"Sent value {value} to the light dimmer via serial.")
-            return LightResponse(success=True, message=f"Light dimmer dimmed to {value}.")
+            return LightResponse(result=True)#, message=f"Light dimmer dimmed to {value}.")
         except Exception as e:
             rospy.logerr(f"Failed to send data via serial: {e}")
-            return LightResponse(success=False, message="Failed to dim light.")
+            return LightResponse(result=False)#, message="Failed to dim light.")
 
 if __name__ == "__main__":
     rospy.init_node('light_dimmer_node')
