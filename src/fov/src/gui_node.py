@@ -149,15 +149,6 @@ class MainWindow(QMainWindow):
         widget.setLayout(main_layout)
         self.setCentralWidget(widget)
 
-
-        # widget = QWidget()
-        # widget.setLayout(main_layout)
-        # screen = QDesktopWidget().screenGeometry()
-        # self.setFixedSize(screen.width(), screen.height())
-        # self.setWindowFlags(Qt.CustomizeWindowHint)
-        # self.showMaximized()
-        # self.setCentralWidget(widget)
-
     def __init_widgets(self):
         # Start button init
         self.__start_button = QPushButton()
