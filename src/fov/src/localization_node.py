@@ -7,34 +7,19 @@ from abstract_node import AbstractNode
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
 import numpy as np
+from fov.msg import FomaLocation
 from geometry_msgs.msg import Point
-
 
 class LocalizationNode(AbstractNode):
     def __init__(self):
         super().__init__('localization', 'Localization')
         self.image_sub = rospy.Subscriber('ceiling_camera/image', Image, self.process_image)
-        self.img_location_pub = rospy.Publisher('localization/img_location', Point, queue_size=10)
-        self.real_location_pub = rospy.Publisher('localization/real_location', Point, queue_size=10)
-        self.img_location = None
-        self.real_location = None
-        # self.img = None
+        self.location_pub = rospy.Publisher('localization/location', FomaLocation, queue_size=10)
         self.bridge = CvBridge()
         
         # Updated HSV bounds for olive green
         self.lower_bound, self.upper_bound = np.array([30, 100, 150]), np.array([80, 255, 255])
-        rospy.loginfo("LocalizationNode initialized")
-
-    # def run(self):
-    #     rospy.loginfo("LocalizationNode running")
-    #     while not rospy.is_shutdown():
-    #         if True: #self._system_on:
-    #             if self.img is not None:
-    #                 # rospy.loginfo("Processing image")
-    #                 self.process_image()
-    #             # if self.img_location is not None:
-    #             #     # rospy.loginfo(f"Publishing location: {self.location}")
-    #             #     self.img_location_pub.publish(self.img_location)
+        rospy.loginfo("Localization Node initialized")
 
     def process_image(self, img_msg: Image):
         try:
@@ -51,10 +36,11 @@ class LocalizationNode(AbstractNode):
             # Process detected contours
             if contours:
                 # Get the bounding box of the first contour
+                self.location = FomaLocation()
                 x, y, w, h = cv2.boundingRect(contours[0])
-                self.img_location = Point()
-                self.img_location.x = x + w / 2
-                self.img_location.y = y + h / 2
+                self.location.image = Point()
+                self.location.image.x = x + w / 2
+                self.location.image.y = y + h / 2
                 # location.z = 0  # Assuming lidar is at z=95, so no need to modify
                 
                 # Camera parameters in meters
@@ -70,19 +56,18 @@ class LocalizationNode(AbstractNode):
                 origin_y = image_height/2 # 768 / 2
                 
                 # Compute pixel offsets from the image center
-                px = (self.img_location.x - origin_x) * (sensor_width / image_width)  # Convert pixels to sensor units (mm)
-                py = (self.img_location.y - origin_y) * (sensor_height / image_height)  # Convert pixels to sensor units (mm)
+                px = (self.location.image.x - origin_x) * (sensor_width / image_width)  # Convert pixels to sensor units (mm)
+                py = (self.location.image.y - origin_y) * (sensor_height / image_height)  # Convert pixels to sensor units (mm)
                 
                 # Scale factor to map image coordinates to world coordinates
                 scale = (cam_z - ground_height) / focal_length  # Use focal length in meters
                 
                 # Convert sensor distances to real-world distances
-                self.real_location = Point()
-                self.real_location.x = cam_x + px * scale
-                self.real_location.y = cam_y + py * scale
+                self.location.world = Point()
+                self.location.world.x = cam_x + px * scale
+                self.location.world.y = cam_y + py * scale
 
-                self.img_location_pub.publish(self.img_location)
-                self.real_location_pub.publish(self.real_location)
+                self.location_pub.publish(self.location)
 
         except CvBridgeError as e:
             rospy.logerr(f"Error converting image: {e}")

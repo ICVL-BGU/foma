@@ -5,6 +5,9 @@ import sys
 import rospy
 import cv2
 import numpy as np
+import csv
+import os
+import datetime
 
 # PyQt5 imports
 from PyQt5.QtCore import Qt, QTimer, QEvent
@@ -33,13 +36,10 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import UInt16
 from std_srvs.srv import Trigger, SetBool
 from cv_bridge import CvBridge, CvBridgeError
-from fov.msg import FishState
 
 # Custom ROS messages
 from fov.srv import Light
-     
-
-        
+from fov.msg import FishState, FomaLocation      
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -51,34 +51,22 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Trial control")
         self.drag_start = self.pos()
+        self.closeEvent = self.__on_close_click
 
         self.__init_widgets()
         self.__init_layouts()
         self.__init_attributes()
 
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_room_image)
+        self.timer.timeout.connect(self.__update_gui)
         self.timer.start(30)  # Update every 30ms (adjust as needed)
-        # self.latest_fish_image = None
-        # self.latest_room_image = None
-
-        # main_layout = QGridLayout()
-        # main_layout.addWidget(self.__TL_widget,0,0)
-        # main_layout.addWidget(self.__TR_widget,0,1)
-        # main_layout.addWidget(self.__BL_widget,1,0)
-        # main_layout.addWidget(self.__BR_widget,1,1)
-        # main_layout.setSpacing(0)
-        # main_layout.setContentsMargins(0,0,0,0)
-        # main_layout.setRowStretch(0, 3)  # Top row (camera sections)
-        # main_layout.setRowStretch(1, 1)  # Bottom row (controls)
-        # main_layout.setColumnStretch(0, 1)  # Left column
-        # main_layout.setColumnStretch(1, 1)  # Right column
 
     def __init_attributes(self):
         self.__img_location = None
-        self.__real_location = None
+        self.__world_location = None
         self.__velocity = Twist()
         self.__room_image = None
+        self.__room_map = None
 
     def __init_layouts(self):
         # Top-Left (Fish Camera)
@@ -94,7 +82,7 @@ class MainWindow(QMainWindow):
         # Top-Right (Room Camera)
         self.__TR_layout = QVBoxLayout()
         self.__TR_layout.addWidget(self.__room_image_label, alignment=Qt.AlignCenter)
-        self.__TR_layout.addWidget(self.__room_image_display)#, alignment=Qt.AlignCenter)
+        self.__TR_layout.addWidget(self.__top_right_image)#, alignment=Qt.AlignCenter)
         # self.__TR_layout.addStretch()
 
         self.__TR_widget = QFrame()
@@ -113,6 +101,7 @@ class MainWindow(QMainWindow):
         self.__BL_layout.addWidget(self.__manual_control_button, 0, 2, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__feed_loading_button, 1, 2, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__direction_group, 0, 3, 2, 1, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__room_display_group, 0, 4, 2, 1, alignment=Qt.AlignCenter)
         
         self.__BL_widget = QFrame()
         self.__BL_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
@@ -155,28 +144,28 @@ class MainWindow(QMainWindow):
         self.__start_button.setText("Start")
         self.__start_button.setDisabled(False)
         self.__start_button.setMaximumHeight(50)
-        self.__start_button.clicked.connect(lambda:self.__set_buttons_state((True,False,True,True)))
+        self.__start_button.clicked.connect(self.__on_start_click)
 
         # Stop button init
         self.__stop_button = QPushButton()
         self.__stop_button.setText("Stop")
         self.__stop_button.setDisabled(True)
         self.__stop_button.setMaximumHeight(50)
-        self.__stop_button.clicked.connect(lambda:self.__set_buttons_state((True,True,False,False)))
+        self.__stop_button.clicked.connect(self.__on_stop_click)
 
         # Reset button init
         self.__reset_button = QPushButton()
         self.__reset_button.setText("Reset")
         self.__reset_button.setDisabled(True)
         self.__reset_button.setMaximumHeight(50)
-        self.__reset_button.clicked.connect(lambda:self.__set_buttons_state((False,True,True,False)))
+        self.__reset_button.clicked.connect(self.__on_reset_click)
 
         # Close button init
         self.__close_button = QPushButton()
         self.__close_button.setText("Close")
         self.__close_button.setDisabled(False)
         self.__close_button.setMaximumHeight(50)
-        self.__close_button.clicked.connect(self.__shutdown)
+        self.__close_button.clicked.connect(self.__on_close_click)
 
         # Feed button init
         self.__feed_button = QPushButton()
@@ -242,9 +231,9 @@ class MainWindow(QMainWindow):
         self.__fish_image.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         # Room image init
-        self.__room_image_display = QLabel() #TODO : add resize+update
-        self.__room_image_display.setScaledContents(True)
-        self.__room_image_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.__top_right_image = QLabel() #TODO : add resize+update
+        self.__top_right_image.setScaledContents(True)
+        self.__top_right_image.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
         # Room image label init
         self.__room_image_label = QLabel("Room Camera")
@@ -267,22 +256,27 @@ class MainWindow(QMainWindow):
         # Create a group box for the radio buttons and set the layout
         self.__direction_group = QGroupBox("Display Direction")
         self.__direction_group.setLayout(direction_layout)
+
+        # Add radio buttons for toggling direction display
+        self.__room_camera_display_rb = QRadioButton("Camera")
+        self.__map_display_rb = QRadioButton("Map")
+        self.__room_camera_display_rb.setChecked(True)
+
+        # Create and add radio buttons to layout
+        room_display_layout = QGridLayout()
+        room_display_layout.addWidget(self.__room_camera_display_rb, 0, 0, alignment=Qt.AlignCenter)
+        room_display_layout.addWidget(self.__map_display_rb, 1, 0, alignment=Qt.AlignCenter)
         
-    def __set_buttons_state(self, state:tuple):
-        self.__start_button.setDisabled(state[0])
-        self.__stop_button.setDisabled(state[1])
-        self.__reset_button.setDisabled(state[2])
-        self.__close_button.setDisabled(state[3])
-        # Add feed button
-        # Add lights slider?
+        # Create a group box for the radio buttons and set the layout
+        self.__room_display_group = QGroupBox("Top-Right Display")
+        self.__room_display_group.setLayout(room_display_layout)
 
     def __init_subscriptions_and_services(self):
-        self.fish_image_sub = rospy.Subscriber('fish_camera/image', Image, self.read_fish_image)
-        self.fish_dir_sub = rospy.Subscriber('fish_detection/direction', FishState, self.update_state)
-        self.stitched_image_pub = rospy.Subscriber('ceiling_camera/image', Image, self.set_room_image)
+        self.fish_image_sub = rospy.Subscriber('fish_camera/image', Image, self.__update_fish_image)
+        self.fish_dir_sub = rospy.Subscriber('fish_detection/direction', FishState, self.__update_fish_state)
+        self.stitched_image_pub = rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image)
         # self.stitched_image_pub = rospy.Subscriber('image_stitcher/image', Image, self.update_room_image)
-        self.img_location_sub = rospy.Subscriber('localization/img_location', Point, self.update_img_location)
-        self.real_location_sub = rospy.Subscriber('localization/real_location', Point, self.update_real_location)
+        self.location_sub = rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
         self.feed = rospy.ServiceProxy('fish_feeder/feed', Trigger)
         # self.dim_lights = rospy.ServiceProxy('light_dimmer/change', Light)
         self.fish_camera_control = rospy.ServiceProxy('fish_camera/system_toggle', SetBool)
@@ -294,20 +288,6 @@ class MainWindow(QMainWindow):
         self.motor_mode_control = rospy.ServiceProxy('motor_control/motor_mode_control', SetBool)
         self.manual_control_cmd = rospy.Publisher('gui/manual_control', Twist, queue_size=10)
         self.__manual_speed = 0.5
-
-    def __systems_toggle(self, state: bool):
-        rospy.wait_for_service('fish_camera/system_toggle')
-        self.fish_camera_control(state)
-        rospy.wait_for_service('ceiling_cameras/system_toggle')
-        self.ceiling_cameras_control(state)
-        rospy.wait_for_service('lidar/system_toggle')
-        self.lidar_control(state)
-        rospy.wait_for_service('fish_detection/system_toggle')
-        self.fish_detection_control(state)
-        rospy.wait_for_service('light_dimmer/system_toggle')
-        self.light_dimmer_control(state)
-        rospy.wait_for_service('motor_control/system_toggle')
-        self.motor_control(state)
 
     def __init_manual_control_window(self):
         rospy.wait_for_service('motor_control/motor_mode_control')
@@ -432,7 +412,6 @@ class MainWindow(QMainWindow):
 
         self.__manual_control_window.show()
 
-
     def __init_feeding_load_window(self):
         rospy.wait_for_service('fish_feeder/feed')
         self.__feeding_load_window = QDialog(self)
@@ -503,7 +482,29 @@ class MainWindow(QMainWindow):
         self.__feeding_load_window.setLayout(control_layout)
         self.__feeding_load_window.show()
 
-    def __update_velocity(self, direction, is_pressed):
+    def __systems_toggle(self, state: bool):
+        rospy.wait_for_service('fish_camera/system_toggle')
+        self.fish_camera_control(state)
+        rospy.wait_for_service('ceiling_cameras/system_toggle')
+        self.ceiling_cameras_control(state)
+        rospy.wait_for_service('lidar/system_toggle')
+        self.lidar_control(state)
+        rospy.wait_for_service('fish_detection/system_toggle')
+        self.fish_detection_control(state)
+        rospy.wait_for_service('light_dimmer/system_toggle')
+        self.light_dimmer_control(state)
+        rospy.wait_for_service('motor_control/system_toggle')
+        self.motor_control(state)
+        
+    def __update_buttons_state(self, state: tuple):
+        self.__start_button.setDisabled(state[0])
+        self.__stop_button.setDisabled(state[1])
+        self.__reset_button.setDisabled(state[2])
+        self.__close_button.setDisabled(state[3])
+        # Add feed button
+        # Add lights slider?
+
+    def __update_velocity(self, direction: str, is_pressed: bool):
         """
         Update robot velocity based on button presses.
         """
@@ -523,10 +524,9 @@ class MainWindow(QMainWindow):
 
         # Publish the velocity to the robot
         self.manual_control_cmd.publish(self.__velocity)
-        # rospy.loginfo(f"Velocity: {self.__velocity}")
-        
+        # rospy.loginfo(f"Velocity: {self.__velocity}")     
 
-    def read_fish_image(self, img_msg: Image):
+    def __update_fish_image(self, img_msg: Image):
         try:
             img = self.bridge.imgmsg_to_cv2(img_msg)
             # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -536,7 +536,7 @@ class MainWindow(QMainWindow):
         except CvBridgeError as e:
             rospy.logwarn(e)
 
-    def update_state(self, state: FishState):
+    def __update_fish_state(self, state: FishState):
         """
         Update the GUI image based on the FishState message.
 
@@ -600,69 +600,127 @@ class MainWindow(QMainWindow):
         # Update the QLabel with the new image
         self.__fish_image.setPixmap(resized_pixmap)
 
-    def set_room_image(self, img_msg: Image):
+    def __update_room_image(self, img_msg: Image):
         try:
-            self.__room_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="rgb8") # was passthrough
+            frame = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="rgb8") # was passthrough
+            self.__room_image = frame.copy() # might not be correct
             if self.__img_location:
                 center_x = self.__img_location.x
                 center_y = self.__img_location.y
                 cv2.circle(self.__room_image, (int(center_x), int(center_y)), 5, (0, 255, 0), -1)
+            self.__room_video_writer.write(frame)
             # self.update_room_image() 
         except CvBridgeError as e:
             rospy.logwarn(f"Error converting image message: {e}")
         except Exception as e:
             rospy.logwarn(f"Unexpected error in update_room_image: {e}")
 
-    def update_img_location(self, location: Point):
-        self.__img_location = location
-        # center_x = location.x
-        # center_y = location.y
-        # cv2.circle(self.__room_image, (int(center_x), int(center_y)), 5, (0, 255, 0), -1)
-        # self.update_room_image()
+    def __update_foma_location(self, location: FomaLocation):
+        self.__img_location = location.image
+        self.__world_location = location.world
+        timestamp = rospy.get_time()  # ROS time in seconds
+        self.__location_csv_writer.writerow([timestamp, self.__world_location.x, self.__world_location.y, self.__img_location.x, self.__img_location.y])
+        self.__location_file.flush()  # Ensure data is written to the file
 
-    def update_real_location(self, location: Point):
-        self.__real_location = location
+        if self.__room_map is not None:
+            # Ensure coordinates stay within bounds
+            x = np.clip(self.__world_location.x, 0, 500 - 1)
+            y = np.clip(self.__world_location.y, 0, 500 - 1)
+            cv2.circle(self.__room_map, (x, y), 5, (0, 255, 0), -1)
 
-    def update_room_image(self):
+    def __update_gui(self):
         """
-        Callback to update the room camera image on the GUI.
+        Callback to update the room camera image on the GUI only ATM.
         """
-        if self.__room_image is not None:
-            try:
-                # Convert the ROS Image message to a numpy array
-                # img = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="passthrough")
-                
-                # Check the shape to ensure it's compatible with OpenCV's BGR format
-                # if self.__room_image.ndim == 3 and self.__room_image.shape[2] == 3:
-                #     # Assume the image is BGR and proceed
-                #     self.__room_image = cv2.cvtColor(self.__room_image, cv2.COLOR_BGR2RGB)
-                # else:
-                #     rospy.logwarn("Unexpected image format, expected 3-channel image.")
-                #     return
-                
-                # Convert to QImage
-                height, width, channel = self.__room_image.shape
-                bytes_per_line = 3 * width
-                q_image = QImage(self.__room_image.data, width, height, bytes_per_line, QImage.Format_RGB888)
-                
-                # Scale the image to fit the QLabel
-                pixmap = QPixmap.fromImage(q_image)
-                scaled_pixmap = pixmap.scaled(
-                    self.__room_image_display.size(),
-                    Qt.KeepAspectRatio,
-                    Qt.SmoothTransformation
-                )
-                
-                # Update the QLabel with the scaled QPixmap
-                self.__room_image_display.setPixmap(scaled_pixmap)
-                
-            except CvBridgeError as e:
-                rospy.logwarn(f"Error converting image message: {e}")
-            except Exception as e:
-                rospy.logwarn(f"Unexpected error in update_room_image: {e}")
+        if self.__room_camera_display_rb.isChecked() and self.__room_image is not None:
+            height, width, channel = self.__room_image.shape
+            bytes_per_line = 3 * width
+            data = self.__room_image.data
 
+        elif self.__map_display_rb.isChecked() and self.__room_map is not None:
+            height, width, channel = self.__room_map.shape
+            bytes_per_line = 3 * width
+            map = self.__room_map.copy()
+            # Ensure coordinates stay within bounds
+            x = np.clip(self.__world_location.x, 0, 500 - 1)
+            y = np.clip(self.__world_location.y, 0, 500 - 1)
+            cv2.circle(map, (x, y), 5, (0, 0, 255), -1)
+            data = map.data
 
-    def update_image(self, img_msg: Image, destination: QLabel):
+        if data is not None:
+            q_image = QImage(data, width, height, bytes_per_line, QImage.Format_RGB888)             
+            # Scale the image to fit the QLabel
+            pixmap = QPixmap.fromImage(q_image)
+            scaled_pixmap = pixmap.scaled(
+                self.__top_right_image.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            
+            # Update the QLabel with the scaled QPixmap
+            self.__top_right_image.setPixmap(scaled_pixmap)
+
+    def __on_start_click(self):
+        self.__update_buttons_state((True,False,True,True))
+   
+        # 1. FOMA Location
+        # Generate file name with current timestamp (YYYYMMDDHHMM)
+        self.__current_timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
+        location_filename = f"foma_location_{self.__current_timestamp}.csv"
+
+        # Open CSV file in append mode and create writer
+        self.__location_file = open(location_filename, 'a', newline='')
+        self.__location_csv_writer = csv.writer(self.__location_file)
+
+        # Write header if the file is new
+        if os.stat(location_filename).st_size == 0:
+            self.__location_csv_writer.writerow(["time", "x_w", "y_w", "x_i", "y_i"])
+            self.__location_file.flush()  # Ensure the header is written immediately
+
+        # 2. Room Video
+        room_video_filename = f"room_video_{self.__current_timestamp}.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
+        room_frame_width = 1024  # Adjust based on your camera resolution
+        room_frame_height = 768
+        room_fps = 10  # Default FPS (adjust based on the camera FPS)
+        self.__room_video_writer = cv2.VideoWriter(room_video_filename, fourcc, room_fps, (room_frame_width, room_frame_height))
+
+        # 3. FOMA Video
+        foma_video_filename = f"room_video_{self.__current_timestamp}.mp4"
+        # fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
+        foma_frame_width = 1024  # Adjust based on your camera resolution
+        foma_frame_height = 768
+        foma_fps = 10  # Default FPS (adjust based on the camera FPS)
+        self.__foma_video_writer = cv2.VideoWriter(foma_video_filename, fourcc, foma_fps, (foma_frame_width, foma_frame_height))
+
+        # 4. Room Map
+        # Create a white image representing the room
+        self.__room_map = np.ones((500, 500, 3), dtype=np.uint8) * 255
+
+    def __on_stop_click(self):
+        self.__update_buttons_state((True,True,False,False))
+        self.__close_file_writers()
+
+    def __on_reset_click(self):
+        self.__update_buttons_state((False,True,True,False))
+        self.__close_file_writers()
+
+    def __on_close_click(self):
+        self.__close_file_writers()
+        QApplication.quit()
+        rospy.signal_shutdown("Closing GUI")
+
+    def __close_file_writers(self):
+        if self.__location_file:
+            self.__location_file.close()
+        if self.__room_video_writer:
+            self.__room_video_writer.release()
+        if self.__foma_video_writer:
+            self.__foma_video_writer.release()
+        if self.__room_map is not None:
+            cv2.imwrite(f"room_map_{self.__current_timestamp}.png", self.__room_map)
+
+    def __update_image(self, img_msg: Image, destination: QLabel):
         """
         Callback to update the camera image on the GUI.
         """
@@ -699,15 +757,14 @@ class MainWindow(QMainWindow):
         except Exception as e:
             rospy.logwarn(f"Unexpected error in update_image: {e}")
 
-
     def resizeEvent(self, event):
-        if self.__room_image_display.pixmap():
-            scaled_pixmap = self.__room_image_display.pixmap().scaled(
-                self.__room_image_display.size(),
+        if self.__top_right_image.pixmap():
+            scaled_pixmap = self.__top_right_image.pixmap().scaled(
+                self.__top_right_image.size(),
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation
             )
-            self.__room_image_display.setPixmap(scaled_pixmap)
+            self.__top_right_image.setPixmap(scaled_pixmap)
         if self.__fish_image.pixmap():
             scaled_pixmap = self.__fish_image.pixmap().scaled(
                 self.__fish_image.size(),
@@ -716,9 +773,7 @@ class MainWindow(QMainWindow):
             )
             self.__fish_image.setPixmap(scaled_pixmap)
         super(MainWindow, self).resizeEvent(event)
-
-        
-
+     
     def showEvent(self, event):
         self.showMaximized()
 
@@ -735,11 +790,6 @@ class MainWindow(QMainWindow):
             self.drag_start = event.globalPos()
         else:
             event.ignore()
-
-    def __shutdown(self):
-        QApplication.quit()
-        rospy.signal_shutdown("Closing GUI")
-
 
 if __name__ == "__main__":
     rospy.init_node('gui_node')
