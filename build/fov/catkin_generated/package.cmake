@@ -1,6 +1,6 @@
 set(_CATKIN_CURRENT_PACKAGE "fov")
 set(fov_VERSION "0.0.0")
-set(fov_MAINTAINER "alex <alex@todo.todo>")
+set(fov_MAINTAINER "Alex Lazarovich <alexlaz@post.bgu.ac.il>")
 set(fov_PACKAGE_FORMAT "2")
 set(fov_BUILD_DEPENDS "message_generation" "rospy" "std_msgs")
 set(fov_BUILD_EXPORT_DEPENDS "rospy" "std_msgs")

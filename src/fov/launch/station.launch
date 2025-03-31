@@ -10,4 +10,7 @@
 
     <!-- Node 4 -->
     <node pkg="fov" type="localization_node.py" name="localization_node" output="screen"/>
+
+    <!-- Node 5 -->
+    <node pkg="fov" type="light_dimmer_node.py" name="light_dimmer_node" output="screen"/>
 </launch>

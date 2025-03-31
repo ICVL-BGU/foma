@@ -67,6 +67,16 @@ class MainWindow(QMainWindow):
         self.__velocity = Twist()
         self.__room_image = None
         self.__room_map = None
+        self.__room_video_writer = None
+        self.__foma_video_writer = None
+        self.__location_file = None
+        self.__location_csv_writer = None
+        self.__current_timestamp = None
+        self.__manual_control_window = None
+        self.__feeding_load_window = None
+        self.__timer = None
+        self.__manual_speed = 0.5
+        self.__output_folder = '/home/icvl/FOMA/output'
 
     def __init_layouts(self):
         # Top-Left (Fish Camera)
@@ -278,7 +288,7 @@ class MainWindow(QMainWindow):
         # self.stitched_image_pub = rospy.Subscriber('image_stitcher/image', Image, self.update_room_image)
         self.location_sub = rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
         self.feed = rospy.ServiceProxy('fish_feeder/feed', Trigger)
-        # self.dim_lights = rospy.ServiceProxy('light_dimmer/change', Light)
+        self.dim_lights = rospy.ServiceProxy('light_dimmer/change', Light)
         self.fish_camera_control = rospy.ServiceProxy('fish_camera/system_toggle', SetBool)
         self.ceiling_cameras_control = rospy.ServiceProxy('ceiling_cameras/system_toggle', SetBool)
         self.lidar_control = rospy.ServiceProxy('lidar/system_toggle', SetBool)
@@ -287,7 +297,6 @@ class MainWindow(QMainWindow):
         self.motor_control = rospy.ServiceProxy('motor_control/system_toggle', SetBool)
         self.motor_mode_control = rospy.ServiceProxy('motor_control/motor_mode_control', SetBool)
         self.manual_control_cmd = rospy.Publisher('gui/manual_control', Twist, queue_size=10)
-        self.__manual_speed = 0.5
 
     def __init_manual_control_window(self):
         rospy.wait_for_service('motor_control/motor_mode_control')
@@ -390,19 +399,19 @@ class MainWindow(QMainWindow):
         ccw_button.pressed.connect(lambda: self.__update_velocity("ccw", True))
         ccw_button.released.connect(lambda: self.__update_velocity("ccw", False))
         speed_control_button.clicked.connect(set_speed)
-        # def toggle_lidar_bypass(state):
-        #     try:
-        #         rospy.wait_for_service('lidar/bypass')
-        #         lidar_bypass_service = rospy.ServiceProxy('lidar/bypass', SetBool)
-        #         response = lidar_bypass_service(state)
-        #         if response.success:
-        #             rospy.loginfo(f"LIDAR bypass set to: {state}")
-        #         else:
-        #             rospy.logwarn(f"Failed to set LIDAR bypass to: {state}")
-        #     except rospy.ServiceException as e:
-        #         rospy.logwarn(f"Service call failed: {e}")
+        def toggle_lidar_bypass(state):
+            try:
+                rospy.wait_for_service('motor_control/bypass_lidar')
+                lidar_bypass_service = rospy.ServiceProxy('motor_control/bypass_lidar', SetBool)
+                response = lidar_bypass_service(state)
+                if response.success:
+                    rospy.loginfo(f"LIDAR bypass set to: {state}")
+                else:
+                    rospy.logwarn(f"Failed to set LIDAR bypass to: {state}")
+            except rospy.ServiceException as e:
+                rospy.logwarn(f"Service call failed: {e}")
 
-        # bypass_lidar_checkbox.stateChanged.connect(lambda state: toggle_lidar_bypass(state == Qt.Checked))
+        bypass_lidar_checkbox.stateChanged.connect(lambda state: toggle_lidar_bypass(state == Qt.Checked))
 
         self.__manual_control_window.setLayout(control_layout)
         
@@ -608,7 +617,9 @@ class MainWindow(QMainWindow):
                 center_x = self.__img_location.x
                 center_y = self.__img_location.y
                 cv2.circle(self.__room_image, (int(center_x), int(center_y)), 5, (0, 255, 0), -1)
-            self.__room_video_writer.write(frame)
+            if self.__room_video_writer:
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                self.__room_video_writer.write(frame)
             # self.update_room_image() 
         except CvBridgeError as e:
             rospy.logwarn(f"Error converting image message: {e}")
@@ -632,6 +643,7 @@ class MainWindow(QMainWindow):
         """
         Callback to update the room camera image on the GUI only ATM.
         """
+        data = None
         if self.__room_camera_display_rb.isChecked() and self.__room_image is not None:
             height, width, channel = self.__room_image.shape
             bytes_per_line = 3 * width
@@ -666,7 +678,7 @@ class MainWindow(QMainWindow):
         # 1. FOMA Location
         # Generate file name with current timestamp (YYYYMMDDHHMM)
         self.__current_timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
-        location_filename = f"foma_location_{self.__current_timestamp}.csv"
+        location_filename = os.path.join(self.__output_folder, f"foma_location_{self.__current_timestamp}.csv")
 
         # Open CSV file in append mode and create writer
         self.__location_file = open(location_filename, 'a', newline='')
@@ -678,15 +690,18 @@ class MainWindow(QMainWindow):
             self.__location_file.flush()  # Ensure the header is written immediately
 
         # 2. Room Video
-        room_video_filename = f"room_video_{self.__current_timestamp}.mp4"
+        room_video_filename = os.path.join(self.__output_folder, f"room_video_{self.__current_timestamp}.mp4")
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
         room_frame_width = 1024  # Adjust based on your camera resolution
         room_frame_height = 768
         room_fps = 10  # Default FPS (adjust based on the camera FPS)
         self.__room_video_writer = cv2.VideoWriter(room_video_filename, fourcc, room_fps, (room_frame_width, room_frame_height))
+        # if self.__room_video_writer.isOpened():
+        #     rospy.loginfo(f"Room video writer opened with filename: {room_video_filename}")
+
 
         # 3. FOMA Video
-        foma_video_filename = f"room_video_{self.__current_timestamp}.mp4"
+        foma_video_filename = os.path.join(self.__output_folder, f"foma_video_{self.__current_timestamp}.mp4")
         # fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
         foma_frame_width = 1024  # Adjust based on your camera resolution
         foma_frame_height = 768
@@ -705,7 +720,7 @@ class MainWindow(QMainWindow):
         self.__update_buttons_state((False,True,True,False))
         self.__close_file_writers()
 
-    def __on_close_click(self):
+    def __on_close_click(self, event):
         self.__close_file_writers()
         QApplication.quit()
         rospy.signal_shutdown("Closing GUI")
@@ -713,10 +728,14 @@ class MainWindow(QMainWindow):
     def __close_file_writers(self):
         if self.__location_file:
             self.__location_file.close()
+            self.__location_file = None
+            self.__location_csv_writer = None
         if self.__room_video_writer:
             self.__room_video_writer.release()
+            self.__room_video_writer = None
         if self.__foma_video_writer:
             self.__foma_video_writer.release()
+            self.__foma_video_writer = None
         if self.__room_map is not None:
             cv2.imwrite(f"room_map_{self.__current_timestamp}.png", self.__room_map)
 

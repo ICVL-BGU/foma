@@ -54,6 +54,7 @@ CMAKE_BINARY_DIR = /home/icvl/FOMA/build
 include fov/CMakeFiles/fov_generate_messages_nodejs.dir/progress.make
 
 fov/CMakeFiles/fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennodejs/ros/fov/msg/FishState.js
+fov/CMakeFiles/fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennodejs/ros/fov/msg/FomaLocation.js
 fov/CMakeFiles/fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Check.js
 fov/CMakeFiles/fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Light.js
 fov/CMakeFiles/fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Coordinate.js
@@ -62,28 +63,35 @@ fov/CMakeFiles/fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennode
 /home/icvl/FOMA/devel/share/gennodejs/ros/fov/msg/FishState.js: /opt/ros/noetic/lib/gennodejs/gen_nodejs.py
 /home/icvl/FOMA/devel/share/gennodejs/ros/fov/msg/FishState.js: /home/icvl/FOMA/src/fov/msg/FishState.msg
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Generating Javascript code from fov/FishState.msg"
-	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gennodejs/cmake/../../../lib/gennodejs/gen_nodejs.py /home/icvl/FOMA/src/fov/msg/FishState.msg -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/gennodejs/ros/fov/msg
+	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gennodejs/cmake/../../../lib/gennodejs/gen_nodejs.py /home/icvl/FOMA/src/fov/msg/FishState.msg -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -Igeometry_msgs:/opt/ros/noetic/share/geometry_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/gennodejs/ros/fov/msg
+
+/home/icvl/FOMA/devel/share/gennodejs/ros/fov/msg/FomaLocation.js: /opt/ros/noetic/lib/gennodejs/gen_nodejs.py
+/home/icvl/FOMA/devel/share/gennodejs/ros/fov/msg/FomaLocation.js: /home/icvl/FOMA/src/fov/msg/FomaLocation.msg
+/home/icvl/FOMA/devel/share/gennodejs/ros/fov/msg/FomaLocation.js: /opt/ros/noetic/share/geometry_msgs/msg/Point.msg
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Generating Javascript code from fov/FomaLocation.msg"
+	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gennodejs/cmake/../../../lib/gennodejs/gen_nodejs.py /home/icvl/FOMA/src/fov/msg/FomaLocation.msg -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -Igeometry_msgs:/opt/ros/noetic/share/geometry_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/gennodejs/ros/fov/msg
 
 /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Check.js: /opt/ros/noetic/lib/gennodejs/gen_nodejs.py
 /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Check.js: /home/icvl/FOMA/src/fov/srv/Check.srv
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Generating Javascript code from fov/Check.srv"
-	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gennodejs/cmake/../../../lib/gennodejs/gen_nodejs.py /home/icvl/FOMA/src/fov/srv/Check.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Generating Javascript code from fov/Check.srv"
+	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gennodejs/cmake/../../../lib/gennodejs/gen_nodejs.py /home/icvl/FOMA/src/fov/srv/Check.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -Igeometry_msgs:/opt/ros/noetic/share/geometry_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv
 
 /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Light.js: /opt/ros/noetic/lib/gennodejs/gen_nodejs.py
 /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Light.js: /home/icvl/FOMA/src/fov/srv/Light.srv
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Generating Javascript code from fov/Light.srv"
-	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gennodejs/cmake/../../../lib/gennodejs/gen_nodejs.py /home/icvl/FOMA/src/fov/srv/Light.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Generating Javascript code from fov/Light.srv"
+	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gennodejs/cmake/../../../lib/gennodejs/gen_nodejs.py /home/icvl/FOMA/src/fov/srv/Light.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -Igeometry_msgs:/opt/ros/noetic/share/geometry_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv
 
 /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Coordinate.js: /opt/ros/noetic/lib/gennodejs/gen_nodejs.py
 /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Coordinate.js: /home/icvl/FOMA/src/fov/srv/Coordinate.srv
 /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Coordinate.js: /opt/ros/noetic/share/std_msgs/msg/MultiArrayLayout.msg
-/home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Coordinate.js: /opt/ros/noetic/share/std_msgs/msg/UInt8MultiArray.msg
 /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Coordinate.js: /opt/ros/noetic/share/std_msgs/msg/MultiArrayDimension.msg
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Generating Javascript code from fov/Coordinate.srv"
-	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gennodejs/cmake/../../../lib/gennodejs/gen_nodejs.py /home/icvl/FOMA/src/fov/srv/Coordinate.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv
+/home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Coordinate.js: /opt/ros/noetic/share/std_msgs/msg/UInt8MultiArray.msg
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Generating Javascript code from fov/Coordinate.srv"
+	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gennodejs/cmake/../../../lib/gennodejs/gen_nodejs.py /home/icvl/FOMA/src/fov/srv/Coordinate.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -Igeometry_msgs:/opt/ros/noetic/share/geometry_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv
 
 fov_generate_messages_nodejs: fov/CMakeFiles/fov_generate_messages_nodejs
 fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennodejs/ros/fov/msg/FishState.js
+fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennodejs/ros/fov/msg/FomaLocation.js
 fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Check.js
 fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Light.js
 fov_generate_messages_nodejs: /home/icvl/FOMA/devel/share/gennodejs/ros/fov/srv/Coordinate.js

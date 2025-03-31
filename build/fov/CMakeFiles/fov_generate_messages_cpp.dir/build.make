@@ -54,6 +54,7 @@ CMAKE_BINARY_DIR = /home/icvl/FOMA/build
 include fov/CMakeFiles/fov_generate_messages_cpp.dir/progress.make
 
 fov/CMakeFiles/fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/FishState.h
+fov/CMakeFiles/fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/FomaLocation.h
 fov/CMakeFiles/fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/Check.h
 fov/CMakeFiles/fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/Light.h
 fov/CMakeFiles/fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/Coordinate.h
@@ -63,34 +64,42 @@ fov/CMakeFiles/fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/Coor
 /home/icvl/FOMA/devel/include/fov/FishState.h: /home/icvl/FOMA/src/fov/msg/FishState.msg
 /home/icvl/FOMA/devel/include/fov/FishState.h: /opt/ros/noetic/share/gencpp/msg.h.template
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Generating C++ code from fov/FishState.msg"
-	cd /home/icvl/FOMA/src/fov && /home/icvl/FOMA/build/catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gencpp/cmake/../../../lib/gencpp/gen_cpp.py /home/icvl/FOMA/src/fov/msg/FishState.msg -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/include/fov -e /opt/ros/noetic/share/gencpp/cmake/..
+	cd /home/icvl/FOMA/src/fov && /home/icvl/FOMA/build/catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gencpp/cmake/../../../lib/gencpp/gen_cpp.py /home/icvl/FOMA/src/fov/msg/FishState.msg -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -Igeometry_msgs:/opt/ros/noetic/share/geometry_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/include/fov -e /opt/ros/noetic/share/gencpp/cmake/..
+
+/home/icvl/FOMA/devel/include/fov/FomaLocation.h: /opt/ros/noetic/lib/gencpp/gen_cpp.py
+/home/icvl/FOMA/devel/include/fov/FomaLocation.h: /home/icvl/FOMA/src/fov/msg/FomaLocation.msg
+/home/icvl/FOMA/devel/include/fov/FomaLocation.h: /opt/ros/noetic/share/geometry_msgs/msg/Point.msg
+/home/icvl/FOMA/devel/include/fov/FomaLocation.h: /opt/ros/noetic/share/gencpp/msg.h.template
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Generating C++ code from fov/FomaLocation.msg"
+	cd /home/icvl/FOMA/src/fov && /home/icvl/FOMA/build/catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gencpp/cmake/../../../lib/gencpp/gen_cpp.py /home/icvl/FOMA/src/fov/msg/FomaLocation.msg -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -Igeometry_msgs:/opt/ros/noetic/share/geometry_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/include/fov -e /opt/ros/noetic/share/gencpp/cmake/..
 
 /home/icvl/FOMA/devel/include/fov/Check.h: /opt/ros/noetic/lib/gencpp/gen_cpp.py
 /home/icvl/FOMA/devel/include/fov/Check.h: /home/icvl/FOMA/src/fov/srv/Check.srv
 /home/icvl/FOMA/devel/include/fov/Check.h: /opt/ros/noetic/share/gencpp/msg.h.template
 /home/icvl/FOMA/devel/include/fov/Check.h: /opt/ros/noetic/share/gencpp/srv.h.template
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Generating C++ code from fov/Check.srv"
-	cd /home/icvl/FOMA/src/fov && /home/icvl/FOMA/build/catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gencpp/cmake/../../../lib/gencpp/gen_cpp.py /home/icvl/FOMA/src/fov/srv/Check.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/include/fov -e /opt/ros/noetic/share/gencpp/cmake/..
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Generating C++ code from fov/Check.srv"
+	cd /home/icvl/FOMA/src/fov && /home/icvl/FOMA/build/catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gencpp/cmake/../../../lib/gencpp/gen_cpp.py /home/icvl/FOMA/src/fov/srv/Check.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -Igeometry_msgs:/opt/ros/noetic/share/geometry_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/include/fov -e /opt/ros/noetic/share/gencpp/cmake/..
 
 /home/icvl/FOMA/devel/include/fov/Light.h: /opt/ros/noetic/lib/gencpp/gen_cpp.py
 /home/icvl/FOMA/devel/include/fov/Light.h: /home/icvl/FOMA/src/fov/srv/Light.srv
 /home/icvl/FOMA/devel/include/fov/Light.h: /opt/ros/noetic/share/gencpp/msg.h.template
 /home/icvl/FOMA/devel/include/fov/Light.h: /opt/ros/noetic/share/gencpp/srv.h.template
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Generating C++ code from fov/Light.srv"
-	cd /home/icvl/FOMA/src/fov && /home/icvl/FOMA/build/catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gencpp/cmake/../../../lib/gencpp/gen_cpp.py /home/icvl/FOMA/src/fov/srv/Light.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/include/fov -e /opt/ros/noetic/share/gencpp/cmake/..
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Generating C++ code from fov/Light.srv"
+	cd /home/icvl/FOMA/src/fov && /home/icvl/FOMA/build/catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gencpp/cmake/../../../lib/gencpp/gen_cpp.py /home/icvl/FOMA/src/fov/srv/Light.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -Igeometry_msgs:/opt/ros/noetic/share/geometry_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/include/fov -e /opt/ros/noetic/share/gencpp/cmake/..
 
 /home/icvl/FOMA/devel/include/fov/Coordinate.h: /opt/ros/noetic/lib/gencpp/gen_cpp.py
 /home/icvl/FOMA/devel/include/fov/Coordinate.h: /home/icvl/FOMA/src/fov/srv/Coordinate.srv
 /home/icvl/FOMA/devel/include/fov/Coordinate.h: /opt/ros/noetic/share/std_msgs/msg/MultiArrayLayout.msg
-/home/icvl/FOMA/devel/include/fov/Coordinate.h: /opt/ros/noetic/share/std_msgs/msg/UInt8MultiArray.msg
 /home/icvl/FOMA/devel/include/fov/Coordinate.h: /opt/ros/noetic/share/std_msgs/msg/MultiArrayDimension.msg
+/home/icvl/FOMA/devel/include/fov/Coordinate.h: /opt/ros/noetic/share/std_msgs/msg/UInt8MultiArray.msg
 /home/icvl/FOMA/devel/include/fov/Coordinate.h: /opt/ros/noetic/share/gencpp/msg.h.template
 /home/icvl/FOMA/devel/include/fov/Coordinate.h: /opt/ros/noetic/share/gencpp/srv.h.template
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Generating C++ code from fov/Coordinate.srv"
-	cd /home/icvl/FOMA/src/fov && /home/icvl/FOMA/build/catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gencpp/cmake/../../../lib/gencpp/gen_cpp.py /home/icvl/FOMA/src/fov/srv/Coordinate.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/include/fov -e /opt/ros/noetic/share/gencpp/cmake/..
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Generating C++ code from fov/Coordinate.srv"
+	cd /home/icvl/FOMA/src/fov && /home/icvl/FOMA/build/catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/gencpp/cmake/../../../lib/gencpp/gen_cpp.py /home/icvl/FOMA/src/fov/srv/Coordinate.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -Igeometry_msgs:/opt/ros/noetic/share/geometry_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/include/fov -e /opt/ros/noetic/share/gencpp/cmake/..
 
 fov_generate_messages_cpp: fov/CMakeFiles/fov_generate_messages_cpp
 fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/FishState.h
+fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/FomaLocation.h
 fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/Check.h
 fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/Light.h
 fov_generate_messages_cpp: /home/icvl/FOMA/devel/include/fov/Coordinate.h

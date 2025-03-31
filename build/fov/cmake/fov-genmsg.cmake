@@ -1,8 +1,8 @@
 # generated from genmsg/cmake/pkg-genmsg.cmake.em
 
-message(STATUS "fov: 1 messages, 3 services")
+message(STATUS "fov: 2 messages, 3 services")
 
-set(MSG_I_FLAGS "-Ifov:/home/icvl/FOMA/src/fov/msg;-Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg")
+set(MSG_I_FLAGS "-Ifov:/home/icvl/FOMA/src/fov/msg;-Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg;-Igeometry_msgs:/opt/ros/noetic/share/geometry_msgs/cmake/../msg")
 
 # Find all generators
 find_package(gencpp REQUIRED)
@@ -22,6 +22,11 @@ add_custom_target(_fov_generate_messages_check_deps_${_filename}
   COMMAND ${CATKIN_ENV} ${PYTHON_EXECUTABLE} ${GENMSG_CHECK_DEPS_SCRIPT} "fov" "/home/icvl/FOMA/src/fov/msg/FishState.msg" ""
 )
 
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/msg/FomaLocation.msg" NAME_WE)
+add_custom_target(_fov_generate_messages_check_deps_${_filename}
+  COMMAND ${CATKIN_ENV} ${PYTHON_EXECUTABLE} ${GENMSG_CHECK_DEPS_SCRIPT} "fov" "/home/icvl/FOMA/src/fov/msg/FomaLocation.msg" "geometry_msgs/Point"
+)
+
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Check.srv" NAME_WE)
 add_custom_target(_fov_generate_messages_check_deps_${_filename}
   COMMAND ${CATKIN_ENV} ${PYTHON_EXECUTABLE} ${GENMSG_CHECK_DEPS_SCRIPT} "fov" "/home/icvl/FOMA/src/fov/srv/Check.srv" ""
@@ -34,7 +39,7 @@ add_custom_target(_fov_generate_messages_check_deps_${_filename}
 
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" NAME_WE)
 add_custom_target(_fov_generate_messages_check_deps_${_filename}
-  COMMAND ${CATKIN_ENV} ${PYTHON_EXECUTABLE} ${GENMSG_CHECK_DEPS_SCRIPT} "fov" "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" "std_msgs/MultiArrayLayout:std_msgs/UInt8MultiArray:std_msgs/MultiArrayDimension"
+  COMMAND ${CATKIN_ENV} ${PYTHON_EXECUTABLE} ${GENMSG_CHECK_DEPS_SCRIPT} "fov" "/home/icvl/FOMA/src/fov/srv/Coordinate.srv" "std_msgs/MultiArrayLayout:std_msgs/MultiArrayDimension:std_msgs/UInt8MultiArray"
 )
 
 #
@@ -47,6 +52,12 @@ _generate_msg_cpp(fov
   "/home/icvl/FOMA/src/fov/msg/FishState.msg"
   "${MSG_I_FLAGS}"
   ""
+  ${CATKIN_DEVEL_PREFIX}/${gencpp_INSTALL_DIR}/fov
+)
+_generate_msg_cpp(fov
+  "/home/icvl/FOMA/src/fov/msg/FomaLocation.msg"
+  "${MSG_I_FLAGS}"
+  "/opt/ros/noetic/share/geometry_msgs/cmake/../msg/Point.msg"
   ${CATKIN_DEVEL_PREFIX}/${gencpp_INSTALL_DIR}/fov
 )
 
@@ -66,7 +77,7 @@ _generate_srv_cpp(fov
 _generate_srv_cpp(fov
   "/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
   "${MSG_I_FLAGS}"
-  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg"
+  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg"
   ${CATKIN_DEVEL_PREFIX}/${gencpp_INSTALL_DIR}/fov
 )
 
@@ -83,6 +94,8 @@ add_dependencies(fov_generate_messages fov_generate_messages_cpp)
 
 # add dependencies to all check dependencies targets
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/msg/FishState.msg" NAME_WE)
+add_dependencies(fov_generate_messages_cpp _fov_generate_messages_check_deps_${_filename})
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/msg/FomaLocation.msg" NAME_WE)
 add_dependencies(fov_generate_messages_cpp _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Check.srv" NAME_WE)
 add_dependencies(fov_generate_messages_cpp _fov_generate_messages_check_deps_${_filename})
@@ -106,6 +119,12 @@ _generate_msg_eus(fov
   ""
   ${CATKIN_DEVEL_PREFIX}/${geneus_INSTALL_DIR}/fov
 )
+_generate_msg_eus(fov
+  "/home/icvl/FOMA/src/fov/msg/FomaLocation.msg"
+  "${MSG_I_FLAGS}"
+  "/opt/ros/noetic/share/geometry_msgs/cmake/../msg/Point.msg"
+  ${CATKIN_DEVEL_PREFIX}/${geneus_INSTALL_DIR}/fov
+)
 
 ### Generating Services
 _generate_srv_eus(fov
@@ -123,7 +142,7 @@ _generate_srv_eus(fov
 _generate_srv_eus(fov
   "/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
   "${MSG_I_FLAGS}"
-  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg"
+  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg"
   ${CATKIN_DEVEL_PREFIX}/${geneus_INSTALL_DIR}/fov
 )
 
@@ -140,6 +159,8 @@ add_dependencies(fov_generate_messages fov_generate_messages_eus)
 
 # add dependencies to all check dependencies targets
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/msg/FishState.msg" NAME_WE)
+add_dependencies(fov_generate_messages_eus _fov_generate_messages_check_deps_${_filename})
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/msg/FomaLocation.msg" NAME_WE)
 add_dependencies(fov_generate_messages_eus _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Check.srv" NAME_WE)
 add_dependencies(fov_generate_messages_eus _fov_generate_messages_check_deps_${_filename})
@@ -163,6 +184,12 @@ _generate_msg_lisp(fov
   ""
   ${CATKIN_DEVEL_PREFIX}/${genlisp_INSTALL_DIR}/fov
 )
+_generate_msg_lisp(fov
+  "/home/icvl/FOMA/src/fov/msg/FomaLocation.msg"
+  "${MSG_I_FLAGS}"
+  "/opt/ros/noetic/share/geometry_msgs/cmake/../msg/Point.msg"
+  ${CATKIN_DEVEL_PREFIX}/${genlisp_INSTALL_DIR}/fov
+)
 
 ### Generating Services
 _generate_srv_lisp(fov
@@ -180,7 +207,7 @@ _generate_srv_lisp(fov
 _generate_srv_lisp(fov
   "/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
   "${MSG_I_FLAGS}"
-  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg"
+  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg"
   ${CATKIN_DEVEL_PREFIX}/${genlisp_INSTALL_DIR}/fov
 )
 
@@ -197,6 +224,8 @@ add_dependencies(fov_generate_messages fov_generate_messages_lisp)
 
 # add dependencies to all check dependencies targets
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/msg/FishState.msg" NAME_WE)
+add_dependencies(fov_generate_messages_lisp _fov_generate_messages_check_deps_${_filename})
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/msg/FomaLocation.msg" NAME_WE)
 add_dependencies(fov_generate_messages_lisp _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Check.srv" NAME_WE)
 add_dependencies(fov_generate_messages_lisp _fov_generate_messages_check_deps_${_filename})
@@ -220,6 +249,12 @@ _generate_msg_nodejs(fov
   ""
   ${CATKIN_DEVEL_PREFIX}/${gennodejs_INSTALL_DIR}/fov
 )
+_generate_msg_nodejs(fov
+  "/home/icvl/FOMA/src/fov/msg/FomaLocation.msg"
+  "${MSG_I_FLAGS}"
+  "/opt/ros/noetic/share/geometry_msgs/cmake/../msg/Point.msg"
+  ${CATKIN_DEVEL_PREFIX}/${gennodejs_INSTALL_DIR}/fov
+)
 
 ### Generating Services
 _generate_srv_nodejs(fov
@@ -237,7 +272,7 @@ _generate_srv_nodejs(fov
 _generate_srv_nodejs(fov
   "/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
   "${MSG_I_FLAGS}"
-  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg"
+  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg"
   ${CATKIN_DEVEL_PREFIX}/${gennodejs_INSTALL_DIR}/fov
 )
 
@@ -254,6 +289,8 @@ add_dependencies(fov_generate_messages fov_generate_messages_nodejs)
 
 # add dependencies to all check dependencies targets
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/msg/FishState.msg" NAME_WE)
+add_dependencies(fov_generate_messages_nodejs _fov_generate_messages_check_deps_${_filename})
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/msg/FomaLocation.msg" NAME_WE)
 add_dependencies(fov_generate_messages_nodejs _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Check.srv" NAME_WE)
 add_dependencies(fov_generate_messages_nodejs _fov_generate_messages_check_deps_${_filename})
@@ -277,6 +314,12 @@ _generate_msg_py(fov
   ""
   ${CATKIN_DEVEL_PREFIX}/${genpy_INSTALL_DIR}/fov
 )
+_generate_msg_py(fov
+  "/home/icvl/FOMA/src/fov/msg/FomaLocation.msg"
+  "${MSG_I_FLAGS}"
+  "/opt/ros/noetic/share/geometry_msgs/cmake/../msg/Point.msg"
+  ${CATKIN_DEVEL_PREFIX}/${genpy_INSTALL_DIR}/fov
+)
 
 ### Generating Services
 _generate_srv_py(fov
@@ -294,7 +337,7 @@ _generate_srv_py(fov
 _generate_srv_py(fov
   "/home/icvl/FOMA/src/fov/srv/Coordinate.srv"
   "${MSG_I_FLAGS}"
-  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg"
+  "/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayLayout.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/MultiArrayDimension.msg;/opt/ros/noetic/share/std_msgs/cmake/../msg/UInt8MultiArray.msg"
   ${CATKIN_DEVEL_PREFIX}/${genpy_INSTALL_DIR}/fov
 )
 
@@ -311,6 +354,8 @@ add_dependencies(fov_generate_messages fov_generate_messages_py)
 
 # add dependencies to all check dependencies targets
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/msg/FishState.msg" NAME_WE)
+add_dependencies(fov_generate_messages_py _fov_generate_messages_check_deps_${_filename})
+get_filename_component(_filename "/home/icvl/FOMA/src/fov/msg/FomaLocation.msg" NAME_WE)
 add_dependencies(fov_generate_messages_py _fov_generate_messages_check_deps_${_filename})
 get_filename_component(_filename "/home/icvl/FOMA/src/fov/srv/Check.srv" NAME_WE)
 add_dependencies(fov_generate_messages_py _fov_generate_messages_check_deps_${_filename})
@@ -338,6 +383,9 @@ endif()
 if(TARGET std_msgs_generate_messages_cpp)
   add_dependencies(fov_generate_messages_cpp std_msgs_generate_messages_cpp)
 endif()
+if(TARGET geometry_msgs_generate_messages_cpp)
+  add_dependencies(fov_generate_messages_cpp geometry_msgs_generate_messages_cpp)
+endif()
 
 if(geneus_INSTALL_DIR AND EXISTS ${CATKIN_DEVEL_PREFIX}/${geneus_INSTALL_DIR}/fov)
   # install generated code
@@ -348,6 +396,9 @@ if(geneus_INSTALL_DIR AND EXISTS ${CATKIN_DEVEL_PREFIX}/${geneus_INSTALL_DIR}/fo
 endif()
 if(TARGET std_msgs_generate_messages_eus)
   add_dependencies(fov_generate_messages_eus std_msgs_generate_messages_eus)
+endif()
+if(TARGET geometry_msgs_generate_messages_eus)
+  add_dependencies(fov_generate_messages_eus geometry_msgs_generate_messages_eus)
 endif()
 
 if(genlisp_INSTALL_DIR AND EXISTS ${CATKIN_DEVEL_PREFIX}/${genlisp_INSTALL_DIR}/fov)
@@ -360,6 +411,9 @@ endif()
 if(TARGET std_msgs_generate_messages_lisp)
   add_dependencies(fov_generate_messages_lisp std_msgs_generate_messages_lisp)
 endif()
+if(TARGET geometry_msgs_generate_messages_lisp)
+  add_dependencies(fov_generate_messages_lisp geometry_msgs_generate_messages_lisp)
+endif()
 
 if(gennodejs_INSTALL_DIR AND EXISTS ${CATKIN_DEVEL_PREFIX}/${gennodejs_INSTALL_DIR}/fov)
   # install generated code
@@ -370,6 +424,9 @@ if(gennodejs_INSTALL_DIR AND EXISTS ${CATKIN_DEVEL_PREFIX}/${gennodejs_INSTALL_D
 endif()
 if(TARGET std_msgs_generate_messages_nodejs)
   add_dependencies(fov_generate_messages_nodejs std_msgs_generate_messages_nodejs)
+endif()
+if(TARGET geometry_msgs_generate_messages_nodejs)
+  add_dependencies(fov_generate_messages_nodejs geometry_msgs_generate_messages_nodejs)
 endif()
 
 if(genpy_INSTALL_DIR AND EXISTS ${CATKIN_DEVEL_PREFIX}/${genpy_INSTALL_DIR}/fov)
@@ -382,4 +439,7 @@ if(genpy_INSTALL_DIR AND EXISTS ${CATKIN_DEVEL_PREFIX}/${genpy_INSTALL_DIR}/fov)
 endif()
 if(TARGET std_msgs_generate_messages_py)
   add_dependencies(fov_generate_messages_py std_msgs_generate_messages_py)
+endif()
+if(TARGET geometry_msgs_generate_messages_py)
+  add_dependencies(fov_generate_messages_py geometry_msgs_generate_messages_py)
 endif()
