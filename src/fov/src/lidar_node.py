@@ -16,7 +16,7 @@ class LIDARNode(AbstractNode):
             self.lidar = RPLidar(None, '/dev/lidar', baudrate = 256000, timeout = 3)
         except RPLidarException as e:
             self.lidar = None
-            rospy.logwarn(e)
+            self.logwarn(e)
         self.scanning = False
         self.scans = np.ones(360)*15000
         rospy.on_shutdown(self.__on_shutdown)
@@ -24,9 +24,6 @@ class LIDARNode(AbstractNode):
     def run(self):
         while not rospy.is_shutdown():
             try:
-                # if not self._system_on:
-                #     continue
-
                 for scan in self.lidar.iter_scans():
                     _, angles, distances = zip(*scan)
                     angles = 359 - ((np.floor(angles).astype(int) + LIDAR_OFFSET) % 360)
@@ -77,11 +74,11 @@ class LIDARNode(AbstractNode):
 
     def __on_shutdown(self):
         if self.lidar:
-            rospy.logwarn("LIDARNode: Stopping sensor.")
+            self.logwarn("LIDARNode: Stopping sensor.")
             self.lidar.stop()
-            rospy.logwarn("LIDARNode: Stopping motor.")
+            self.logwarn("LIDARNode: Stopping motor.")
             self.lidar.stop_motor()
-            rospy.logwarn("LIDARNode: Disconnecting serial.")
+            self.logwarn("LIDARNode: Disconnecting serial.")
             self.lidar.disconnect()
 
 if __name__ == "__main__":

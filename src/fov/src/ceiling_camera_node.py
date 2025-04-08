@@ -17,7 +17,7 @@ class CeilingCameraNode(AbstractNode):
         super().__init__('ceiling_camera_node', 'Ceiling Camera Node')
 
         
-        rospy.loginfo("Ceiling Camera Node: Node started.")
+        self.loginfo("Ceiling Camera Node: Node started.")
         # Initialize the camera
         self.camera = cv2.VideoCapture("rtsp://admin:icvl2023@1.1.2.103:554?network-caching=200", cv2.CAP_FFMPEG)
 
@@ -45,14 +45,14 @@ class CeilingCameraNode(AbstractNode):
                     img_msg = self.bridge.cv2_to_imgmsg(img, "bgr8")
                     self.image_pub.publish(img_msg)
                 else:
-                    rospy.logwarn(f"Camera: No image captured.")
+                    self.logwarn(f"Camera: No image captured.")
             except CvBridgeError as e:
                 rospy.logerr(f"Camera: CV Bridge Error - {e}")
 
             rate.sleep()
 
     def __on_shutdown(self):
-        rospy.loginfo(f"Ceiling Camera: Releasing camera.")
+        self.loginfo(f"Ceiling Camera: Releasing camera.")
         self.camera.release()
 
 if __name__ == "__main__":

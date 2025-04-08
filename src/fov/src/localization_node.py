@@ -19,12 +19,12 @@ class LocalizationNode(AbstractNode):
         
         # Updated HSV bounds for olive green
         self.lower_bound, self.upper_bound = np.array([30, 100, 150]), np.array([80, 255, 255])
-        rospy.loginfo("Localization Node initialized")
+        self.loginfo("Localization Node initialized")
 
     def process_image(self, img_msg: Image):
         try:
             img = self.bridge.imgmsg_to_cv2(img_msg)
-            # rospy.loginfo("Image received and converted")
+            # self.loginfo("Image received and converted")
             hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
             # Threshold the image to get only olive green colors

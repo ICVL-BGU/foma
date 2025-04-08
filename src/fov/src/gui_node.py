@@ -56,10 +56,16 @@ class MainWindow(QMainWindow):
         self.__init_widgets()
         self.__init_layouts()
         self.__init_attributes()
+        self.__init_timers()
 
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.__update_gui)
-        self.timer.start(30)  # Update every 30ms (adjust as needed)
+    def __init_timers(self):
+        self.__image_timer = QTimer(self)
+        self.__image_timer.timeout.connect(self.__update_right_display)
+        self.__image_timer.start(30)
+
+        self.__services_timer = QTimer(self)
+        self.__services_timer.timeout.connect(self.__update_services)
+        self.__services_timer.start(1000)
 
     def __init_attributes(self):
         self.__img_location = None
@@ -74,9 +80,13 @@ class MainWindow(QMainWindow):
         self.__current_timestamp = None
         self.__manual_control_window = None
         self.__feeding_load_window = None
-        self.__timer = None
+        self.__image_timer = None
+        self.__services_timer = None
         self.__manual_speed = 0.5
         self.__output_folder = '/home/icvl/FOMA/output'
+        self.__feed = None
+        self.__dim_lights = None
+        self.__motor_mode_control = None
 
     def __init_layouts(self):
         # Top-Left (Fish Camera)
@@ -180,8 +190,8 @@ class MainWindow(QMainWindow):
         # Feed button init
         self.__feed_button = QPushButton()
         self.__feed_button.setText("Feed")
-        # self.__feed_button.setDisabled(True)
-        self.__feed_button.clicked.connect(lambda:self.feed())
+        self.__feed_button.clicked.connect(lambda:self.__feed())
+        self.__feed_button.setDisabled(True)
 
         # Feed button label init
         self.__feed_label = QLabel("Manual Feed")
@@ -197,7 +207,8 @@ class MainWindow(QMainWindow):
         self.__lights_slider.setTickPosition(QSlider.TicksAbove|QSlider.TicksBelow)
         self.__lights_slider.setPageStep(1)
         self.__lights_slider.setMaximumHeight(50)
-        self.__lights_slider.valueChanged.connect(lambda val:self.dim_lights(val/self.__lights_slider.maximum()))
+        self.__lights_slider.valueChanged.connect(lambda val:self.__dim_lights(255*val/self.__lights_slider.maximum()))
+        self.__lights_slider.setDisabled(True)
 
         # Lights slider label init
         self.__lights_label = QLabel("Lights dimming")
@@ -209,9 +220,9 @@ class MainWindow(QMainWindow):
         # Manual Control button init
         self.__manual_control_button = QPushButton()
         self.__manual_control_button.setText("Manual Control")
-        self.__manual_control_button.setDisabled(False)
         self.__manual_control_button.setMaximumHeight(50)
         self.__manual_control_button.clicked.connect(self.__init_manual_control_window)
+        self.__manual_control_button.setDisabled(True)
 
         # Manual Control label init
         self.__manual_control_label = QLabel("Manual Control")
@@ -222,9 +233,9 @@ class MainWindow(QMainWindow):
 
         self.__feed_loading_button = QPushButton()
         self.__feed_loading_button.setText("Load Feeder")
-        self.__feed_loading_button.setDisabled(False)
         self.__feed_loading_button.setMaximumHeight(50)
         self.__feed_loading_button.clicked.connect(self.__init_feeding_load_window)
+        self.__feed_loading_button.setDisabled(True)
 
         # Fish image init
         self.__fish_image = QLabel() #TODO : add resize+update
@@ -287,20 +298,11 @@ class MainWindow(QMainWindow):
         self.stitched_image_pub = rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image)
         # self.stitched_image_pub = rospy.Subscriber('image_stitcher/image', Image, self.update_room_image)
         self.location_sub = rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
-        self.feed = rospy.ServiceProxy('fish_feeder/feed', Trigger)
-        self.dim_lights = rospy.ServiceProxy('light_dimmer/change', Light)
-        self.fish_camera_control = rospy.ServiceProxy('fish_camera/system_toggle', SetBool)
-        self.ceiling_cameras_control = rospy.ServiceProxy('ceiling_cameras/system_toggle', SetBool)
-        self.lidar_control = rospy.ServiceProxy('lidar/system_toggle', SetBool)
-        self.fish_detection_control = rospy.ServiceProxy('fish_detection/system_toggle', SetBool)
-        self.light_dimmer_control = rospy.ServiceProxy('light_dimmer/system_toggle', SetBool)
-        self.motor_control = rospy.ServiceProxy('motor_control/system_toggle', SetBool)
-        self.motor_mode_control = rospy.ServiceProxy('motor_control/motor_mode_control', SetBool)
         self.manual_control_cmd = rospy.Publisher('gui/manual_control', Twist, queue_size=10)
 
     def __init_manual_control_window(self):
         rospy.wait_for_service('motor_control/motor_mode_control')
-        self.motor_mode_control(True)
+        self.__motor_mode_control(True)
         self.__manual_control_window = QDialog(self)
         self.__manual_control_window.setWindowTitle("Manual Robot Control")
         self.__manual_control_window.setFixedSize(300, 300)
@@ -317,7 +319,7 @@ class MainWindow(QMainWindow):
 
             # Clean up the widget reference
             self.__manual_control_window = None
-            self.motor_mode_control(False)
+            self.__motor_mode_control(False)
 
             # Accept the close event
             event.accept()
@@ -368,10 +370,10 @@ class MainWindow(QMainWindow):
         def set_speed():
             try:
                 speed = float(speed_control_textbox.text())
-                rospy.loginfo(f"Speed set to: {speed}")
+                self.loginfo(f"Speed set to: {speed}")
                 self.__manual_speed = speed
             except ValueError:
-                rospy.logwarn("Invalid speed value")
+                self.logwarn("Invalid speed value")
 
         control_layout.addWidget(forward_button, 0, 1, 1, 2)
         control_layout.addWidget(backward_button, 2, 1, 1, 2)
@@ -405,11 +407,11 @@ class MainWindow(QMainWindow):
                 lidar_bypass_service = rospy.ServiceProxy('motor_control/bypass_lidar', SetBool)
                 response = lidar_bypass_service(state)
                 if response.success:
-                    rospy.loginfo(f"LIDAR bypass set to: {state}")
+                    self.loginfo(f"LIDAR bypass set to: {state}")
                 else:
-                    rospy.logwarn(f"Failed to set LIDAR bypass to: {state}")
+                    self.logwarn(f"Failed to set LIDAR bypass to: {state}")
             except rospy.ServiceException as e:
-                rospy.logwarn(f"Service call failed: {e}")
+                self.logwarn(f"Service call failed: {e}")
 
         bypass_lidar_checkbox.stateChanged.connect(lambda state: toggle_lidar_bypass(state == Qt.Checked))
 
@@ -431,7 +433,7 @@ class MainWindow(QMainWindow):
 
         def empty_feeder():
             for _ in range(30):
-                self.feed()
+                self.__feed()
                 rospy.sleep(0.1)
 
         def on_key_press(event):
@@ -448,12 +450,12 @@ class MainWindow(QMainWindow):
             nonlocal step
             if step in range(4):
                 for _ in range(6):
-                    self.feed()
+                    self.__feed()
                 step += 1
                 step_label.setText(f"Step: {step}/5")
             elif step == 4:
                 for _ in range(4):
-                    self.feed()
+                    self.__feed()
                 step =-1
                 empty_button.setDisabled(False)
                 step_label.setText("Finished Loading")
@@ -533,7 +535,7 @@ class MainWindow(QMainWindow):
 
         # Publish the velocity to the robot
         self.manual_control_cmd.publish(self.__velocity)
-        # rospy.loginfo(f"Velocity: {self.__velocity}")     
+        # self.loginfo(f"Velocity: {self.__velocity}")     
 
     def __update_fish_image(self, img_msg: Image):
         try:
@@ -543,7 +545,7 @@ class MainWindow(QMainWindow):
             pixmap = QPixmap.fromImage(q_image)
             self.__fish_image.setPixmap(pixmap)
         except CvBridgeError as e:
-            rospy.logwarn(e)
+            self.logwarn(e)
 
     def __update_fish_state(self, state: FishState):
         """
@@ -554,18 +556,18 @@ class MainWindow(QMainWindow):
         """
         # Check if direction display is enabled before doing any work
         if not self.show_direction_rb.isChecked():
-            rospy.loginfo("Direction display is disabled. Skipping updates.")
+            self.loginfo("Direction display is disabled. Skipping updates.")
             return
 
         # Ensure the fish image exists
         if self.__fish_image.pixmap() is None:
-            rospy.logwarn("No image available to update")
+            self.logwarn("No image available to update")
             return
 
         # Convert QLabel's pixmap to a numpy array
         pixmap = self.__fish_image.pixmap()
         if pixmap is None:
-            rospy.logwarn("No pixmap available")
+            self.logwarn("No pixmap available")
             return
         image = pixmap.toImage()
 
@@ -622,9 +624,9 @@ class MainWindow(QMainWindow):
                 self.__room_video_writer.write(frame)
             # self.update_room_image() 
         except CvBridgeError as e:
-            rospy.logwarn(f"Error converting image message: {e}")
+            self.logwarn(f"Error converting image message: {e}")
         except Exception as e:
-            rospy.logwarn(f"Unexpected error in update_room_image: {e}")
+            self.logwarn(f"Unexpected error in update_room_image: {e}")
 
     def __update_foma_location(self, location: FomaLocation):
         self.__img_location = location.image
@@ -639,7 +641,7 @@ class MainWindow(QMainWindow):
             y = np.clip(self.__world_location.y, 0, 500 - 1)
             cv2.circle(self.__room_map, (x, y), 5, (0, 255, 0), -1)
 
-    def __update_gui(self):
+    def __update_right_display(self):
         """
         Callback to update the room camera image on the GUI only ATM.
         """
@@ -672,6 +674,56 @@ class MainWindow(QMainWindow):
             # Update the QLabel with the scaled QPixmap
             self.__top_right_image.setPixmap(scaled_pixmap)
 
+    def __update_services(self):
+        def is_service_available(service_name):
+            try:
+                rospy.wait_for_service(service_name, timeout=1)  # Timeout of 1 second
+                return True
+            except rospy.ROSException:
+                return False
+
+        if not (self.__feed is None) ^ is_service_available('fish_feeder/feed'):
+            if self.__feed:
+                self.logerr("Feeder service unavailable - disabling buttons")
+                self.__feed_button.setDisabled(True)
+                self.__feed_loading_button.setDisabled(True)
+                self.__feed = None
+            else:
+                self.loginfo("Feeder service available - enabling buttons")
+                self.__feed_button.setDisabled(False)
+                self.__feed = rospy.ServiceProxy('fish_feeder/feed', Trigger)
+
+        if not (self.__dim_lights is None) ^ is_service_available('fish_feeder/feed'):
+            if self.__dim_lights:
+                self.logerr("Light dimming service unavailable - disabling buttons")
+                self.__lights_slider.setDisabled(True)
+                self.__dim_lights = None
+            else:
+                self.loginfo("Light dimming service available - enabling buttons")
+                self.__lights_slider.setDisabled(False)
+                self.__dim_lights = rospy.ServiceProxy('light_dimmer/change', Light)
+
+        if not (self.__motor_mode_control is None) ^ is_service_available('fish_feeder/feed'):
+            if self.__motor_mode_control:
+                self.logerr("Manual control service unavailable - disabling buttons")
+                self.__manual_control_button.setDisabled(True)
+                self.__motor_mode_control = None
+            else:
+                self.loginfo("Manual control service available - enabling buttons")
+                self.__manual_control_button.setDisabled(False)
+                self.__motor_mode_control = rospy.ServiceProxy('motor_control/motor_mode_control', SetBool)
+        
+        # self.fish_camera_control = rospy.ServiceProxy('fish_camera/system_toggle', SetBool)
+        # self.ceiling_cameras_control = rospy.ServiceProxy('ceiling_cameras/system_toggle', SetBool)
+        # self.lidar_control = rospy.ServiceProxy('lidar/system_toggle', SetBool)
+        # self.fish_detection_control = rospy.ServiceProxy('fish_detection/system_toggle', SetBool)
+        # self.light_dimmer_control = rospy.ServiceProxy('light_dimmer/system_toggle', SetBool)
+        # self.motor_control = rospy.ServiceProxy('motor_control/system_toggle', SetBool)
+
+    def __update_gui(self):
+        self.__update_right_display()
+        self.__update_services()
+
     def __on_start_click(self):
         self.__update_buttons_state((True,False,True,True))
    
@@ -697,7 +749,7 @@ class MainWindow(QMainWindow):
         room_fps = 10  # Default FPS (adjust based on the camera FPS)
         self.__room_video_writer = cv2.VideoWriter(room_video_filename, fourcc, room_fps, (room_frame_width, room_frame_height))
         # if self.__room_video_writer.isOpened():
-        #     rospy.loginfo(f"Room video writer opened with filename: {room_video_filename}")
+        #     self.loginfo(f"Room video writer opened with filename: {room_video_filename}")
 
 
         # 3. FOMA Video
@@ -752,7 +804,7 @@ class MainWindow(QMainWindow):
                 # Assume the image is BGR and proceed
                 img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             else:
-                rospy.logwarn("Unexpected image format, expected 3-channel image.")
+                self.logwarn("Unexpected image format, expected 3-channel image.")
                 return
             
             # Convert to QImage
@@ -772,9 +824,9 @@ class MainWindow(QMainWindow):
             destination.setPixmap(scaled_pixmap)
             
         except CvBridgeError as e:
-            rospy.logwarn(f"Error converting image message: {e}")
+            self.logwarn(f"Error converting image message: {e}")
         except Exception as e:
-            rospy.logwarn(f"Unexpected error in update_image: {e}")
+            self.logwarn(f"Unexpected error in update_image: {e}")
 
     def resizeEvent(self, event):
         if self.__top_right_image.pixmap():
@@ -810,9 +862,19 @@ class MainWindow(QMainWindow):
         else:
             event.ignore()
 
+    def logerr(self, msg):
+        rospy.logerr(f"GUI Node: {msg}")
+
+    def logwarn(self, msg):
+        rospy.logwarn(f"GUI Node: {msg}")
+
+    def loginfo(self, msg):
+        rospy.logerr(f"GUI Node: {msg}")
+
+
 if __name__ == "__main__":
     rospy.init_node('gui_node')
-    rospy.loginfo("GUI Node: node created.")
+    rospy.loginfo("GUI Node: Node created.")
     
     app = QApplication(sys.argv)
     window = MainWindow()
