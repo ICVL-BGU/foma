@@ -32,6 +32,7 @@ class CeilingCameraNode(AbstractNode):
         # Load calibration parameters
         # param_dir = r'/home/icvl/FOMA/src/fov/src/etc'
         self.resize_factor = 1
+        self.fail_counter = 0
 
         # Shutdown behavior
         rospy.on_shutdown(self.__on_shutdown)
@@ -44,8 +45,13 @@ class CeilingCameraNode(AbstractNode):
                 if ret:
                     img_msg = self.bridge.cv2_to_imgmsg(img, "bgr8")
                     self.image_pub.publish(img_msg)
+                    self.fail_counter = 0
                 else:
-                    self.logwarn(f"Camera: No image captured.")
+                    self.logwarn(f"No image captured.")
+                    self.fail_counter += 1
+                    if self.fail_counter >= 10:
+                        self.logwarn(f"Failed to capture image after 10 attempts, attempting to reconnect.")
+                        self.camera = cv2.VideoCapture("rtsp://admin:icvl2023@1.1.2.103:554?network-caching=200", cv2.CAP_FFMPEG)
             except CvBridgeError as e:
                 rospy.logerr(f"Camera: CV Bridge Error - {e}")
 

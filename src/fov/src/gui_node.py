@@ -203,7 +203,7 @@ class MainWindow(QMainWindow):
         # Lights slider init
         self.__lights_slider = QSlider(Qt.Horizontal)
         self.__lights_slider.setMinimum(0)
-        self.__lights_slider.setMaximum(2)
+        self.__lights_slider.setMaximum(1)
         self.__lights_slider.setTickPosition(QSlider.TicksAbove|QSlider.TicksBelow)
         self.__lights_slider.setPageStep(1)
         self.__lights_slider.setMaximumHeight(50)
@@ -691,6 +691,7 @@ class MainWindow(QMainWindow):
             else:
                 self.loginfo("Feeder service available - enabling buttons")
                 self.__feed_button.setDisabled(False)
+                self.__feed_loading_button.setDisabled(False)
                 self.__feed = rospy.ServiceProxy('fish_feeder/feed', Trigger)
 
         if not (self.__dim_lights is None) ^ is_service_available('fish_feeder/feed'):
@@ -869,7 +870,7 @@ class MainWindow(QMainWindow):
         rospy.logwarn(f"GUI Node: {msg}")
 
     def loginfo(self, msg):
-        rospy.logerr(f"GUI Node: {msg}")
+        rospy.loginfo(f"GUI Node: {msg}")
 
 
 if __name__ == "__main__":
