@@ -1,2 +1,0 @@
-fov
--DCATKIN_DEVEL_PREFIX=/home/icvl/FOMA/devel -DCMAKE_INSTALL_PREFIX=/home/icvl/FOMA/install -G Unix Makefiles

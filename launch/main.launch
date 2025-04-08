@@ -1,0 +1,13 @@
+<launch>
+    <!-- Define the PC (station) machine -->
+    <machine name="station" address="localhost" user="user_station" />
+
+    <!-- Define the robot (foma) machine -->
+    <machine name="foma" address="icvl-foma.local" user="foma" />
+
+    <!-- Include the PC (station) launch file -->
+    <include file="$(find foma)/launch/station.launch" machine="station" />
+
+    <!-- Include the robot (foma) launch file -->
+    <include file="$(find foma)/launch/foma.launch" machine="foma" />
+</launch>
