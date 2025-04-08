@@ -51,15 +51,35 @@ class MotorControlNode(AbstractNode):
             rospy.sleep(0.005)
 
     def move_by_components(self, hComponent, vComponent):
+        '''
+            Forward = 0
+            Left = 90
+            Backward = 180
+            Right = 270
+        '''
         if not self.__lidar_bypassed:
-            if hComponent > 0 and self.fBlocked:
-                hComponent = 0
-            elif hComponent < 0 and self.bBlocked:
-                hComponent = 0
-            if vComponent > 0 and self.rBlocked:
-                vComponent = 0
-            elif vComponent < 0 and self.lBlocked:
-                vComponent = 0
+            if hComponent != 0 and vComponent !=0:
+                if hComponent > 0 and vComponent > 0:
+                    if self.__check_angel_range(range(-45,45)):
+                        hComponent = 0
+                    if self.__check_angel_range(range(225,315)):
+                        vComponent = 0
+                elif hComponent < 0 and self.__check_angel_range(range(135,225)):
+                    hComponent = 0
+                if vComponent > 0 and self.__check_angel_range(range(225,315)):
+                    vComponent = 0
+                elif vComponent < 0 and self.__check_angel_range(range(45,135)):
+                    vComponent = 0
+            elif hComponent != 0:
+                if hComponent > 0 and self.__check_angel_range(range(-36,36)):
+                    hComponent = 0
+                elif hComponent < 0 and self.__check_angel_range(range(144,216)):
+                    hComponent = 0
+            elif vComponent != 0:
+                if vComponent > 0 and self.__check_angel_range(range(234,306)):
+                    vComponent = 0
+                elif vComponent < 0 and self.__check_angel_range(range(54,126)):
+                    vComponent = 0
         self.motor_control.move_by_components(hComponent, vComponent)                
 
     def update_direction(self, direction: UInt16):
@@ -68,7 +88,7 @@ class MotorControlNode(AbstractNode):
         self.hComponent, self.vComponent = self.__split_components()
 
     def update_lidar(self, scans:LaserScan):
-        # rospy.loginfo("Got here")
+        # self.loginfo("Got here")
         # Process lidar data and adjust motors to avoid obstacles
         self.scans = scans.ranges
         # if self.direction is None:
@@ -107,7 +127,7 @@ class MotorControlNode(AbstractNode):
         filtered_scans = np.array(self.scans)[angle_range] 
         distance_checks = filtered_scans < MotorControlNode.safety_distance_vector
         if np.any(distance_checks):
-            rospy.logwarn(np.where(distance_checks)[0] + angle_range[0])
+            self.logwarn(np.where(distance_checks)[0] + angle_range[0])
             return True
         return False
 
@@ -125,12 +145,12 @@ class MotorControlNode(AbstractNode):
         Callback function to handle incoming Twist messages from the cmd_vel topic.
         Maps linear and angular velocities to motor control.
         """
-        # rospy.loginfo(f"System: {self._system_on}, Manual: {self.__manual_mode}")
+        # self.loginfo(f"System: {self._system_on}, Manual: {self.__manual_mode}")
         if self.__manual_mode:# and self._system_on:
             # Linear velocity controls forward/backward motion
             # print(twist)
             
-            # rospy.loginfo("got here")
+            # self.loginfo("got here")
             vertical_component = twist.linear.x
             
             # Angular velocity controls left/right motion
@@ -145,7 +165,7 @@ class MotorControlNode(AbstractNode):
     
     def __on_shutdown(self):
         if self.motor_control:
-            rospy.logwarn("MotorControlNode: Stopping motors.")
+            self.logwarn("MotorControlNode: Stopping motors.")
             # self.hBlocked, self.vBlocked = True, True
             self.motor_control.move_by_components(0, 0)
 
@@ -154,7 +174,7 @@ if __name__ == "__main__":
     rospy.loginfo("Motor Control Node: node created.")
     # print("Started")
     motor_ctrl = MotorControlNode()
-    # rospy.logwarn("Distances vector: {}".format(MotorControlNode.safety_distance_vector))
+    # self.logwarn("Distances vector: {}".format(MotorControlNode.safety_distance_vector))
     motor_ctrl.run()
     
     rospy.spin()

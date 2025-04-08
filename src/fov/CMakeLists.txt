@@ -10,6 +10,7 @@ project(fov)
 find_package(catkin REQUIRED COMPONENTS
   rospy
   std_msgs
+  geometry_msgs
   message_generation
 )
 
@@ -50,6 +51,7 @@ find_package(catkin REQUIRED COMPONENTS
 add_message_files(
   FILES
   FishState.msg
+  FomaLocation.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -71,6 +73,7 @@ add_service_files(
 generate_messages(
   DEPENDENCIES
   std_msgs
+  geometry_msgs
 )
 
 ################################################

@@ -3,5 +3,7 @@
   (:export
    "<FISHSTATE>"
    "FISHSTATE"
+   "<FOMALOCATION>"
+   "FOMALOCATION"
   ))
 

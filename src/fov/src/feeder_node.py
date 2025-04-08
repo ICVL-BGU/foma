@@ -32,7 +32,7 @@ class FeederNode(AbstractNode):
         try:
             self.out = PWMOutputDevice(pin = 17, initial_value = 0.5, frequency = 700)
         except BadPinFactory as e:
-            rospy.logwarn(e.msg)
+            self.logwarn(e.msg)
 
     def feed(self, data: TriggerRequest):
         self.feeder.rotate(12)

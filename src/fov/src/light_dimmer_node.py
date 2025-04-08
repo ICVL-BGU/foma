@@ -27,16 +27,16 @@ class LightDimmerNode(AbstractNode):
                 self.serial_baud_rate,
                 timeout=self.serial_timeout
             )
-            rospy.loginfo(f"Serial port {self.serial_port_alias} opened at {self.serial_baud_rate} baud.")
+            self.loginfo(f"Serial port {self.serial_port_alias} opened at {self.serial_baud_rate} baud.")
         except serial.SerialException as e:
-            rospy.logerr(f"Failed to open serial port {self.serial_port_alias}: {e}")
+            self.logerr(f"Failed to open serial port {self.serial_port_alias}: {e}")
             self.serial_port = None
 
     def dim(self, data: LightRequest):
         """Handle the light dimming request."""
         # Attempt to open the serial port if not open
         if not self.serial_port or not self.serial_port.is_open:
-            rospy.logwarn("Serial port is not open. Attempting to reopen...")
+            self.logwarn("Serial port is not open. Attempting to reopen...")
             self.open_serial_port()
 
         # If still not open, return an error response
@@ -49,8 +49,7 @@ class LightDimmerNode(AbstractNode):
 
             # Send the value via serial
             self.serial_port.write(f"{value}".encode('utf-8'))
-
-            rospy.loginfo(f"Sent value {value} to the light dimmer via serial.")
+            self.loginfo(f"Sent value {value} to the light dimmer via serial.")
             return LightResponse(result=True)#, message=f"Light dimmer dimmed to {value}.")
         except Exception as e:
             rospy.logerr(f"Failed to send data via serial: {e}")

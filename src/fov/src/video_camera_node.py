@@ -40,7 +40,7 @@ class VideoCameraNode(AbstractNode):
         while not rospy.is_shutdown():
             
             if True:#self._system_on:
-                #rospy.logwarn("running")
+                #self.logwarn("running")
                 self.img = self.camera_capture.capture_array()
 
                 # Create and populate the Image message
@@ -51,9 +51,9 @@ class VideoCameraNode(AbstractNode):
                 img_msg.data = self.img.tobytes()  # In ROS Noetic, use tostring() instead of tobytes()
                 img_msg.header.stamp = rospy.Time.now()  # Current time
                 img_msg.header.frame_id = 'camera_frame'  # Change to your frame
-                #rospy.logwarn(self.img)
+                #self.logwarn(self.img)
 
-                #rospy.logwarn(self.img.shape)
+                #self.logwarn(self.img.shape)
                 #img_msg = self.bridge.cv2_to_imgmsg(self.img)
                 self.camera_pub.publish(img_msg)
 

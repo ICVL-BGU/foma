@@ -16,3 +16,13 @@ class AbstractNode:
     
     def system_check(self, check: CheckRequest):
         return CheckResponse()
+
+    def loginfo(self, msg):
+        rospy.loginfo(f"{self._node_repr}:{msg}")
+
+    def logwarn(self, msg):
+        rospy.logwarn(f"{self._node_repr}:{msg}")
+
+    def logerr(self, msg):
+        rospy.logerr(f"{self._node_repr}:{msg}")
+    

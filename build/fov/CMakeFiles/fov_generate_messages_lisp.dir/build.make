@@ -54,6 +54,7 @@ CMAKE_BINARY_DIR = /home/icvl/FOMA/build
 include fov/CMakeFiles/fov_generate_messages_lisp.dir/progress.make
 
 fov/CMakeFiles/fov_generate_messages_lisp: /home/icvl/FOMA/devel/share/common-lisp/ros/fov/msg/FishState.lisp
+fov/CMakeFiles/fov_generate_messages_lisp: /home/icvl/FOMA/devel/share/common-lisp/ros/fov/msg/FomaLocation.lisp
 fov/CMakeFiles/fov_generate_messages_lisp: /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Check.lisp
 fov/CMakeFiles/fov_generate_messages_lisp: /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Light.lisp
 fov/CMakeFiles/fov_generate_messages_lisp: /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Coordinate.lisp
@@ -62,28 +63,35 @@ fov/CMakeFiles/fov_generate_messages_lisp: /home/icvl/FOMA/devel/share/common-li
 /home/icvl/FOMA/devel/share/common-lisp/ros/fov/msg/FishState.lisp: /opt/ros/noetic/lib/genlisp/gen_lisp.py
 /home/icvl/FOMA/devel/share/common-lisp/ros/fov/msg/FishState.lisp: /home/icvl/FOMA/src/fov/msg/FishState.msg
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Generating Lisp code from fov/FishState.msg"
-	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/genlisp/cmake/../../../lib/genlisp/gen_lisp.py /home/icvl/FOMA/src/fov/msg/FishState.msg -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/common-lisp/ros/fov/msg
+	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/genlisp/cmake/../../../lib/genlisp/gen_lisp.py /home/icvl/FOMA/src/fov/msg/FishState.msg -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -Igeometry_msgs:/opt/ros/noetic/share/geometry_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/common-lisp/ros/fov/msg
+
+/home/icvl/FOMA/devel/share/common-lisp/ros/fov/msg/FomaLocation.lisp: /opt/ros/noetic/lib/genlisp/gen_lisp.py
+/home/icvl/FOMA/devel/share/common-lisp/ros/fov/msg/FomaLocation.lisp: /home/icvl/FOMA/src/fov/msg/FomaLocation.msg
+/home/icvl/FOMA/devel/share/common-lisp/ros/fov/msg/FomaLocation.lisp: /opt/ros/noetic/share/geometry_msgs/msg/Point.msg
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Generating Lisp code from fov/FomaLocation.msg"
+	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/genlisp/cmake/../../../lib/genlisp/gen_lisp.py /home/icvl/FOMA/src/fov/msg/FomaLocation.msg -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -Igeometry_msgs:/opt/ros/noetic/share/geometry_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/common-lisp/ros/fov/msg
 
 /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Check.lisp: /opt/ros/noetic/lib/genlisp/gen_lisp.py
 /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Check.lisp: /home/icvl/FOMA/src/fov/srv/Check.srv
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Generating Lisp code from fov/Check.srv"
-	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/genlisp/cmake/../../../lib/genlisp/gen_lisp.py /home/icvl/FOMA/src/fov/srv/Check.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Generating Lisp code from fov/Check.srv"
+	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/genlisp/cmake/../../../lib/genlisp/gen_lisp.py /home/icvl/FOMA/src/fov/srv/Check.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -Igeometry_msgs:/opt/ros/noetic/share/geometry_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv
 
 /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Light.lisp: /opt/ros/noetic/lib/genlisp/gen_lisp.py
 /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Light.lisp: /home/icvl/FOMA/src/fov/srv/Light.srv
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Generating Lisp code from fov/Light.srv"
-	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/genlisp/cmake/../../../lib/genlisp/gen_lisp.py /home/icvl/FOMA/src/fov/srv/Light.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Generating Lisp code from fov/Light.srv"
+	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/genlisp/cmake/../../../lib/genlisp/gen_lisp.py /home/icvl/FOMA/src/fov/srv/Light.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -Igeometry_msgs:/opt/ros/noetic/share/geometry_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv
 
 /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Coordinate.lisp: /opt/ros/noetic/lib/genlisp/gen_lisp.py
 /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Coordinate.lisp: /home/icvl/FOMA/src/fov/srv/Coordinate.srv
 /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Coordinate.lisp: /opt/ros/noetic/share/std_msgs/msg/MultiArrayLayout.msg
-/home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Coordinate.lisp: /opt/ros/noetic/share/std_msgs/msg/UInt8MultiArray.msg
 /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Coordinate.lisp: /opt/ros/noetic/share/std_msgs/msg/MultiArrayDimension.msg
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Generating Lisp code from fov/Coordinate.srv"
-	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/genlisp/cmake/../../../lib/genlisp/gen_lisp.py /home/icvl/FOMA/src/fov/srv/Coordinate.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv
+/home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Coordinate.lisp: /opt/ros/noetic/share/std_msgs/msg/UInt8MultiArray.msg
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --blue --bold --progress-dir=/home/icvl/FOMA/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Generating Lisp code from fov/Coordinate.srv"
+	cd /home/icvl/FOMA/build/fov && ../catkin_generated/env_cached.sh /usr/bin/python3 /opt/ros/noetic/share/genlisp/cmake/../../../lib/genlisp/gen_lisp.py /home/icvl/FOMA/src/fov/srv/Coordinate.srv -Ifov:/home/icvl/FOMA/src/fov/msg -Istd_msgs:/opt/ros/noetic/share/std_msgs/cmake/../msg -Igeometry_msgs:/opt/ros/noetic/share/geometry_msgs/cmake/../msg -p fov -o /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv
 
 fov_generate_messages_lisp: fov/CMakeFiles/fov_generate_messages_lisp
 fov_generate_messages_lisp: /home/icvl/FOMA/devel/share/common-lisp/ros/fov/msg/FishState.lisp
+fov_generate_messages_lisp: /home/icvl/FOMA/devel/share/common-lisp/ros/fov/msg/FomaLocation.lisp
 fov_generate_messages_lisp: /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Check.lisp
 fov_generate_messages_lisp: /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Light.lisp
 fov_generate_messages_lisp: /home/icvl/FOMA/devel/share/common-lisp/ros/fov/srv/Coordinate.lisp

@@ -5,7 +5,7 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import UInt16
 from std_srvs.srv import Trigger
 from fov.srv import EPDImage, EPDImageRequest, EPDImageResponse
-from funcs.epd_display import display_image
+from etc.EPD.epd_display import display_image
 from abstract_node import AbstractNode
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
