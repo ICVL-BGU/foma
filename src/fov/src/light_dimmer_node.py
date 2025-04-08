@@ -49,7 +49,6 @@ class LightDimmerNode(AbstractNode):
 
             # Send the value via serial
             self.serial_port.write(f"{value}".encode('utf-8'))
-
             self.loginfo(f"Sent value {value} to the light dimmer via serial.")
             return LightResponse(result=True)#, message=f"Light dimmer dimmed to {value}.")
         except Exception as e:

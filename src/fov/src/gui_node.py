@@ -207,7 +207,7 @@ class MainWindow(QMainWindow):
         self.__lights_slider.setTickPosition(QSlider.TicksAbove|QSlider.TicksBelow)
         self.__lights_slider.setPageStep(1)
         self.__lights_slider.setMaximumHeight(50)
-        self.__lights_slider.valueChanged.connect(lambda val:self.__dim_lights(255*val/self.__lights_slider.maximum()))
+        self.__lights_slider.valueChanged.connect(lambda val:self.__dim_lights(int(255*val/self.__lights_slider.maximum())))
         self.__lights_slider.setDisabled(True)
 
         # Lights slider label init
