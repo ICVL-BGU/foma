@@ -18,6 +18,7 @@ class LightDimmerNode(AbstractNode):
         # Initialize serial port as None
         self.serial_port = None
         self.open_serial_port()
+        rospy.on_shutdown(self.__on_shutdown)
 
     def open_serial_port(self):
         """Attempt to open the serial port."""
@@ -54,6 +55,10 @@ class LightDimmerNode(AbstractNode):
         except Exception as e:
             rospy.logerr(f"Failed to send data via serial: {e}")
             return LightResponse(result=False)#, message="Failed to dim light.")
+        
+    def __on_shutdown(self):
+        self.loginfo(f"Turning off the light dimmer.")
+        self.serial_port.write(f"{0}".encode('utf-8'))
 
 if __name__ == "__main__":
     rospy.init_node('light_dimmer_node')

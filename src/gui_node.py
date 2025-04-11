@@ -694,7 +694,7 @@ class MainWindow(QMainWindow):
                 self.__feed_loading_button.setDisabled(False)
                 self.__feed = rospy.ServiceProxy('fish_feeder/feed', Trigger)
 
-        if not (self.__dim_lights is None) ^ is_service_available('fish_feeder/feed'):
+        if not (self.__dim_lights is None) ^ is_service_available('light_dimmer/change'):
             if self.__dim_lights:
                 self.logerr("Light dimming service unavailable - disabling buttons")
                 self.__lights_slider.setDisabled(True)
@@ -704,7 +704,7 @@ class MainWindow(QMainWindow):
                 self.__lights_slider.setDisabled(False)
                 self.__dim_lights = rospy.ServiceProxy('light_dimmer/change', Light)
 
-        if not (self.__motor_mode_control is None) ^ is_service_available('fish_feeder/feed'):
+        if not (self.__motor_mode_control is None) ^ is_service_available('motor_control/motor_mode_control'):
             if self.__motor_mode_control:
                 self.logerr("Manual control service unavailable - disabling buttons")
                 self.__manual_control_button.setDisabled(True)
