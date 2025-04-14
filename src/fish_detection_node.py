@@ -7,20 +7,20 @@ import cv2
 from cv_bridge import CvBridge, CvBridgeError
 import numpy as np
 from foma.msg import FishState  # Import the custom message
-
+import sleap
 
 class FishDetectionNode(AbstractNode):
     def __init__(self):
         super().__init__('fish_detection', 'Fish detection')
-        self.image_sub = rospy.Subscriber('web_camera/image', Image, self.read_image)
+        self.image_sub = rospy.Subscriber('fish_camera/image', Image, self.read_image)
         self.fish_state_pub = rospy.Publisher('fish_detection/state', FishState, queue_size=10)
+
+        sleap.disable_preallocation()
+        model_path = r"/home/alex/sleap/folwerhorn4/models/250402_192455.single_instance.n=93"
+        self.model = sleap.load_model(model_path)
         self.direction = None
         self.img = None
         self.bridge = CvBridge()
-        self.lower_hsv = np.array([0, 0, 0])  # Adjust these thresholds as needed
-        self.higher_hsv = np.array([255, 255, 255])  # Adjust these thresholds as needed
-        self.fgbg = cv2.createBackgroundSubtractorMOG2()
-        self.count = 0
 
     def run(self):
         while not rospy.is_shutdown():
@@ -35,55 +35,14 @@ class FishDetectionNode(AbstractNode):
             rospy.logerr(f"Error converting image: {e}")
 
     def process_image(self):
-        frame = self.img
-        if frame is None:
+        prediction = self.inference_model.model.predict(self.img)[0]
+        points, confidences = prediction['instance_peaks'][[0,5]], prediction['instance_peak_vals'][[0,5]]
+        if np.any(confidences < 0.2):
             return
-
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, self.lower_hsv, self.higher_hsv)
-        result = cv2.bitwise_and(frame, frame, mask=mask)
-        fgmask = self.fgbg.apply(result)
-
-        _, th1 = cv2.threshold(result, 30, 255, cv2.THRESH_BINARY)
-        gray = 255 - cv2.cvtColor(th1, cv2.COLOR_BGR2GRAY)
-
-        _, cnts, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        areaSUM, CCx, CCy, maxA, CxMax, CyMax, maxC, c = 0, 0, 0, 0, 0, 0, 0, None
-
-        for c in cnts:
-            M = cv2.moments(c)
-            if M['m00'] > 500:
-                cx = int(M['m10'] / M['m00'])
-                cy = int(M['m01'] / M['m00'])
-                areaSUM += M['m00']
-                CCx += cx * M['m00']
-                CCy += cy * M['m00']
-
-                if maxA < M['m00']:
-                    maxA, CxMax, CyMax, self.cmax = M['m00'], cx, cy, c
-
-        if areaSUM > 0:
-            CCx, CCy = CCx / areaSUM, CCy / areaSUM
-        Xc = tuple(np.array([CCx, CCy], dtype=int).reshape(1, -1)[0])
-
-        # Example direction logic (replace with your logic)
-        direction = 90 if Xc[0] > frame.shape[1] // 2 else 270
-
-        # Publish state
-        state_msg = FishState()
-        state_msg.direction = direction
-        state_msg.x = int(CCx)
-        state_msg.y = int(CCy)
-        self.fish_state_pub.publish(state_msg)
-
-        cv2.drawContours(frame, cnts, -1, (255, 0, 0), 2)
-        cv2.imshow('Processed Image', frame)
-
-        key = cv2.waitKey(30)
-        if key == 'q' or key == 27:
-            return
-
+        direction_vector = points[0] - points[1]
+        x, y = points[1]
+        self.direction = FishState(direction = direction_vector, x = x, y = y)
+        self.fish_state_pub.publish(self.direction)
 
 if __name__ == "__main__":
     rospy.init_node('fish_detection_node')
