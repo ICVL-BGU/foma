@@ -2,8 +2,8 @@
 
 import rospy
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import UInt16
-from geometry_msgs.msg import Twist
+from std_msgs.msg import UInt16, Float32
+from geometry_msgs.msg import Twist, Vector3
 from abstract_node import AbstractNode
 from etc.settings import MOTOR_PORT, MOTOR_SPEED, MOTOR_TOP_BOTTOM_RESET, MOTOR_RIGHT_LEFT_RESET, SAFETY_DISTANCE
 from etc.MotorControl import *
@@ -15,17 +15,18 @@ class MotorControlNode(AbstractNode):
     safety_distance_vector = SAFETY_DISTANCE / np.cos(np.abs(np.arange(-45,45) * np.pi/180 ))
     def __init__(self):
         super().__init__('motor_control', 'Motor control')
-        # self.fish_dir_sub = rospy.Subscriber('fish_detection/state', FishState, self.update_direction)
-        self.lidar_sub = rospy.Subscriber('lidar/scans', LaserScan, self.update_lidar, queue_size=10)
-        self.manual_subscriber = rospy.Subscriber('gui/motor_control_twist', Twist, self.__manual_control) 
-        rospy.Subscriber('gui/motor_control_dir', UInt16, self.update_direction) 
-        self.manual_mode_service = rospy.Service('motor_control/motor_mode_control', SetBool, self.__manual_overide)
-        self.bypass_lidar_service = rospy.Service('motor_control/bypass_lidar', SetBool, self.__bypass_lidar)
-        self.__manual_mode = False
-        self.direction = None
+        rospy.Subscriber('lidar/scans', LaserScan, self.__update_lidar, queue_size=10)
+        rospy.Subscriber('motor_control/angle', UInt16, self.__handle_angle) 
+        rospy.Subscriber('motor_control/vector',  Vector3,  self.__handle_vector)
+        rospy.Subscriber('motor_control/twist',   Twist,    self.__handle_twist)
+        rospy.Subscriber('motor_control/rotate',  Float32,  self.__handle_rotate)
+
+        rospy.Service('motor_control/bypass_lidar', SetBool, self.__bypass_lidar)
+
         self.scans = None
+
         try:
-            self.motor_control = MotorControl(resetPins = (MOTOR_TOP_BOTTOM_RESET, MOTOR_RIGHT_LEFT_RESET)
+            self.__motor_control = MotorControl(resetPins = (MOTOR_TOP_BOTTOM_RESET, MOTOR_RIGHT_LEFT_RESET)
                                             ,port = MOTOR_PORT
                                             ,speed = MOTOR_SPEED)
         except BadPinFactory as e:
@@ -34,24 +35,13 @@ class MotorControlNode(AbstractNode):
         self.__lidar_bypassed = False
         
         self.hComponent, self.vComponent = 0, 0
-        self.fBlocked, self.lBlocked, self.bBlocked, self.rBlocked = True, True, True, True
         rospy.on_shutdown(self.__on_shutdown)
 
     def __bypass_lidar(self, request:SetBoolRequest):
         self.__lidar_bypassed = request.data
         return SetBoolResponse(success = True, message = f"LIDAR {'' if self.__lidar_bypassed else 'not'} bypassed.")
 
-    def __manual_overide(self, request:SetBoolRequest):
-        self.__manual_mode = request.data
-        return SetBoolResponse(success = True, message = "Motor control turned {}.".format("manual" if request.data else "auto"))
-
-    def run(self):
-        while not rospy.is_shutdown():
-            if not self.__manual_mode:
-                self.move_by_components(self.hComponent, self.vComponent)
-            rospy.sleep(0.005)
-
-    def move_by_components(self, hComponent, vComponent):
+    def __move_by_components(self, hComponent, vComponent):
         '''
             Forward = 0
             Left = 90
@@ -61,121 +51,159 @@ class MotorControlNode(AbstractNode):
         if not self.__lidar_bypassed:
             if hComponent != 0 and vComponent !=0:
                 if hComponent > 0 and vComponent > 0:
-                    if self.__check_angel_range(range(-45,45)):
+                    if self.__is_sector_blocked(range(-45,45)):
                         hComponent = 0
-                    if self.__check_angel_range(range(225,315)):
+                    if self.__is_sector_blocked(range(225,315)):
                         vComponent = 0
-                elif hComponent < 0 and self.__check_angel_range(range(135,225)):
+                elif hComponent < 0 and self.__is_sector_blocked(range(135,225)):
                     hComponent = 0
-                if vComponent > 0 and self.__check_angel_range(range(225,315)):
+                if vComponent > 0 and self.__is_sector_blocked(range(225,315)):
                     vComponent = 0
-                elif vComponent < 0 and self.__check_angel_range(range(45,135)):
+                elif vComponent < 0 and self.__is_sector_blocked(range(45,135)):
                     vComponent = 0
             elif hComponent != 0:
-                if hComponent > 0 and self.__check_angel_range(range(-36,36)):
+                if hComponent > 0 and self.__is_sector_blocked(range(-36,36)):
                     hComponent = 0
-                elif hComponent < 0 and self.__check_angel_range(range(144,216)):
+                elif hComponent < 0 and self.__is_sector_blocked(range(144,216)):
                     hComponent = 0
             elif vComponent != 0:
-                if vComponent > 0 and self.__check_angel_range(range(234,306)):
+                if vComponent > 0 and self.__is_sector_blocked(range(234,306)):
                     vComponent = 0
-                elif vComponent < 0 and self.__check_angel_range(range(54,126)):
+                elif vComponent < 0 and self.__is_sector_blocked(range(54,126)):
                     vComponent = 0
-        self.motor_control.move_by_components(hComponent, vComponent)                
+        self.__motor_control.move_by_components(hComponent, vComponent)                
 
-    def update_direction(self, direction: UInt16):
-        # Process fish direction and adjust motors accordingly
-        self.direction = direction.direction
-        self.hComponent, self.vComponent = self.__split_components()
+    def __handle_angle(self, msg: UInt16):
+        angle = msg.data % 360
+        h, v = self.__split_components(angle_deg=angle)
+        self.__move_by_components(h, v)
 
-    def update_lidar(self, scans:LaserScan):
-        # self.loginfo("Got here")
-        # Process lidar data and adjust motors to avoid obstacles
-        self.scans = scans.ranges
-        # if self.direction is None:
-        #     return
-        self.fBlocked = self.__check_angel_range(range(-45,45))# or self.__check_angel_range(range(305,360))
-        self.lBlocked = self.__check_angel_range(range(45,135))
-        self.bBlocked = self.__check_angel_range(range(135,225))
-        self.rBlocked = self.__check_angel_range(range(225,315))
-        # low, high = self.direction - 90, self.direction + 90
-        # if self.direction in range(0,90):
-        #     self.vBlocked = self.__check_angel_range(range(0,45)) or self.__check_angel_range(range(305,360))
-        #     self.hBlocked = self.__check_angel_range(range(45,135))
-        
-        # elif self.direction in range(90,180):
-        #     self.vBlocked = self.__check_angel_range(range(135,225))
-        #     self.hBlocked = self.__check_angel_range(range(45,135))
-            
-        # elif self.direction in range(180,270):
-        #     self.vBlocked = self.__check_angel_range(range(135,225))
-        #     self.hBlocked = self.__check_angel_range(range(225,315))
-            
-        # elif self.direction in range(270,360) :
-        #     self.vBlocked = self.__check_angel_range(range(0,45)) or self.__check_angel_range(range(305,360))
-        #     self.hBlocked = self.__check_angel_range(range(225,315))
+    def __handle_vector(self, msg: Vector3):
+        x, y = msg.x, msg.y
+        mag = np.hypot(x, y)
+        if mag < 1e-6:
+            rospy.logwarn("Received zero vector → stopping.")
+            self.__motor_control.move_by_components(0, 0)
+            return
+        self.__move_by_components(x/mag, y/mag)
 
-        # else:
-        #     rospy.logerr("MotorControlNode: Wrong direction, stopping motors.")
-        #     self.hComponent, self.vComponent = 0,0
-        #     return
-        
-        # Splits the speed components according to fish's direction
-        # self.hComponent, self.vComponent = self.__split_components()
+    def __handle_twist(self, msg: Twist):
+        self.__move_by_components(msg.linear.y, msg.linear.x)
 
+    def __handle_rotate(self, msg: Float32):
+        z = msg.data
+        if not self.__lidar_bypassed:
+            if z > 0 and self.lBlocked:
+                self.logwarn("Left blocked → rotation canceled.")
+                return
+            if z < 0 and self.rBlocked:
+                self.logwarn("Right blocked → rotation canceled.")
+                return
+        self.__motor_control.rotate(z)
 
-    def __check_angel_range(self, angle_range):
-        filtered_scans = np.array(self.scans)[angle_range] 
-        distance_checks = filtered_scans < MotorControlNode.safety_distance_vector
+    def __update_lidar(self, scans:LaserScan):
+        self.scans = np.array(scans.ranges)
+
+    def __is_sector_blocked(self, sector):
+        filtered_scans = np.array(self.scans)[sector] 
+        distance_checks = filtered_scans < MotorControlNode.safety_distance_vector[45-len(sector)//2:45+len(sector)//2]
         if np.any(distance_checks):
-            self.logwarn(np.where(distance_checks)[0] + angle_range[0])
+            # self.logwarn(np.where(distance_checks)[0] + angle_range[0])
             return True
         return False
+    
+    def __is_direction_blocked(self, heading_deg: float) -> bool:
+        half = 576.0/2.0
+        corners = np.array([
+            [ +half, +half],  # TL
+            [ +half, -half],  # TR
+            [ -half, -half],  # BR
+            [ -half, +half],  # BL
+        ])
+        θ = np.deg2rad(heading_deg % 360)
+        offset = 100.0 * np.array([np.cos(θ), np.sin(θ)])
+        trans = corners + offset
 
-    def __split_components(self, deg = True):
-        if deg:
-            factor = np.pi/180
-        else:
-            factor = 1
-        horizontal_component = np.sin(self.direction * factor)
-        vertical_component = np.cos(self.direction * factor)
-        return (horizontal_component, vertical_component)
+        inside = np.all(np.abs(trans) <= half, axis=1)  # which corners stayed inside
 
-    def __manual_control(self, twist: Twist):
-        """
-        Callback function to handle incoming Twist messages from the cmd_vel topic.
-        Maps linear and angular velocities to motor control.
-        """
-        # self.loginfo(f"System: {self._system_on}, Manual: {self.__manual_mode}")
-        if self.__manual_mode:# and self._system_on:
-            # Linear velocity controls forward/backward motion
-            # print(twist)
-            
-            # self.loginfo("got here")
-            vertical_component = twist.linear.x
-            
-            # Angular velocity controls left/right motion
-            horizontal_component = twist.linear.y
-            # print(vertical_component, horizontal_component)
-            # Move motors based on components
-            if twist.angular.z != 0 and twist.linear.x ==0 and twist.linear.y==0:
-                self.motor_control.rotate(twist.angular.z)
+        # build only the two endpoint spokes + all adj‑adj transform edges
+        segments = []
+        N = 4
+        for i in range(N):
+            # neighbors in the 0→1→2→3 cycle
+            prev_i = (i - 1) % N
+            next_i = (i + 1) % N
+
+            # 1) spoke corner→transformed only if exactly one neighbor is inside
+            if (not inside[i]) and (inside[prev_i] ^ inside[next_i]):
+                segments.append((corners[i], trans[i]))
+
+            # 2) edge between two adjacent transformed corners, if both moved outside
+            if (not inside[i]) and (not inside[next_i]):
+                segments.append((trans[i], trans[next_i]))
+
+        # now compute per‑beam thresholds exactly as before…
+        beam_thresh = {}
+        for p, q in segments:
+            a = (np.rad2deg(np.arctan2(p[1], p[0])) ) % 360
+            b = (np.rad2deg(np.arctan2(q[1], q[0])) ) % 360
+            diff = (b - a + 360) % 360
+            if diff <= 180:
+                span, step = int(diff), +1
             else:
-                self.move_by_components(horizontal_component, vertical_component)
+                span, step = int(360 - diff), -1
 
+            for k in range(span + 1):
+                ang = int((a + step * k) % 360)
+                if ang in beam_thresh:
+                    continue
+
+                d = np.array([np.cos(np.deg2rad(ang)),
+                            np.sin(np.deg2rad(ang))])
+                A = np.column_stack((q - p, -d))
+                bvec = -p
+                try:
+                    u, t = np.linalg.solve(A, bvec)
+                except np.linalg.LinAlgError:
+                    continue
+                if 0.0 <= u <= 1.0 and t >= 0.0:
+                    beam_thresh[ang] = t
+
+        if not beam_thresh:
+            return False
+
+        # collect a continuous beam range
+        angles = sorted(beam_thresh.keys())
+        lo, hi = angles[0], angles[-1]
+        if hi >= lo:
+            rng = np.arange(lo, hi + 1, dtype=int)
+        else:
+            rng = np.arange(lo, hi + 361, dtype=int) % 360
+
+        # fill a threshold array
+        thr = np.full(rng.shape, np.inf, dtype=float)
+        for ang, t in beam_thresh.items():
+            idx = np.where(rng == ang)[0][0]
+            thr[idx] = t
+
+        # vectorized compare
+        scans = np.array(self.scans)[rng]
+        return np.any(scans < thr)
+
+    def __split_components(self, angle_deg: float):
+        rad = angle_deg * np.pi/180.0
+        return np.sin(rad), np.cos(rad)
     
     def __on_shutdown(self):
-        if self.motor_control:
+        if self.__motor_control:
             self.logwarn("MotorControlNode: Stopping motors.")
             # self.hBlocked, self.vBlocked = True, True
-            self.motor_control.move_by_components(0, 0)
+            self.__motor_control.move_by_components(0, 0)
 
 if __name__ == "__main__":
     rospy.init_node('motor_control_node')
     rospy.loginfo("Motor Control Node: node created.")
-    # print("Started")
-    motor_ctrl = MotorControlNode()
-    # self.logwarn("Distances vector: {}".format(MotorControlNode.safety_distance_vector))
-    motor_ctrl.run()
+    
+    MotorControlNode()
     
     rospy.spin()

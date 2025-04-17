@@ -8,7 +8,7 @@ import numpy as np
 import csv
 import os
 import datetime
-from enum import Enum
+import math
 
 # PyQt5 imports
 from PyQt5.QtCore import Qt, QTimer, QEvent
@@ -40,7 +40,7 @@ from cv_bridge import CvBridge, CvBridgeError
 
 # Custom ROS messages
 from foma.srv import Light
-from foma.msg import FishState, FomaLocation      
+from foma.msg import FishState, FomaLocation
 
 class MainWindow(QMainWindow):        
     def __init__(self):
@@ -84,10 +84,9 @@ class MainWindow(QMainWindow):
         self.__image_timer = None
         self.__services_timer = None
         self.__manual_speed = 0.5
-        self.__output_folder = '/home/icvl/FOMA/output'
+        self.__output_folder = '/home/icvl/trial_output'
         self.__feed = None
         self.__dim_lights = None
-        self.__motor_mode_control = None
         self.__fish_state = None
         self.__fish_image = None
         self.__ongoing_trial = False 
@@ -297,16 +296,14 @@ class MainWindow(QMainWindow):
         self.__room_display_group.setLayout(room_display_layout)
 
     def __init_subscriptions_and_services(self):
-        self.__fish_image_sub = rospy.Subscriber('fish_camera/image', Image, self.__update_fish_image)
-        self.__fish_dir_sub = rospy.Subscriber('fish_detection/state', FishState, self.__update_fish_state)
-        self.__room_image_sub = rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image)
-        self.__location_sub = rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
-        self.__motor_control_twist = rospy.Publisher('gui/motor_control_twist', Twist, queue_size=10)
-        self.__motor_control_dir = rospy.Publisher('gui/motor_control_dir', UInt16, queue_size=10)
+        rospy.Subscriber('fish_camera/image', Image, self.__update_fish_image)
+        rospy.Subscriber('fish_detection/state', Twist, self.__update_fish_state)
+        rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image)
+        rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
+        self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
+        self.__motor_control_dir = rospy.Publisher('motor_control/angle', UInt16, queue_size=10)
 
     def __init_manual_control_window(self):
-        rospy.wait_for_service('motor_control/motor_mode_control')
-        self.__motor_mode_control(True)
         self.__manual_control_window = QDialog(self)
         self.__manual_control_window.setWindowTitle("Manual Robot Control")
         self.__manual_control_window.setFixedSize(300, 300)
@@ -314,7 +311,7 @@ class MainWindow(QMainWindow):
 
         def on_close(event):
             self.__velocity = Twist()
-            self.__.publish(self.__velocity)
+            self.__motor_control_twist.publish(self.__velocity)
 
             # Stop the timer
             if self.__timer:
@@ -323,7 +320,6 @@ class MainWindow(QMainWindow):
 
             # Clean up the widget reference
             self.__manual_control_window = None
-            self.__motor_mode_control(False)
 
             # Accept the close event
             event.accept()
@@ -422,7 +418,7 @@ class MainWindow(QMainWindow):
         self.__manual_control_window.setLayout(control_layout)
         
         self.__timer = QTimer(self)
-        self.__timer.timeout.connect(lambda: self.__.publish(self.__velocity))
+        self.__timer.timeout.connect(lambda: self.__motor_control_twist.publish(self.__velocity))
         self.__timer.start(100)  # Call every 100ms
 
         self.__manual_control_window.show()
@@ -548,6 +544,9 @@ class MainWindow(QMainWindow):
             self.logwarn(e)
 
     def __update_fish_state(self, state: FishState):
+        if state.linear.z == -1:
+            self.__fish_state = None
+            return
         self.__fish_state = state
         if self.__ongoing_trial:
             # TODO check for fish location
@@ -584,47 +583,64 @@ class MainWindow(QMainWindow):
             cv2.circle(self.__room_map, (x, y), 5, (0, 255, 0), -1)
 
     def __update_left_display(self):
-        if self.__fish_image:
-            # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            if self.show_direction_rb.isChecked():
-                ptr = image.bits()
-                ptr.setsize(image.byteCount())
-                image_array = np.array(ptr).reshape(img.shape[0], img.shape[1], 4)  # Assume ARGB32 format
+        # 1) nothing to do if no frame
+        if self.__fish_image is None:
+            return
 
-                # Convert to BGR for OpenCV processing
-                frame = cv2.cvtColor(image_array, cv2.COLOR_BGRA2BGR)
+        # 2) work on a copy so we don't overwrite the original
+        frame = self.__fish_image.copy()
 
-                # Draw the position on the frame
-                position = (self.__fish_state.x, self.__fish_state.y)
-                cv2.circle(frame, position, 5, (0, 0, 255), -1)  # Red circle
+        # 3) draw direction overlay if requested and we have a Twist state
+        if self.__show_direction_rb.isChecked() and self.__fish_state is not None:
+            # extract position
+            px = int(self.__fish_state.linear.x)
+            py = int(self.__fish_state.linear.y)
 
-                # Annotate the direction near the position
-                direction_text = f"Dir: {self.__fish_state.direction}"
-                cv2.putText(frame, direction_text, (position[0] + 10, position[1] - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+            # extract direction vector
+            dx = self.__fish_state.angular.x
+            dy = self.__fish_state.angular.y
 
-                # Optionally draw an arrow to indicate direction
-                end_point = (position[0] + int(30 * np.cos(np.radians(self.__fish_state.direction))),
-                            position[1] - int(30 * np.sin(np.radians(self.__fish_state.direction))))
-                cv2.arrowedLine(frame, position, end_point, (0, 255, 0), 2, tipLength=0.3)
+            # compute heading angle in degrees
+            angle = math.degrees(math.atan2(dy, dx))
 
-                # Convert back to QImage
-                image_with_annotations = cv2.cvtColor(frame, cv2.COLOR_BGR2BGRA)
-                qimage = QImage(image_with_annotations.data, image_with_annotations.shape[1],
-                                image_with_annotations.shape[0], QImage.Format_ARGB32)
+            # draw a red circle at (px,py)
+            cv2.circle(frame, (px, py), 5, (0, 0, 255), -1)
 
-            else:
-                q_image = QImage(img.data, img.shape[1], img.shape[0], QImage.Format_RGB888)
+            # draw the angle text
+            cv2.putText(frame,
+                        f"Dir: {angle:.1f}°",
+                        (px + 10, py - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (255, 255, 255),
+                        1,
+                        cv2.LINE_AA)
 
-            # Resize the image to fit the QLabel
-            resized_pixmap = QPixmap.fromImage(qimage).scaled(
-                self.__left_image_frame.width(),
-                self.__left_image_frame.height(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            # pixmap = QPixmap.fromImage(q_image)
-            self.__left_image_frame.setPixmap(pixmap)
+            # draw an arrow showing the heading
+            length = 30
+            ex = px + int(length * math.cos(math.radians(angle)))
+            ey = py - int(length * math.sin(math.radians(angle)))
+            cv2.arrowedLine(frame,
+                            (px, py),
+                            (ex, ey),
+                            (0, 255, 0),
+                            2,
+                            tipLength=0.3)
+
+        # 4) convert BGR → RGB and wrap in QImage
+        h, w, ch = frame.shape
+        # rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        bytes_per_line = ch * w
+        qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+
+        # 5) scale & display
+        pix = QPixmap.fromImage(qimg).scaled(
+            self.__left_image_frame.width(),
+            self.__left_image_frame.height(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation
+        )
+        self.__left_image_frame.setPixmap(pix)
 
     def __update_right_display(self):
         """
@@ -689,15 +705,15 @@ class MainWindow(QMainWindow):
                 self.__lights_slider.setDisabled(False)
                 self.__dim_lights = rospy.ServiceProxy('light_dimmer/change', Light)
 
-        if not (self.__motor_mode_control is None) ^ is_service_available('motor_control/motor_mode_control'):
-            if self.__motor_mode_control:
-                self.logerr("Manual control service unavailable - disabling buttons")
-                self.__manual_control_button.setDisabled(True)
-                self.__motor_mode_control = None
-            else:
-                self.loginfo("Manual control service available - enabling buttons")
-                self.__manual_control_button.setDisabled(False)
-                self.__motor_mode_control = rospy.ServiceProxy('motor_control/motor_mode_control', SetBool)
+        # if not (self.__motor_mode_control is None) ^ is_service_available('motor_control/motor_mode_control'):
+        #     if self.__motor_mode_control:
+        #         self.logerr("Manual control service unavailable - disabling buttons")
+        #         self.__manual_control_button.setDisabled(True)
+        #         self.__motor_mode_control = None
+        #     else:
+        #         self.loginfo("Manual control service available - enabling buttons")
+        #         self.__manual_control_button.setDisabled(False)
+        #         self.__motor_mode_control = rospy.ServiceProxy('motor_control/motor_mode_control', SetBool)
         
         # self.fish_camera_control = rospy.ServiceProxy('fish_camera/system_toggle', SetBool)
         # self.ceiling_cameras_control = rospy.ServiceProxy('ceiling_cameras/system_toggle', SetBool)
