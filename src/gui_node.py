@@ -8,6 +8,7 @@ import numpy as np
 import csv
 import os
 import datetime
+from enum import Enum
 
 # PyQt5 imports
 from PyQt5.QtCore import Qt, QTimer, QEvent
@@ -41,7 +42,7 @@ from cv_bridge import CvBridge, CvBridgeError
 from foma.srv import Light
 from foma.msg import FishState, FomaLocation      
 
-class MainWindow(QMainWindow):
+class MainWindow(QMainWindow):        
     def __init__(self):
         super(MainWindow, self).__init__()
 
@@ -60,7 +61,7 @@ class MainWindow(QMainWindow):
 
     def __init_timers(self):
         self.__image_timer = QTimer(self)
-        self.__image_timer.timeout.connect(self.__update_right_display)
+        self.__image_timer.timeout.connect(self.__update_gui)
         self.__image_timer.start(30)
 
         self.__services_timer = QTimer(self)
@@ -87,12 +88,15 @@ class MainWindow(QMainWindow):
         self.__feed = None
         self.__dim_lights = None
         self.__motor_mode_control = None
+        self.__fish_state = None
+        self.__fish_image = None
+        self.__ongoing_trial = False 
 
     def __init_layouts(self):
         # Top-Left (Fish Camera)
         self.__TL_layout = QVBoxLayout()
         self.__TL_layout.addWidget(self.__fish_image_label, alignment=Qt.AlignCenter)
-        self.__TL_layout.addWidget(self.__fish_image)#, alignment=Qt.AlignCenter)
+        self.__TL_layout.addWidget(self.__left_image_frame)#, alignment=Qt.AlignCenter)
         
         self.__TL_widget = QFrame()
         self.__TL_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
@@ -238,9 +242,9 @@ class MainWindow(QMainWindow):
         self.__feed_loading_button.setDisabled(True)
 
         # Fish image init
-        self.__fish_image = QLabel() #TODO : add resize+update
-        self.__fish_image.setScaledContents(True)
-        self.__fish_image.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.__left_image_frame = QLabel() #TODO : add resize+update
+        self.__left_image_frame.setScaledContents(True)
+        self.__left_image_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
 
         # Fish image label init
@@ -249,7 +253,7 @@ class MainWindow(QMainWindow):
         font.setPointSize(15)
         self.__fish_image_label.setFont(font)
         self.__fish_image_label.setAlignment(Qt.AlignHCenter)
-        self.__fish_image.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.__left_image_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         # Room image init
         self.__top_right_image = QLabel() #TODO : add resize+update
@@ -293,12 +297,12 @@ class MainWindow(QMainWindow):
         self.__room_display_group.setLayout(room_display_layout)
 
     def __init_subscriptions_and_services(self):
-        self.fish_image_sub = rospy.Subscriber('fish_camera/image', Image, self.__update_fish_image)
-        self.fish_dir_sub = rospy.Subscriber('fish_detection/direction', FishState, self.__update_fish_state)
-        self.stitched_image_pub = rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image)
-        # self.stitched_image_pub = rospy.Subscriber('image_stitcher/image', Image, self.update_room_image)
-        self.location_sub = rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
-        self.manual_control_cmd = rospy.Publisher('gui/manual_control', Twist, queue_size=10)
+        self.__fish_image_sub = rospy.Subscriber('fish_camera/image', Image, self.__update_fish_image)
+        self.__fish_dir_sub = rospy.Subscriber('fish_detection/state', FishState, self.__update_fish_state)
+        self.__room_image_sub = rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image)
+        self.__location_sub = rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
+        self.__motor_control_twist = rospy.Publisher('gui/motor_control_twist', Twist, queue_size=10)
+        self.__motor_control_dir = rospy.Publisher('gui/motor_control_dir', UInt16, queue_size=10)
 
     def __init_manual_control_window(self):
         rospy.wait_for_service('motor_control/motor_mode_control')
@@ -310,7 +314,7 @@ class MainWindow(QMainWindow):
 
         def on_close(event):
             self.__velocity = Twist()
-            self.manual_control_cmd.publish(self.__velocity)
+            self.__.publish(self.__velocity)
 
             # Stop the timer
             if self.__timer:
@@ -331,17 +335,17 @@ class MainWindow(QMainWindow):
             key = event.key()
             event_type = True if event.type() == QEvent.KeyPress else False
             if key == Qt.Key_W:  # Forward
-                self.__update_velocity("forward", event_type)
+                self.__update_velocity(0, event_type)
             elif key == Qt.Key_S:  # Backward
-                self.__update_velocity("backward", event_type)
+                self.__update_velocity(180, event_type)
             elif key == Qt.Key_A:  # Left
-                self.__update_velocity("left", event_type)
+                self.__update_velocity(90, event_type)
             elif key == Qt.Key_D:  # Right
-                self.__update_velocity("right", event_type)
+                self.__update_velocity(270, event_type)
             elif key == Qt.Key_Q:  # Counterclockwise rotation
-                self.__update_velocity("ccw", event_type)
+                self.__update_velocity(-2, event_type)
             elif key == Qt.Key_E:  # Clockwise rotation
-                self.__update_velocity("cw", event_type)
+                self.__update_velocity(-1, event_type)
             else:
                 event.ignore()
 
@@ -388,18 +392,18 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(speed_control_button, 4, 3)
 
 
-        forward_button.pressed.connect(lambda: self.__update_velocity("forward", True))
-        forward_button.released.connect(lambda: self.__update_velocity("forward", False))
-        backward_button.pressed.connect(lambda: self.__update_velocity("backward", True))
-        backward_button.released.connect(lambda: self.__update_velocity("backward", False))
-        left_button.pressed.connect(lambda: self.__update_velocity("left", True))
-        left_button.released.connect(lambda: self.__update_velocity("left", False))
-        right_button.pressed.connect(lambda: self.__update_velocity("right", True))
-        right_button.released.connect(lambda: self.__update_velocity("right", False))
-        cw_button.pressed.connect(lambda: self.__update_velocity("cw", True))
-        cw_button.released.connect(lambda: self.__update_velocity("cw", False))
-        ccw_button.pressed.connect(lambda: self.__update_velocity("ccw", True))
-        ccw_button.released.connect(lambda: self.__update_velocity("ccw", False))
+        forward_button.pressed.connect(lambda: self.__update_velocity(0, True))
+        forward_button.released.connect(lambda: self.__update_velocity(0, False))
+        backward_button.pressed.connect(lambda: self.__update_velocity(180, True))
+        backward_button.released.connect(lambda: self.__update_velocity(180, False))
+        left_button.pressed.connect(lambda: self.__update_velocity(90, True))
+        left_button.released.connect(lambda: self.__update_velocity(90, False))
+        right_button.pressed.connect(lambda: self.__update_velocity(270, True))
+        right_button.released.connect(lambda: self.__update_velocity(270, False))
+        cw_button.pressed.connect(lambda: self.__update_velocity(-1, True))
+        cw_button.released.connect(lambda: self.__update_velocity(-1, False))
+        ccw_button.pressed.connect(lambda: self.__update_velocity(-2, True))
+        ccw_button.released.connect(lambda: self.__update_velocity(-2, False))
         speed_control_button.clicked.connect(set_speed)
         def toggle_lidar_bypass(state):
             try:
@@ -418,7 +422,7 @@ class MainWindow(QMainWindow):
         self.__manual_control_window.setLayout(control_layout)
         
         self.__timer = QTimer(self)
-        self.__timer.timeout.connect(lambda: self.manual_control_cmd.publish(self.__velocity))
+        self.__timer.timeout.connect(lambda: self.__.publish(self.__velocity))
         self.__timer.start(100)  # Call every 100ms
 
         self.__manual_control_window.show()
@@ -515,101 +519,39 @@ class MainWindow(QMainWindow):
         # Add feed button
         # Add lights slider?
 
-    def __update_velocity(self, direction: str, is_pressed: bool):
+    def __update_velocity(self, direction: int, is_pressed: bool):
         """
         Update robot velocity based on button presses.
         """
 
-        if direction == "forward":
+        if direction == 0: # "forward"
             self.__velocity.linear.y = self.__manual_speed if is_pressed else 0
-        elif direction == "left":
+        elif direction == 90: # "left"
             self.__velocity.linear.x = -self.__manual_speed if is_pressed else 0
-        elif direction == "backward":
+        elif direction == 180: # "backward"
             self.__velocity.linear.y = -self.__manual_speed if is_pressed else 0
-        elif direction == "right":
+        elif direction == 270: # "right"
             self.__velocity.linear.x = self.__manual_speed if is_pressed else 0
-        elif direction == "cw":
+        elif direction == -1: # "cw"
             self.__velocity.angular.z = self.__manual_speed if is_pressed else 0
-        elif direction == "ccw":
+        elif direction == -2: # "ccw":
             self.__velocity.angular.z = -self.__manual_speed if is_pressed else 0
 
         # Publish the velocity to the robot
-        self.manual_control_cmd.publish(self.__velocity)
+        self.__motor_control_twist.publish(self.__velocity)
         # self.loginfo(f"Velocity: {self.__velocity}")     
 
     def __update_fish_image(self, img_msg: Image):
         try:
-            img = self.bridge.imgmsg_to_cv2(img_msg)
-            # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            q_image = QImage(img.data, img.shape[1], img.shape[0], QImage.Format_RGB888)
-            pixmap = QPixmap.fromImage(q_image)
-            self.__fish_image.setPixmap(pixmap)
+            self.__fish_image = self.bridge.imgmsg_to_cv2(img_msg)
         except CvBridgeError as e:
             self.logwarn(e)
 
     def __update_fish_state(self, state: FishState):
-        """
-        Update the GUI image based on the FishState message.
-
-        Args:
-            state (FishState): The state containing the direction and position of the fish.
-        """
-        # Check if direction display is enabled before doing any work
-        if not self.show_direction_rb.isChecked():
-            self.loginfo("Direction display is disabled. Skipping updates.")
-            return
-
-        # Ensure the fish image exists
-        if self.__fish_image.pixmap() is None:
-            self.logwarn("No image available to update")
-            return
-
-        # Convert QLabel's pixmap to a numpy array
-        pixmap = self.__fish_image.pixmap()
-        if pixmap is None:
-            self.logwarn("No pixmap available")
-            return
-        image = pixmap.toImage()
-
-        # Convert QImage to numpy array
-        width = image.width()
-        height = image.height()
-        ptr = image.bits()
-        ptr.setsize(image.byteCount())
-        image_array = np.array(ptr).reshape(height, width, 4)  # Assume ARGB32 format
-
-        # Convert to BGR for OpenCV processing
-        frame = cv2.cvtColor(image_array, cv2.COLOR_BGRA2BGR)
-
-        # Draw the position on the frame
-        position = (state.x, state.y)
-        cv2.circle(frame, position, 5, (0, 0, 255), -1)  # Red circle
-
-        # Annotate the direction near the position
-        direction_text = f"Dir: {state.direction}"
-        cv2.putText(frame, direction_text, (position[0] + 10, position[1] - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-
-        # Optionally draw an arrow to indicate direction
-        end_point = (position[0] + int(30 * np.cos(np.radians(state.direction))),
-                    position[1] - int(30 * np.sin(np.radians(state.direction))))
-        cv2.arrowedLine(frame, position, end_point, (0, 255, 0), 2, tipLength=0.3)
-
-        # Convert back to QImage
-        image_with_annotations = cv2.cvtColor(frame, cv2.COLOR_BGR2BGRA)
-        qimage = QImage(image_with_annotations.data, image_with_annotations.shape[1],
-                        image_with_annotations.shape[0], QImage.Format_ARGB32)
-
-        # Resize the image to fit the QLabel
-        resized_pixmap = QPixmap.fromImage(qimage).scaled(
-            self.__fish_image.width(),
-            self.__fish_image.height(),
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation
-        )
-
-        # Update the QLabel with the new image
-        self.__fish_image.setPixmap(resized_pixmap)
+        self.__fish_state = state
+        if self.__ongoing_trial:
+            # TODO check for fish location
+            self.__motor_control_dir.publish(UInt16(state.direction))
 
     def __update_room_image(self, img_msg: Image):
         try:
@@ -640,6 +582,49 @@ class MainWindow(QMainWindow):
             x = np.clip(self.__world_location.x, 0, 500 - 1)
             y = np.clip(self.__world_location.y, 0, 500 - 1)
             cv2.circle(self.__room_map, (x, y), 5, (0, 255, 0), -1)
+
+    def __update_left_display(self):
+        if self.__fish_image:
+            # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            if self.show_direction_rb.isChecked():
+                ptr = image.bits()
+                ptr.setsize(image.byteCount())
+                image_array = np.array(ptr).reshape(img.shape[0], img.shape[1], 4)  # Assume ARGB32 format
+
+                # Convert to BGR for OpenCV processing
+                frame = cv2.cvtColor(image_array, cv2.COLOR_BGRA2BGR)
+
+                # Draw the position on the frame
+                position = (self.__fish_state.x, self.__fish_state.y)
+                cv2.circle(frame, position, 5, (0, 0, 255), -1)  # Red circle
+
+                # Annotate the direction near the position
+                direction_text = f"Dir: {self.__fish_state.direction}"
+                cv2.putText(frame, direction_text, (position[0] + 10, position[1] - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+
+                # Optionally draw an arrow to indicate direction
+                end_point = (position[0] + int(30 * np.cos(np.radians(self.__fish_state.direction))),
+                            position[1] - int(30 * np.sin(np.radians(self.__fish_state.direction))))
+                cv2.arrowedLine(frame, position, end_point, (0, 255, 0), 2, tipLength=0.3)
+
+                # Convert back to QImage
+                image_with_annotations = cv2.cvtColor(frame, cv2.COLOR_BGR2BGRA)
+                qimage = QImage(image_with_annotations.data, image_with_annotations.shape[1],
+                                image_with_annotations.shape[0], QImage.Format_ARGB32)
+
+            else:
+                q_image = QImage(img.data, img.shape[1], img.shape[0], QImage.Format_RGB888)
+
+            # Resize the image to fit the QLabel
+            resized_pixmap = QPixmap.fromImage(qimage).scaled(
+                self.__left_image_frame.width(),
+                self.__left_image_frame.height(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            # pixmap = QPixmap.fromImage(q_image)
+            self.__left_image_frame.setPixmap(pixmap)
 
     def __update_right_display(self):
         """
@@ -722,11 +707,13 @@ class MainWindow(QMainWindow):
         # self.motor_control = rospy.ServiceProxy('motor_control/system_toggle', SetBool)
 
     def __update_gui(self):
+        self.__update_left_display()
         self.__update_right_display()
-        self.__update_services()
 
     def __on_start_click(self):
         self.__update_buttons_state((True,False,True,True))
+
+        self.__ongoing_trial = True
    
         # 1. FOMA Location
         # Generate file name with current timestamp (YYYYMMDDHHMM)
@@ -767,6 +754,7 @@ class MainWindow(QMainWindow):
 
     def __on_stop_click(self):
         self.__update_buttons_state((True,True,False,False))
+        self.__ongoing_trial = False
         self.__close_file_writers()
 
     def __on_reset_click(self):
@@ -837,13 +825,13 @@ class MainWindow(QMainWindow):
                 Qt.SmoothTransformation
             )
             self.__top_right_image.setPixmap(scaled_pixmap)
-        if self.__fish_image.pixmap():
-            scaled_pixmap = self.__fish_image.pixmap().scaled(
-                self.__fish_image.size(),
+        if self.__left_image_frame.pixmap():
+            scaled_pixmap = self.__left_image_frame.pixmap().scaled(
+                self.__left_image_frame.size(),
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation
             )
-            self.__fish_image.setPixmap(scaled_pixmap)
+            self.__left_image_frame.setPixmap(scaled_pixmap)
         super(MainWindow, self).resizeEvent(event)
      
     def showEvent(self, event):

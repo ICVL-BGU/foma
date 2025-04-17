@@ -38,8 +38,6 @@ class FishDetectionNode(AbstractNode):
 
     def process_image(self):
         prediction = self.model.inference_model.predict(np.array([self.img]))
-        # self.loginfo(f"Prediction: {prediction['instance_peaks'].squeeze()}")
-        # self.loginfo(f"Prediction: {prediction['instance_peak_vals'].squeeze()}")
         points, confidences = prediction['instance_peaks'].squeeze()[[0,5]], prediction['instance_peak_vals'].squeeze()[[0,5]]
         if np.any(confidences < 0.2):
             self.logwarn(f"Confidence too low: {confidences}")

@@ -15,9 +15,10 @@ class MotorControlNode(AbstractNode):
     safety_distance_vector = SAFETY_DISTANCE / np.cos(np.abs(np.arange(-45,45) * np.pi/180 ))
     def __init__(self):
         super().__init__('motor_control', 'Motor control')
-        self.fish_dir_sub = rospy.Subscriber('fish_detection/direction', UInt16, self.update_direction)
+        # self.fish_dir_sub = rospy.Subscriber('fish_detection/state', FishState, self.update_direction)
         self.lidar_sub = rospy.Subscriber('lidar/scans', LaserScan, self.update_lidar, queue_size=10)
-        self.manual_subscriber = rospy.Subscriber('gui/manual_control', Twist, self.__manual_control) 
+        self.manual_subscriber = rospy.Subscriber('gui/motor_control_twist', Twist, self.__manual_control) 
+        rospy.Subscriber('gui/motor_control_dir', UInt16, self.update_direction) 
         self.manual_mode_service = rospy.Service('motor_control/motor_mode_control', SetBool, self.__manual_overide)
         self.bypass_lidar_service = rospy.Service('motor_control/bypass_lidar', SetBool, self.__bypass_lidar)
         self.__manual_mode = False
@@ -84,7 +85,7 @@ class MotorControlNode(AbstractNode):
 
     def update_direction(self, direction: UInt16):
         # Process fish direction and adjust motors accordingly
-        self.direction = direction.data
+        self.direction = direction.direction
         self.hComponent, self.vComponent = self.__split_components()
 
     def update_lidar(self, scans:LaserScan):
