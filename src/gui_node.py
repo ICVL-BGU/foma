@@ -883,7 +883,7 @@ if __name__ == "__main__":
     roslaunch.configure_logging(uuid)
     launch = roslaunch.parent.ROSLaunchParent(
         uuid,
-        ["/home/icvl/catkin_ws/src/foma/launch/main.launch"]
+        ["/home/icvl/ROS/src/foma/launch/main.launch"]
     )
     launch.start()  
     rospy.sleep(1.0)  # give the master a moment

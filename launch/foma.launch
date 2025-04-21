@@ -12,7 +12,7 @@
     <!-- <node pkg="foma" type="lidar_node.py" name="lidar_node" output="screen"/> -->
 
     <!-- Node 5 -->
-    <node pkg="foma" type="motor_control_node.py" name="motor_control_node" output="screen"/>
+    <node pkg="fov" type="motor_control_node.py" name="motor_control_node" machine="foma" output="screen"/>
 
     <!-- Node 6 -->
     <!-- <node pkg="foma" type="video_camera_node.py" name="video_camera_node" output="screen"/> -->

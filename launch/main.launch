@@ -1,13 +1,26 @@
 <launch>
-    <!-- Define the PC (station) machine -->
-    <machine name="station" address="localhost" user="user_station" />
+  <!-- Define both machines -->
+  <!-- <machine name="station" address="1.1.2.100" default="true"/>
+  <machine name="foma"    address="1.1.2.99"  user="fov"/> -->
 
-    <!-- Define the robot (foma) machine -->
-    <machine name="foma" address="icvl-foma.local" user="foma" />
+  <!-- Station nodes (run locally) -->
+  <group>
+    <machine name="station" address="1.1.2.100" default="true"/>
+    <env   name="ROS_MASTER_URI" value="http://1.1.2.100:11311"/>
+    <env   name="ROS_HOSTNAME"    value="1.1.2.100"/>
+    <include file="$(find foma)/launch/station.launch"/>
+  </group>
 
-    <!-- Include the PC (station) launch file -->
-    <include file="$(find foma)/launch/station.launch" machine="station" />
+  <!-- Foma nodes (run remotely) -->
+  <group>
+    <machine name="foma" address="1.1.2.99"  user="fov" default="true" />
+    <!-- Point the remote at your station’s master -->
+    <env   name="ROS_MASTER_URI" value="http://1.1.2.100:11311"/>
+    <!-- Tell the remote to advertise its own IP, not its hostname -->
+    <env   name="ROS_HOSTNAME"    value="1.1.2.99"/>
+    <!-- or you can use ROS_IP instead of ROS_HOSTNAME -->
+    <!-- <env name="ROS_IP" value="1.1.2.99"/> -->
 
-    <!-- Include the robot (foma) launch file -->
-    <include file="$(find foma)/launch/foma.launch" machine="foma" />
+    <include file="$(find foma)/launch/foma.launch"/>
+  </group>
 </launch>
