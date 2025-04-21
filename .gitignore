@@ -1,2 +1,4 @@
 
 src/fov/src/PololuStepper/
+output/
+etc/ImageStitching/cameras/
