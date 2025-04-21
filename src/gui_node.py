@@ -3,6 +3,7 @@
 # General imports
 import sys
 import rospy
+import roslaunch
 import cv2
 import numpy as np
 import csv
@@ -878,6 +879,14 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
+    uuid = roslaunch.rlutil.get_or_generate_uuid(None, False)
+    roslaunch.configure_logging(uuid)
+    launch = roslaunch.parent.ROSLaunchParent(
+        uuid,
+        ["/home/icvl/catkin_ws/src/foma/launch/main.launch"]
+    )
+    launch.start()  
+    rospy.sleep(1.0)  # give the master a moment
     rospy.init_node('gui_node')
     rospy.loginfo("GUI Node: Node created.")
     
@@ -887,4 +896,6 @@ if __name__ == "__main__":
 
     app.exec()
 
+    launch.shutdown()
+    rospy.signal_shutdown("GUI closed")
     rospy.spin()
