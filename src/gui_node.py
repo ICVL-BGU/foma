@@ -85,7 +85,7 @@ class MainWindow(QMainWindow):
         self.__image_timer = None
         self.__services_timer = None
         self.__manual_speed = 0.5
-        self.__output_folder = '/home/icvl/trial_output'
+        self.__output_folder = r'/home/icvl/trial_outputs'
         self.__feed = None
         self.__dim_lights = None
         self.__fish_state = None
@@ -226,7 +226,7 @@ class MainWindow(QMainWindow):
         self.__manual_control_button.setText("Manual Control")
         self.__manual_control_button.setMaximumHeight(50)
         self.__manual_control_button.clicked.connect(self.__init_manual_control_window)
-        self.__manual_control_button.setDisabled(True)
+        # self.__manual_control_button.setDisabled(True)
 
         # Manual Control label init
         self.__manual_control_label = QLabel("Manual Control")
@@ -271,7 +271,7 @@ class MainWindow(QMainWindow):
         # Add radio buttons for toggling direction display
         self.__show_direction_rb = QRadioButton("Yes")
         self.__hide_direction_rb = QRadioButton("No")
-        self.__show_direction_rb.setChecked(True)
+        self.__hide_direction_rb.setChecked(True)
 
         # Create and add radio buttons to layout
         direction_layout = QGridLayout()
@@ -541,17 +541,22 @@ class MainWindow(QMainWindow):
     def __update_fish_image(self, img_msg: Image):
         try:
             self.__fish_image = self.bridge.imgmsg_to_cv2(img_msg)
+            # self.loginfo(f"Fish image received: {self.__fish_image.shape}")
+            if self.__foma_video_writer:
+                frame = cv2.cvtColor(self.__fish_image, cv2.COLOR_RGB2BGR)
+                self.__foma_video_writer.write(frame)
+            # self.__update_left_display()
         except CvBridgeError as e:
             self.logwarn(e)
 
-    def __update_fish_state(self, state: FishState):
+    def __update_fish_state(self, state: Twist):
         if state.linear.z == -1:
             self.__fish_state = None
             return
         self.__fish_state = state
         if self.__ongoing_trial:
             # TODO check for fish location
-            self.__motor_control_dir.publish(UInt16(state.direction))
+            self.__motor_control_dir.publish(UInt16(state.angular.z)) # TODO correct for angle
 
     def __update_room_image(self, img_msg: Image):
         try:
@@ -594,8 +599,8 @@ class MainWindow(QMainWindow):
         # 3) draw direction overlay if requested and we have a Twist state
         if self.__show_direction_rb.isChecked() and self.__fish_state is not None:
             # extract position
-            px = int(self.__fish_state.linear.x)
-            py = int(self.__fish_state.linear.y)
+            py = int(self.__fish_state.linear.x)
+            px = int(self.__fish_state.linear.y)
 
             # extract direction vector
             dx = self.__fish_state.angular.x
@@ -725,7 +730,7 @@ class MainWindow(QMainWindow):
 
     def __update_gui(self):
         self.__update_left_display()
-        self.__update_right_display()
+        # self.__update_right_display()
 
     def __on_start_click(self):
         self.__update_buttons_state((True,False,True,True))
@@ -735,10 +740,10 @@ class MainWindow(QMainWindow):
         # 1. FOMA Location
         # Generate file name with current timestamp (YYYYMMDDHHMM)
         self.__current_timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
-        location_filename = os.path.join(self.__output_folder, f"foma_location_{self.__current_timestamp}.csv")
+        location_filename = os.path.join(self.__output_folder, f"{self.__current_timestamp}_foma_location.csv")
 
         # Open CSV file in append mode and create writer
-        self.__location_file = open(location_filename, 'a', newline='')
+        self.__location_file = open(location_filename, 'w', newline='')
         self.__location_csv_writer = csv.writer(self.__location_file)
 
         # Write header if the file is new
@@ -747,7 +752,7 @@ class MainWindow(QMainWindow):
             self.__location_file.flush()  # Ensure the header is written immediately
 
         # 2. Room Video
-        room_video_filename = os.path.join(self.__output_folder, f"room_video_{self.__current_timestamp}.mp4")
+        room_video_filename = os.path.join(self.__output_folder, f"{self.__current_timestamp}_room_video.mp4")
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
         room_frame_width = 1024  # Adjust based on your camera resolution
         room_frame_height = 768
@@ -758,9 +763,9 @@ class MainWindow(QMainWindow):
 
 
         # 3. FOMA Video
-        foma_video_filename = os.path.join(self.__output_folder, f"foma_video_{self.__current_timestamp}.mp4")
+        foma_video_filename = os.path.join(self.__output_folder, f"{self.__current_timestamp}_foma_video.mp4")
         # fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
-        foma_frame_width = 1024  # Adjust based on your camera resolution
+        foma_frame_width = 768  # Adjust based on your camera resolution
         foma_frame_height = 768
         foma_fps = 10  # Default FPS (adjust based on the camera FPS)
         self.__foma_video_writer = cv2.VideoWriter(foma_video_filename, fourcc, foma_fps, (foma_frame_width, foma_frame_height))
@@ -879,14 +884,14 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
-    uuid = roslaunch.rlutil.get_or_generate_uuid(None, False)
-    roslaunch.configure_logging(uuid)
-    launch = roslaunch.parent.ROSLaunchParent(
-        uuid,
-        ["/home/icvl/ROS/src/foma/launch/main.launch"]
-    )
-    launch.start()  
-    rospy.sleep(1.0)  # give the master a moment
+    # uuid = roslaunch.rlutil.get_or_generate_uuid(None, False)
+    # roslaunch.configure_logging(uuid)
+    # launch = roslaunch.parent.ROSLaunchParent(
+    #     uuid,
+    #     ["/home/icvl/ROS/src/foma/launch/main.launch"]
+    # )
+    # launch.start()  
+    # rospy.sleep(1.0)  # give the master a moment
     rospy.init_node('gui_node')
     rospy.loginfo("GUI Node: Node created.")
     
@@ -896,6 +901,6 @@ if __name__ == "__main__":
 
     app.exec()
 
-    launch.shutdown()
+    # launch.shutdown()
     rospy.signal_shutdown("GUI closed")
     rospy.spin()

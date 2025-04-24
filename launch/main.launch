@@ -13,14 +13,13 @@
 
   <!-- Foma nodes (run remotely) -->
   <group>
-    <machine name="foma" address="1.1.2.99"  user="fov" default="true" />
+    <machine name="foma" address="1.1.2.99"  user="fov" default="true" env-loader="/home/fov/FOMA/sourcing.sh"/>
     <!-- Point the remote at your station’s master -->
     <env   name="ROS_MASTER_URI" value="http://1.1.2.100:11311"/>
     <!-- Tell the remote to advertise its own IP, not its hostname -->
     <env   name="ROS_HOSTNAME"    value="1.1.2.99"/>
     <!-- or you can use ROS_IP instead of ROS_HOSTNAME -->
     <!-- <env name="ROS_IP" value="1.1.2.99"/> -->
-
     <include file="$(find foma)/launch/foma.launch"/>
   </group>
 </launch>

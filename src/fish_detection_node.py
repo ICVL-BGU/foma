@@ -19,7 +19,7 @@ class FishDetectionNode(AbstractNode):
     def __init__(self):
         super().__init__('fish_detection', 'Fish detection')
         sleap.disable_preallocation()
-        model_path = r"/home/icvl/ROS/src/250402_192455.single_instance.n=93"
+        model_path = r"/home/icvl/ROS/src/250422_173015.single_instance.n=228"
         self.model = sleap.load_model(model_path)
         self.direction = None
         self.img = None
@@ -44,10 +44,10 @@ class FishDetectionNode(AbstractNode):
 
     def process_image(self):
         prediction = self.model.inference_model.predict(np.array([self.img]))
-        points, confidences = prediction['instance_peaks'].squeeze()[[0,5]], prediction['instance_peak_vals'].squeeze()[[0,5]]
+        points, confidences = prediction['instance_peaks'].squeeze()[[0,3]], prediction['instance_peak_vals'].squeeze()[[0,3]]
         # self.loginfo(f"Points: {points}, Confidences: {confidences}")
         if np.any(confidences < 0.2):
-            # self.logwarn(f"Confidence too low: {confidences}")
+            self.logwarn(f"Confidence too low: {confidences}")
             self.fish_state_pub.publish(Twist(linear = Vector3(0, 0, -1))) # fish not detected
             return
         self.loginfo(f"Points: {points}, Confidences: {confidences}")

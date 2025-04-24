@@ -9,7 +9,7 @@
     <!-- <node pkg="foma" type="gui_node.py" name="gui_node" output="screen"/> -->
 
     <!-- Node 4 -->
-    <!-- <node pkg="foma" type="lidar_node.py" name="lidar_node" output="screen"/> -->
+    <node pkg="fov" type="lidar_node.py" name="lidar_node" output="screen"/>
 
     <!-- Node 5 -->
     <node pkg="fov" type="motor_control_node.py" name="motor_control_node" machine="foma" output="screen"/>

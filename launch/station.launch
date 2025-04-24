@@ -1,9 +1,9 @@
 <launch>   
     <!-- Node 1 -->
-    <arg name="with_gui" default="false"/>
-    <group if="$(arg with_gui)">
+    <!-- <arg name="with_gui" default="false"/>
+    <group if="$(arg with_gui)"> -->
         <node pkg="foma" type="gui_node.py" name="gui_node" output="screen"/>
-    </group>
+    <!-- </group> -->
 
     <!-- Node 2 -->
     <node pkg="foma" type="fish_detection_node.py" name="fish_detection_node" output="screen"/>
