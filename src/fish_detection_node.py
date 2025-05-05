@@ -14,13 +14,14 @@ import numpy as np
 from foma.msg import FishState  # Import the custom message
 from geometry_msgs.msg import Twist, Vector3
 import sleap
+from ultralytics import YOLO
 
 class FishDetectionNode(AbstractNode):
     def __init__(self):
         super().__init__('fish_detection', 'Fish detection')
         sleap.disable_preallocation()
-        model_path = r"/home/icvl/ROS/src/250402_192455.single_instance.n=93"
-        self.model = sleap.load_model(model_path)
+        model_path = r"/home/icvl/ROS/src/yolo_pose.pt"
+        self.model = YOLO(model_path)
         self.direction = None
         self.img = None
         self.bridge = CvBridge()
@@ -43,7 +44,7 @@ class FishDetectionNode(AbstractNode):
             rospy.logerr(f"Error converting image: {e}")
 
     def process_image(self):
-        prediction = self.model.inference_model.predict(np.array([self.img]))
+        prediction = self.model(self.img)
         points, confidences = prediction['instance_peaks'].squeeze()[[0,5]], prediction['instance_peak_vals'].squeeze()[[0,5]]
         # self.loginfo(f"Points: {points}, Confidences: {confidences}")
         if np.any(confidences < 0.2):
