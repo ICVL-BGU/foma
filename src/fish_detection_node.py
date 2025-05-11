@@ -20,7 +20,7 @@ class FishDetectionNode(AbstractNode):
     def __init__(self):
         super().__init__('fish_detection', 'Fish detection')
         # sleap.disable_preallocation()
-        model_path = r"/home/alex/ROS/src/foma/yolo_pose.pt" #\\wsl$\Ubuntu-20.04\home\alex\ROS\src\foma\yolo_pose.pt
+        model_path = r"/home/icvl/ros_ws/src/foma/yolo_pose.pt" #\\wsl$\Ubuntu-20.04\home\alex\ROS\src\foma\yolo_pose.pt
         self.model = YOLO(model_path)
         self.direction = None
         self.img = None
@@ -44,20 +44,22 @@ class FishDetectionNode(AbstractNode):
             rospy.logerr(f"Error converting image: {e}")
 
     def process_image(self):
-        prediction = self.model(self.img)
+        prediction = self.model(self.img, max_det=1, verbose=False)
         kp = prediction[0].keypoints
-        print(prediction[0].keypoints.shape==[1,8,2])
-        points = kp.data.squeeze()[[0,5]]
-        # self.loginfo(f"Points: {points}, Confidences: {confidences}")
-        if kp.shape[0] == 0:
+        # print(prediction[0].keypoints.shape==[1,8,2])
+        # self.loginfo(f"shape: {kp}")
+        if kp.shape[1] == 0:
+            # self.logwarn(f"No fish detected, shape: {kp.shape}")
             # self.logwarn(f"Confidence too low: {confidences}")
             self.fish_state_pub.publish(Twist(linear = Vector3(0, 0, -1))) # fish not detected
             return
+        # self.loginfo(f"Fish detected, shape: {kp.data.squeeze()}")
+        points = kp.data[0][0], kp.data[0][3]
         # self.loginfo(f"Points: {points}")#, Confidences: {confidences}")
-        dy, dx = points[0] - points[1]
-        y, x = points[1]
-        self.direction = Twist(linear = Vector3(x,y,0), angular = Vector3(dx, dy, 0))
-        rospy.loginfo(f"dy = {dy}, dx = {dx}, y = {y}, x = {x}")
+        dx, dy = points[0] - points[1]
+        x, y = points[1]
+        self.direction = Twist(linear = Vector3(x,y,0), angular = Vector3(dx, -dy, 0))
+        # rospy.loginfo(f"dy = {dy}, dx = {dx}, y = {y}, x = {x}")
         self.fish_state_pub.publish(self.direction)
 
 if __name__ == "__main__":
