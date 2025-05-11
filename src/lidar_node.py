@@ -41,20 +41,14 @@ class LIDARNode(AbstractNode):
                     # Setting up some LaserScan fields based on the data you have
                     laser_scan.header.stamp = rospy.Time.now()
                     laser_scan.header.frame_id = 'laser_frame'  # Change this to your LIDAR's frame ID if different
-                    # laser_scan.angle_min = min(rad_angles)
-                    # laser_scan.angle_max = max(rad_angles)
-                    # laser_scan.angle_increment = (laser_scan.angle_max - laser_scan.angle_min) / len(angles)
-                    # laser_scan.range_min = 0.1  # Adjust as per your LIDAR's specifications
-                    # laser_scan.range_max = 30.0  # Adjust as per your LIDAR's specifications
                     
                     # Populate the distances into the ranges field
                     laser_scan.ranges = self.scans
-                    # print(laser_scan.ranges)
-                    # print(np.argmin(laser_scan.ranges))
+                    
                     self.lidar_pub.publish(laser_scan)
             
             except RPLidarException as e:
-                rospy.logerr(e)
+                self.logerr(e)
                 self.lidar.disconnect()
                 rospy.sleep(0.005)
                 self.lidar.connect()
@@ -62,13 +56,13 @@ class LIDARNode(AbstractNode):
 
             except AttributeError as e:
                 self._system_on = False
-                rospy.logerr(e)
+                self.logerr(e)
             
             except Exception as e:
-                rospy.logerr(e)
+                self.logerr(e)
 
             except:
-                rospy.logerr("Something happend.")
+                self.logerr("Something happend.")
             
             rospy.sleep(0.05)
 
@@ -83,7 +77,6 @@ class LIDARNode(AbstractNode):
 
 if __name__ == "__main__":
     rospy.init_node('lidar_node')
-    
     lidar_handler = LIDARNode()
     lidar_handler.run()
     rospy.spin()

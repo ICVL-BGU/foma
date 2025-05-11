@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-from email.mime import image
 import rospy
 from sensor_msgs.msg import Image
 from abstract_node import AbstractNode
@@ -19,12 +18,10 @@ class LocalizationNode(AbstractNode):
         
         # Updated HSV bounds for olive green
         self.lower_bound, self.upper_bound = np.array([30, 100, 150]), np.array([80, 255, 255])
-        self.loginfo("Localization Node initialized")
 
     def process_image(self, img_msg: Image):
         try:
             img = self.bridge.imgmsg_to_cv2(img_msg)
-            # self.loginfo("Image received and converted")
             hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
             # Threshold the image to get only olive green colors
@@ -70,12 +67,9 @@ class LocalizationNode(AbstractNode):
                 self.location_pub.publish(self.location)
 
         except CvBridgeError as e:
-            rospy.logerr(f"Error converting image: {e}")
-
+            self.logerr(f"Error converting image: {e}")
 
 if __name__ == "__main__":
     rospy.init_node('localization_node')
-    rospy.loginfo("LocalizationNode starting")
     localizer = LocalizationNode()
-    # localizer.run()
     rospy.spin()

@@ -32,7 +32,7 @@ from PyQt5.QtWidgets import (
     )
 
 # ROS imports
-from geometry_msgs.msg import Twist, Point
+from geometry_msgs.msg import Twist, Vector3
 from sensor_msgs.msg import Image
 from std_msgs.msg import UInt16
 from std_srvs.srv import Trigger, SetBool
@@ -40,7 +40,7 @@ from cv_bridge import CvBridge, CvBridgeError
 
 # Custom ROS messages
 from foma.srv import Light
-from foma.msg import FishState, FomaLocation
+from foma.msg import FomaLocation
 
 class MainWindow(QMainWindow):        
     def __init__(self):
@@ -84,7 +84,7 @@ class MainWindow(QMainWindow):
         self.__image_timer = None
         self.__services_timer = None
         self.__manual_speed = 0.5
-        self.__output_folder = '/home/icvl/trial_output'
+        self.__output_folder = '~/trial_output'
         self.__feed = None
         self.__dim_lights = None
         self.__fish_state = None
@@ -302,6 +302,7 @@ class MainWindow(QMainWindow):
         rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
         self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', UInt16, queue_size=10)
+        self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=10)
 
     def __init_manual_control_window(self):
         self.__manual_control_window = QDialog(self)
@@ -543,14 +544,51 @@ class MainWindow(QMainWindow):
         except CvBridgeError as e:
             self.logwarn(e)
 
-    def __update_fish_state(self, state: FishState):
-        if state.linear.z == -1:
+    def __update_fish_state(self, state: Twist):
+        if state.angular == Vector3(0, 0, 0):
             self.__fish_state = None
-            return
-        self.__fish_state = state
+        else:
+            self.__fish_state = state
         if self.__ongoing_trial:
-            # TODO check for fish location
-            self.__motor_control_dir.publish(UInt16(state.direction))
+            # Divide the fish image into 9 tiles
+            if self.__fish_image is not None:
+                height, width, _ = self.__fish_image.shape
+                tile_height = height // 3
+                tile_width = width // 3
+
+                # Get fish location
+                fish_x = int(state.linear.x)
+                fish_y = int(state.linear.y)
+
+                # Determine which tile the fish is in
+                tile_row = fish_y // tile_height
+                tile_col = fish_x // tile_width
+
+                # Ensure tile indices are within bounds
+                tile_row = max(0, min(2, tile_row))
+                tile_col = max(0, min(2, tile_col))
+
+                # Calculate the direction angle
+                direction_x = state.angular.x
+                direction_y = state.angular.y
+                direction_angle = math.degrees(math.atan2(direction_y, direction_x))
+
+                # Define the expected direction for each tile
+                tile_directions = {
+                    (0, 0): 135, (0, 1): 90, (0, 2): 45,
+                    (1, 0): 180, (1, 1): None, (1, 2): 0,
+                    (2, 0): -135, (2, 1): -90, (2, 2): -45,
+                }
+
+                # Get the expected direction for the current tile
+                expected_angle = tile_directions.get((tile_row, tile_col))
+
+                # Check if the direction matches the expected direction within epsilon
+                epsilon = 15  # Allowable deviation in degrees
+                if expected_angle is not None and abs(direction_angle - expected_angle) <= epsilon:
+                    self.__motor_control_vector.publish(state.angular)
+                else:
+                    self.__motor_control_vector.publish(Vector3(0, 0, 0))
 
     def __update_room_image(self, img_msg: Image):
         try:
@@ -731,6 +769,12 @@ class MainWindow(QMainWindow):
 
         self.__ongoing_trial = True
    
+        # Ensure the output directory exists
+        self.__output_folder = os.path.expanduser(self.__output_folder)
+        if not os.path.exists(self.__output_folder):
+            self.loginfo(f"Creating output folder {self.__output_folder}")
+            os.makedirs(self.__output_folder)
+
         # 1. FOMA Location
         # Generate file name with current timestamp (YYYYMMDDHHMM)
         self.__current_timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
@@ -759,8 +803,8 @@ class MainWindow(QMainWindow):
         # 3. FOMA Video
         foma_video_filename = os.path.join(self.__output_folder, f"foma_video_{self.__current_timestamp}.mp4")
         # fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
-        foma_frame_width = 1024  # Adjust based on your camera resolution
-        foma_frame_height = 768
+        foma_frame_width = 960  # Adjust based on your camera resolution
+        foma_frame_height = 720
         foma_fps = 10  # Default FPS (adjust based on the camera FPS)
         self.__foma_video_writer = cv2.VideoWriter(foma_video_filename, fourcc, foma_fps, (foma_frame_width, foma_frame_height))
 

@@ -2,22 +2,15 @@
 
 import rospy
 from sensor_msgs.msg import Image
-from std_msgs.msg import UInt8MultiArray, MultiArrayDimension
 from abstract_node import AbstractNode
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
-from foma.srv import Coordinate, CoordinateRequest, CoordinateResponse
-import numpy as np
-import pickle
-import os
 
 class CeilingCameraNode(AbstractNode):
     def __init__(self):
         # Initialize the node with a name
         super().__init__('ceiling_camera_node', 'Ceiling Camera Node')
 
-        
-        self.loginfo("Ceiling Camera Node: Node started.")
         # Initialize the camera
         self.camera = cv2.VideoCapture("rtsp://admin:icvl2023@1.1.2.103:554?network-caching=200", cv2.CAP_FFMPEG)
 
@@ -30,7 +23,6 @@ class CeilingCameraNode(AbstractNode):
         self.bridge = CvBridge()
         
         # Load calibration parameters
-        # param_dir = r'/home/icvl/FOMA/src/fov/src/etc'
         self.resize_factor = 1
         self.fail_counter = 0
 
@@ -53,18 +45,16 @@ class CeilingCameraNode(AbstractNode):
                         self.logwarn(f"Failed to capture image after 10 attempts, attempting to reconnect.")
                         self.camera = cv2.VideoCapture("rtsp://admin:icvl2023@1.1.2.103:554?network-caching=200", cv2.CAP_FFMPEG)
             except CvBridgeError as e:
-                rospy.logerr(f"Camera: CV Bridge Error - {e}")
+                rospy.logerr(f"CV Bridge Error - {e}")
 
             rate.sleep()
 
     def __on_shutdown(self):
-        self.loginfo(f"Ceiling Camera: Releasing camera.")
+        self.loginfo(f"Releasing camera.")
         self.camera.release()
 
 if __name__ == "__main__":
-    # Initialize the node with a unique name based on the camera ID
     rospy.init_node(f'ceiling_camera', anonymous=False)
-
     node = CeilingCameraNode()
     node.run()
     rospy.spin()

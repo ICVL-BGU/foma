@@ -15,6 +15,7 @@ class MotorControlNode(AbstractNode):
     safety_distance_vector = SAFETY_DISTANCE / np.cos(np.abs(np.arange(-45,45) * np.pi/180 ))
     def __init__(self):
         super().__init__('motor_control', 'Motor control')
+        
         rospy.Subscriber('lidar/scans', LaserScan, self.__update_lidar, queue_size=10)
         rospy.Subscriber('motor_control/angle', UInt16, self.__handle_angle) 
         rospy.Subscriber('motor_control/vector',  Vector3,  self.__handle_vector)
@@ -30,7 +31,7 @@ class MotorControlNode(AbstractNode):
                                             ,port = MOTOR_PORT
                                             ,speed = MOTOR_SPEED)
         except BadPinFactory as e:
-            rospy.logerr("MotorControlNode: "+e.msg)
+            self.logerr(e.msg)
 
         self.__lidar_bypassed = False
         
@@ -82,7 +83,7 @@ class MotorControlNode(AbstractNode):
         x, y = msg.x, msg.y
         mag = np.hypot(x, y)
         if mag < 1e-6:
-            rospy.logwarn("Received zero vector → stopping.")
+            self.logwarn("Received zero vector → stopping.")
             self.__motor_control.move_by_components(0, 0)
             return
         self.__move_by_components(x/mag, y/mag)
@@ -108,7 +109,6 @@ class MotorControlNode(AbstractNode):
         filtered_scans = np.array(self.scans)[sector] 
         distance_checks = filtered_scans < MotorControlNode.safety_distance_vector[45-len(sector)//2:45+len(sector)//2]
         if np.any(distance_checks):
-            # self.logwarn(np.where(distance_checks)[0] + angle_range[0])
             return True
         return False
     
@@ -196,7 +196,7 @@ class MotorControlNode(AbstractNode):
     
     def __on_shutdown(self):
         if self.__motor_control:
-            self.logwarn("MotorControlNode: Stopping motors.")
+            self.logwarn("Stopping motors.")
             # self.hBlocked, self.vBlocked = True, True
             self.__motor_control.move_by_components(0, 0)
 
