@@ -18,11 +18,11 @@ class AbstractNode:
         return CheckResponse()
 
     def loginfo(self, msg):
-        rospy.loginfo(f" {self._node_repr}:{msg}")
+        rospy.loginfo(f"{self._node_repr}: {msg}")
 
     def logwarn(self, msg):
-        rospy.logwarn(f" {self._node_repr}:{msg}")
+        rospy.logwarn(f"{self._node_repr}: {msg}")
 
     def logerr(self, msg):
-        rospy.logerr(f" {self._node_repr}:{msg}")
+        rospy.logerr(f"{self._node_repr}: {msg}")
     

@@ -34,7 +34,7 @@ from PyQt5.QtWidgets import (
 # ROS imports
 from geometry_msgs.msg import Twist, Vector3
 from sensor_msgs.msg import Image
-from std_msgs.msg import UInt16
+from std_msgs.msg import Float32
 from std_srvs.srv import Trigger, SetBool
 from cv_bridge import CvBridge, CvBridgeError
 
@@ -62,7 +62,7 @@ class MainWindow(QMainWindow):
     def __init_timers(self):
         self.__image_timer = QTimer(self)
         self.__image_timer.timeout.connect(self.__update_gui)
-        self.__image_timer.start(30)
+        self.__image_timer.start(20)
 
         self.__services_timer = QTimer(self)
         self.__services_timer.timeout.connect(self.__update_services)
@@ -100,13 +100,16 @@ class MainWindow(QMainWindow):
         self.__writers_timer = None
 
         # Motor Control
-        self.__velocity = Twist()
-        self.__manual_speed = 0.5
+        self.__linear_velocity = Twist()
+        self.__angular_velocity = Float32()
+        # self.__speed = 1
+        self.__direction_epsilon = 20
 
         # Services
         self.__motor_control_system_check = None
         self.__dim_lights = None
         self.__feed = None
+        self.__bypass_lidar = None
 
         # Trial Control
         self.__ongoing_trial = False 
@@ -321,24 +324,30 @@ class MainWindow(QMainWindow):
         rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image)
         rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
         self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
-        self.__motor_control_dir = rospy.Publisher('motor_control/angle', UInt16, queue_size=10)
+        self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=10)
         self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=10)
+        self.__motor_control_rotate = rospy.Publisher('motor_control/rotate', Float32, queue_size=10)
+        self.__motor_set_speed = rospy.Publisher('motor_control/set_speed', Float32, queue_size=10)
         # self.__motor_control_system_check = rospy.ServiceProxy('motor_control/system_check', Check)
 
     def __init_manual_control_window(self):
+        self.__motor_set_speed.publish(Float32(0.5))
+        self.__bypass_lidar(False)
+
         self.__manual_control_window = QDialog(self)
         self.__manual_control_window.setWindowTitle("Manual Robot Control")
         self.__manual_control_window.setFixedSize(300, 300)
         self.__manual_control_window.setWindowModality(Qt.ApplicationModal)
 
         def on_close(event):
-            self.__velocity = Twist()
-            self.__motor_control_twist.publish(self.__velocity)
+            self.__motor_control_twist.publish(Twist())
+            self.__motor_set_speed.publish(Float32(1.0))
+            self.__bypass_lidar(False)
 
             # Stop the timer
-            if self.__timer:
-                self.__timer.stop()
-                self.__timer = None
+            # if self.__timer:
+            #     self.__timer.stop()
+            #     self.__timer = None
 
             # Clean up the widget reference
             self.__manual_control_window = None
@@ -374,7 +383,6 @@ class MainWindow(QMainWindow):
         control_layout = QGridLayout()
 
         # Direction buttons
-        # self.__velocity = Twist()
         forward_button = QPushButton("↑")
         backward_button = QPushButton("↓")
         left_button = QPushButton("←")
@@ -393,7 +401,8 @@ class MainWindow(QMainWindow):
             try:
                 speed = float(speed_control_textbox.text())
                 self.loginfo(f"Speed set to: {speed}")
-                self.__manual_speed = speed
+                self.__motor_set_speed.publish(Float32(speed))
+                # self.__speed = speed
             except ValueError:
                 self.logwarn("Invalid speed value")
 
@@ -423,25 +432,14 @@ class MainWindow(QMainWindow):
         ccw_button.pressed.connect(lambda: self.__update_velocity(-2, True))
         ccw_button.released.connect(lambda: self.__update_velocity(-2, False))
         speed_control_button.clicked.connect(set_speed)
-        def toggle_lidar_bypass(state):
-            try:
-                rospy.wait_for_service('motor_control/bypass_lidar')
-                lidar_bypass_service = rospy.ServiceProxy('motor_control/bypass_lidar', SetBool)
-                response = lidar_bypass_service(state)
-                if response.success:
-                    self.loginfo(f"LIDAR bypass set to: {state}")
-                else:
-                    self.logwarn(f"Failed to set LIDAR bypass to: {state}")
-            except rospy.ServiceException as e:
-                self.logwarn(f"Service call failed: {e}")
 
-        bypass_lidar_checkbox.stateChanged.connect(lambda state: toggle_lidar_bypass(state == Qt.Checked))
+        bypass_lidar_checkbox.stateChanged.connect(lambda state: self.__bypass_lidar(state == Qt.Checked))
 
         self.__manual_control_window.setLayout(control_layout)
         
-        self.__timer = QTimer(self)
-        self.__timer.timeout.connect(lambda: self.__motor_control_twist.publish(self.__velocity))
-        self.__timer.start(100)  # Call every 100ms
+        # self.__timer = QTimer(self)
+        # self.__timer.timeout.connect(lambda: self.__motor_control_twist.publish(self.__velocity))
+        # self.__timer.start(50)  # Call every 100ms
 
         self.__manual_control_window.show()
 
@@ -541,23 +539,27 @@ class MainWindow(QMainWindow):
         """
         Update robot velocity based on button presses.
         """
+        if direction >= 0:
+            # self.__linear_velocity = Twist()
+            if direction == 0: # "forward"
+                self.__linear_velocity.linear.y = 1 if is_pressed else 0
+            elif direction == 90: # "left"
+                self.__linear_velocity.linear.x = -1 if is_pressed else 0
+            elif direction == 180: # "backward"
+                self.__linear_velocity.linear.y = -1 if is_pressed else 0
+            elif direction == 270: # "right"
+                self.__linear_velocity.linear.x = 1 if is_pressed else 0
 
-        if direction == 0: # "forward"
-            self.__velocity.linear.y = self.__manual_speed if is_pressed else 0
-        elif direction == 90: # "left"
-            self.__velocity.linear.x = -self.__manual_speed if is_pressed else 0
-        elif direction == 180: # "backward"
-            self.__velocity.linear.y = -self.__manual_speed if is_pressed else 0
-        elif direction == 270: # "right"
-            self.__velocity.linear.x = self.__manual_speed if is_pressed else 0
-        elif direction == -1: # "cw"
-            self.__velocity.angular.z = self.__manual_speed if is_pressed else 0
-        elif direction == -2: # "ccw":
-            self.__velocity.angular.z = -self.__manual_speed if is_pressed else 0
-
-        # Publish the velocity to the robot
-        self.__motor_control_twist.publish(self.__velocity)
-        # self.loginfo(f"Velocity: {self.__velocity}")     
+            # Publish the velocity to the robot
+            self.__motor_control_twist.publish(self.__linear_velocity)  
+        else:
+            # self.__angular_velocity = Float32()
+            if direction == -1: # "cw"
+                self.__angular_velocity.data = 1 if is_pressed else 0
+            elif direction == -2: # "ccw":
+                self.__angular_velocity.data = -1 if is_pressed else 0
+            # Publish the velocity to the robot
+            self.__motor_control_rotate.publish(self.__angular_velocity)
 
     def __update_fish_image(self, img_msg: Image):
         try:
@@ -604,9 +606,10 @@ class MainWindow(QMainWindow):
             expected_angle = tile_directions.get((tile_row, tile_col))
 
             # Check if the direction matches the expected direction within epsilon
-            epsilon = 15  # Allowable deviation in degrees
-            if expected_angle is not None and abs(direction_angle - expected_angle) <= epsilon:
-                self.__motor_control_vector.publish(state.angular)
+            if expected_angle is not None and abs(direction_angle - expected_angle) <= self.__direction_epsilon:
+                # self.__motor_control_vector.publish(state.angular)
+                self.__motor_control_dir.publish(direction_angle)
+                self.loginfo(f"Direction match: {direction_angle}° (expected {expected_angle}°)")
             else:
                 self.__motor_control_vector.publish(Vector3(0, 0, 0))
 
@@ -639,10 +642,11 @@ class MainWindow(QMainWindow):
             return
 
         # 2) work on a copy so we don't overwrite the original
-        frame = self.__fish_image.copy()
+        # frame = self.__fish_image.copy()
 
         # 3) draw direction overlay if requested and we have a Twist state
         if self.__show_direction_rb.isChecked() and self.__fish_state is not None:
+            frame = self.__fish_image.copy()
             # extract position
             px = int(self.__fish_state.linear.x)
             py = int(self.__fish_state.linear.y)
@@ -678,6 +682,8 @@ class MainWindow(QMainWindow):
                             2,
                             tipLength=0.3)
 
+        else:
+            frame = self.__fish_image
         # 4) convert BGR → RGB and wrap in QImage
         h, w, ch = frame.shape
         # rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -765,6 +771,26 @@ class MainWindow(QMainWindow):
                 self.loginfo("Manual control service available - enabling buttons")
                 self.__manual_control_button.setDisabled(False)
                 self.__motor_control_system_check = rospy.ServiceProxy('motor_control/system_check', Check)
+
+        if not (self.__bypass_lidar is None) ^ is_service_available('motor_control/bypass_lidar'):
+            if self.__bypass_lidar:
+                self.logerr("Manual control service unavailable - disabling buttons")
+                self.__manual_control_button.setDisabled(True)
+                self.__bypass_lidar = None
+            else:
+                self.loginfo("Manual control service available - enabling buttons")
+                self.__manual_control_button.setDisabled(False)
+                self.__bypass_lidar = rospy.ServiceProxy('motor_control/bypass_lidar', SetBool)
+
+        # if not (self.__motor_set_speed is None) ^ is_service_available('motor_control/set_speed'):
+        #     if self.__motor_set_speed:
+        #         self.logerr("Manual control service unavailable - disabling buttons")
+        #         self.__manual_control_button.setDisabled(True)
+        #         self.__motor_set_speed = None
+        #     else:
+        #         self.loginfo("Manual control service available - enabling buttons")
+        #         self.__manual_control_button.setDisabled(False)
+        #         self.__motor_set_speed = rospy.ServiceProxy('motor_control/system_check', Check)
         
         # self.fish_camera_control = rospy.ServiceProxy('fish_camera/system_toggle', SetBool)
         # self.ceiling_cameras_control = rospy.ServiceProxy('ceiling_cameras/system_toggle', SetBool)
@@ -839,11 +865,12 @@ class MainWindow(QMainWindow):
         # Create a white image representing the room
         self.__room_map = np.ones((500, 500, 3), dtype=np.uint8) * 255
 
-        self.__writers_timer.start(40)
+        self.__writers_timer.start(25)
 
     def __on_stop_click(self):
         self.__update_buttons_state((True,True,False,False))
         self.__ongoing_trial = False
+        self.__motor_control_vector.publish(Vector3(0, 0, 0))
         self.__writers_timer.stop()
         self.__close_file_writers()
 
