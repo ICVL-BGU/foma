@@ -12,8 +12,8 @@
     <node pkg="foma" type="localization_node.py" name="localization_node" output="screen"/>
 
     <!-- Node 5 -->
-    <!-- <node pkg="foma" type="light_dimmer_node.py" name="light_dimmer_node" output="screen"/> -->
+    <node pkg="foma" type="light_dimmer_node.py" name="light_dimmer_node" output="screen"/>
 
     <!-- Node 6 -->
-    <node pkg="foma" type="dummy_video_camera_node.py" name="dummy_video_camera_node" output="screen"/>
+    <!-- <node pkg="foma" type="dummy_video_camera_node.py" name="dummy_video_camera_node" output="screen"/> -->
 </launch>
