@@ -34,7 +34,7 @@ from PyQt5.QtWidgets import (
 # ROS imports
 from geometry_msgs.msg import Twist, Vector3
 from sensor_msgs.msg import Image
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Int16MultiArray
 from std_srvs.srv import Trigger, SetBool
 from cv_bridge import CvBridge, CvBridgeError
 
@@ -104,6 +104,7 @@ class MainWindow(QMainWindow):
         self.__angular_velocity = Float32()
         # self.__speed = 1
         self.__direction_epsilon = 20
+        self.__blocked_directions = None
 
         # Services
         self.__motor_control_system_check = None
@@ -323,6 +324,7 @@ class MainWindow(QMainWindow):
         rospy.Subscriber('fish_detection/state', Twist, self.__update_fish_state)
         rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image)
         rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
+        rospy.Subscriber('motor_control/blocked', Int16MultiArray, self.__update_blocked_directions)
         self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=10)
         self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=10)
@@ -573,43 +575,36 @@ class MainWindow(QMainWindow):
         else:
             self.__fish_state = state
         if self.__ongoing_trial and self.__fish_image is not None:
-            # Divide the fish image into 9 tiles
-            height, width, _ = self.__fish_image.shape
-            tile_height = height // 3
-            tile_width = width // 3
-
             # Get fish location
             fish_x = int(state.linear.x)
             fish_y = int(state.linear.y)
 
-            # Determine which tile the fish is in
-            tile_row = fish_y // tile_height
-            tile_col = fish_x // tile_width
+            # Calculate the vector from the image center to the fish location
+            height, width, _ = self.__fish_image.shape
+            center_x = width // 2
+            center_y = height // 2
+            vector_x = fish_x - center_x
+            vector_y = fish_y - center_y
 
-            # Ensure tile indices are within bounds
-            tile_row = max(0, min(2, tile_row))
-            tile_col = max(0, min(2, tile_col))
+            # Normalize the vector
+            vector_magnitude = math.sqrt(vector_x**2 + vector_y**2)
+            if vector_magnitude == 0:
+                return  # Avoid division by zero
+            normalized_vector_x = vector_x / vector_magnitude
+            normalized_vector_y = vector_y / vector_magnitude
 
-            # Calculate the direction angle
+            # Calculate the direction angle of the fish
             direction_x = state.angular.x
             direction_y = state.angular.y
             direction_angle = math.degrees(math.atan2(direction_y, direction_x))
 
-            # Define the expected direction for each tile
-            tile_directions = {
-                (0, 0): 135, (0, 1): 90, (0, 2): 45,
-                (1, 0): 180, (1, 1): None, (1, 2): 0,
-                (2, 0): -135, (2, 1): -90, (2, 2): -45,
-            }
+            # Calculate the angle of the vector from the center to the fish
+            center_to_fish_angle = math.degrees(math.atan2(normalized_vector_y, normalized_vector_x))
 
-            # Get the expected direction for the current tile
-            expected_angle = tile_directions.get((tile_row, tile_col))
-
-            # Check if the direction matches the expected direction within epsilon
-            if expected_angle is not None and abs(direction_angle - expected_angle) <= self.__direction_epsilon:
-                # self.__motor_control_vector.publish(state.angular)
+            # Check if the direction matches the vector angle within epsilon
+            if abs(direction_angle - center_to_fish_angle) <= self.__direction_epsilon:
                 self.__motor_control_dir.publish(direction_angle)
-                self.loginfo(f"Direction match: {direction_angle}° (expected {expected_angle}°)")
+                self.loginfo(f"Direction match: {direction_angle}° (expected {center_to_fish_angle}°)")
             else:
                 self.__motor_control_vector.publish(Vector3(0, 0, 0))
 
@@ -636,17 +631,37 @@ class MainWindow(QMainWindow):
             y = np.clip(self.__foma_world_location.y, 0, 500 - 1)
             cv2.circle(self.__room_map, (x, y), 5, (0, 255, 0), -1)
 
+    def __update_blocked_directions(self, blocked: Int16MultiArray):
+        """
+        Update the blocked directions based on the received data.
+        """
+        self.__blocked_directions = blocked.data
+        # self.loginfo(f"Blocked directions: {self.__blocked_directions}")
+        
     def __update_left_display(self):
-        # 1) nothing to do if no frame
+        """
+        Callback to update the fish camera image on the GUI.
+        """
         if self.__fish_image is None:
             return
 
-        # 2) work on a copy so we don't overwrite the original
-        # frame = self.__fish_image.copy()
+        if self.__show_direction_rb.isChecked() and self.__fish_state is not None or self.__blocked_directions is not None:
+            frame = self.__fish_image.copy()
+        else:
+            frame = self.__fish_image
+
+        if self.__blocked_directions is not None:
+            height, width, _ = frame.shape
+            for angle in self.__blocked_directions:
+                # Calculate the endpoint of the line based on the angle
+                radians = math.radians(angle)
+                x_end = int(width / 2 + (width / 2) * math.cos(radians))
+                y_end = int(height / 2 - (height / 2) * math.sin(radians))
+                # Draw the red line on the border
+                cv2.line(frame, (width // 2, height // 2), (x_end, y_end), (0, 0, 255), 2)
 
         # 3) draw direction overlay if requested and we have a Twist state
         if self.__show_direction_rb.isChecked() and self.__fish_state is not None:
-            frame = self.__fish_image.copy()
             # extract position
             px = int(self.__fish_state.linear.x)
             py = int(self.__fish_state.linear.y)
@@ -682,8 +697,6 @@ class MainWindow(QMainWindow):
                             2,
                             tipLength=0.3)
 
-        else:
-            frame = self.__fish_image
         # 4) convert BGR → RGB and wrap in QImage
         h, w, ch = frame.shape
         # rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
+from pickletools import dis
 import rospy
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import UInt16, Float32
+from std_msgs.msg import UInt16, Float32, Int16MultiArray
 from geometry_msgs.msg import Twist, Vector3
 from abstract_node import AbstractNode
 from etc.settings import MOTOR_PORT, MOTOR_SPEED, MOTOR_TOP_BOTTOM_RESET, MOTOR_RIGHT_LEFT_RESET, SAFETY_DISTANCE
@@ -15,6 +16,8 @@ class MotorControlNode(AbstractNode):
     safety_distance_vector = SAFETY_DISTANCE / np.cos(np.abs(np.arange(-45,45) * np.pi/180 ))
     def __init__(self):
         super().__init__('motor_control', 'Motor control')
+
+        self.__blocked_publisher = rospy.Publisher('motor_control/blocked', Int16MultiArray, queue_size=10)
         
         rospy.Subscriber('lidar/scans', LaserScan, self.__update_lidar, queue_size=10)
         rospy.Subscriber('motor_control/angle', UInt16, self.__handle_angle) 
@@ -104,6 +107,24 @@ class MotorControlNode(AbstractNode):
 
     def __update_lidar(self, scans:LaserScan):
         self.scans = np.array(scans.ranges)
+        safety_vec = MotorControlNode.safety_distance_vector
+
+        # Reshape scans into (4, 90) to match safety_vec shape for elementwise comparison
+        scans_reshaped = self.scans.reshape(4, 90)
+
+        # Compare each segment of scans with safety_vec, result is (4, 90) boolean array
+        distance_checks = (scans_reshaped < safety_vec)
+
+        # Flatten back to 1D array of length 360
+        distance_checks = distance_checks.reshape(-1)
+
+        # Get indices where the distance check is True (distance < safety threshold)
+        blocked_indices = np.where(distance_checks)[0]
+
+        # Prepare and publish the blocked indices as Int16MultiArray
+        blocked_array = Int16MultiArray()
+        blocked_array.data = blocked_indices.tolist()
+        self.__blocked_publisher.publish(blocked_array)
 
     def __is_sector_blocked(self, sector):
         filtered_scans = np.array(self.scans)[sector] 
