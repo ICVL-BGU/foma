@@ -158,7 +158,7 @@ class MainWindow(QMainWindow):
         # Bottom-Right (Control Buttons)
         self.__BR_layout = QGridLayout()
         self.__BR_layout.addWidget(self.__start_button, 0, 0, alignment=Qt.AlignCenter)
-        self.__BR_layout.addWidget(self.__stop_button, 0, 1, alignment=Qt.AlignCenter)
+        self.__BR_layout.addWidget(self.__pause_button, 0, 1, alignment=Qt.AlignCenter)
         self.__BR_layout.addWidget(self.__reset_button, 1, 0, alignment=Qt.AlignCenter)
         self.__BR_layout.addWidget(self.__close_button, 1, 1, alignment=Qt.AlignCenter)
 
@@ -194,11 +194,11 @@ class MainWindow(QMainWindow):
         self.__start_button.clicked.connect(self.__on_start_click)
 
         # Stop button init
-        self.__stop_button = QPushButton()
-        self.__stop_button.setText("Stop")
-        self.__stop_button.setDisabled(True)
-        self.__stop_button.setMaximumHeight(50)
-        self.__stop_button.clicked.connect(self.__on_stop_click)
+        self.__pause_button = QPushButton()
+        self.__pause_button.setText("Pause")
+        self.__pause_button.setDisabled(True)
+        self.__pause_button.setMaximumHeight(50)
+        self.__pause_button.clicked.connect(self.__on_pause_click)
 
         # Reset button init
         self.__reset_button = QPushButton()
@@ -531,7 +531,7 @@ class MainWindow(QMainWindow):
         
     def __update_buttons_state(self, state: tuple):
         self.__start_button.setDisabled(state[0])
-        self.__stop_button.setDisabled(state[1])
+        self.__pause_button.setDisabled(state[1])
         self.__reset_button.setDisabled(state[2])
         self.__close_button.setDisabled(state[3])
         # Add feed button
@@ -816,7 +816,10 @@ class MainWindow(QMainWindow):
         self.__update_right_display()
 
     def __on_start_click(self):
-        self.__update_buttons_state((True,False,True,True))
+        self.__start_button.setDisabled(True)
+        self.__pause_button.setDisabled(False)
+        self.__reset_button.setDisabled(True)
+        self.__close_button.setDisabled(True)
 
         self.__ongoing_trial = True
         
@@ -879,15 +882,43 @@ class MainWindow(QMainWindow):
 
         self.__writers_timer.start(25)
 
-    def __on_stop_click(self):
-        self.__update_buttons_state((True,True,False,False))
+    def __on_continue_click(self):
+        self.__start_button.setDisabled(False)
+        self.__pause_button.setDisabled(True)
+        self.__reset_button.setDisabled(True)
+        self.__close_button.setDisabled(False)
+
+        self.__ongoing_trial = True
+        # self.__motor_control_vector.publish(Vector3(0, 0, 0))
+        self.__writers_timer.start(25)
+
+    def __on_pause_click(self):
+        self.__start_button.setDisabled(False)
+        self.__pause_button.setDisabled(True)
+        self.__reset_button.setDisabled(False)
+        self.__close_button.setDisabled(False)
+
+        self.__start_button.setText("Continue")
+        self.__start_button.clicked.disconnect()
+        self.__start_button.clicked.connect(self.__on_continue_click)
+
         self.__ongoing_trial = False
         self.__motor_control_vector.publish(Vector3(0, 0, 0))
         self.__writers_timer.stop()
-        self.__close_file_writers()
+        # self.__close_file_writers()
 
     def __on_reset_click(self):
-        self.__update_buttons_state((False,True,True,False))
+        self.__start_button.setDisabled(False)
+        self.__pause_button.setDisabled(True)
+        self.__reset_button.setDisabled(True)
+        self.__close_button.setDisabled(False)
+
+        self.__start_button.setText("Start")
+        self.__start_button.clicked.disconnect()
+        self.__start_button.clicked.connect(self.__on_start_click)
+
+        self.__ongoing_trial = False
+        self.__writers_timer.stop()
         self.__close_file_writers()
 
     def __on_close_click(self, event):
