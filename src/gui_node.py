@@ -714,6 +714,7 @@ class MainWindow(QMainWindow):
         """
         data = None
         if self.__room_camera_display_rb.isChecked() and self.__room_image is not None:
+            self.loginfo("changing to camera view")
             height, width, channel = self.__room_image.shape
             bytes_per_line = 3 * width
             data = self.__room_image.data
@@ -723,10 +724,12 @@ class MainWindow(QMainWindow):
             bytes_per_line = 3 * width
             map = self.__room_map.copy()
             # Ensure coordinates stay within bounds
-            x = np.clip(self.__foma_world_location.x, 0, 500 - 1)
-            y = np.clip(self.__foma_world_location.y, 0, 500 - 1)
-            cv2.circle(map, (x, y), 5, (0, 0, 255), -1)
+            if self.__foma_world_location is not None:
+                x = np.clip(self.__foma_world_location.x, 0, 500 - 1)
+                y = np.clip(self.__foma_world_location.y, 0, 500 - 1)
+                cv2.circle(map, (x, y), 5, (0, 0, 255), -1)
             data = map.data
+            self.loginfo("displaying map")
 
         if data is not None:
             q_image = QImage(data, width, height, bytes_per_line, QImage.Format_RGB888)             
