@@ -107,13 +107,12 @@ class MotorControlNode(AbstractNode):
 
     def __update_lidar(self, scans:LaserScan):
         self.scans = np.array(scans.ranges)
-        safety_vec = MotorControlNode.safety_distance_vector
 
         # Reshape scans into (4, 90) to match safety_vec shape for elementwise comparison
         scans_reshaped = self.scans.reshape(4, 90)
 
         # Compare each segment of scans with safety_vec, result is (4, 90) boolean array
-        distance_checks = (scans_reshaped < safety_vec)
+        distance_checks = (scans_reshaped < MotorControlNode.safety_distance_vector)
 
         # Flatten back to 1D array of length 360
         distance_checks = distance_checks.reshape(-1)

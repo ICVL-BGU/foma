@@ -586,12 +586,8 @@ class MainWindow(QMainWindow):
             vector_x = fish_x - center_x
             vector_y = fish_y - center_y
 
-            # Normalize the vector
-            vector_magnitude = math.sqrt(vector_x**2 + vector_y**2)
-            if vector_magnitude == 0:
-                return  # Avoid division by zero
-            normalized_vector_x = vector_x / vector_magnitude
-            normalized_vector_y = vector_y / vector_magnitude
+            if vector_x == 0 and vector_y == 0:
+                self.__motor_control_vector.publish(Vector3(0, 0, 0))
 
             # Calculate the direction angle of the fish
             direction_x = state.angular.x
@@ -599,7 +595,7 @@ class MainWindow(QMainWindow):
             direction_angle = math.degrees(math.atan2(direction_y, direction_x))
 
             # Calculate the angle of the vector from the center to the fish
-            center_to_fish_angle = math.degrees(math.atan2(normalized_vector_y, normalized_vector_x))
+            center_to_fish_angle = math.degrees(math.atan2(vector_y, vector_x))
 
             # Check if the direction matches the vector angle within epsilon
             if abs(direction_angle - center_to_fish_angle) <= self.__direction_epsilon:
