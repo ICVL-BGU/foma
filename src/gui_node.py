@@ -70,6 +70,7 @@ class MainWindow(QMainWindow):
 
         self.__writers_timer = QTimer(self)
         self.__writers_timer.timeout.connect(self.__write_files)
+        self.__writers_interval = 40 # 25 fps
 
     def __init_attributes(self):
         # Images and locations
@@ -722,14 +723,13 @@ class MainWindow(QMainWindow):
         elif self.__map_display_rb.isChecked() and self.__room_map is not None:
             height, width, channel = self.__room_map.shape
             bytes_per_line = 3 * width
-            map = self.__room_map.copy()
+            map_frame = self.__room_map.copy()
             # Ensure coordinates stay within bounds
             if self.__foma_world_location is not None:
                 x = np.clip(self.__foma_world_location.x, 0, 500 - 1)
                 y = np.clip(self.__foma_world_location.y, 0, 500 - 1)
-                cv2.circle(map, (x, y), 5, (0, 0, 255), -1)
-            data = map.data
-            self.loginfo("displaying map")
+                cv2.circle(map_frame, (x, y), 5, (0, 0, 255), -1)
+            data = map_frame.data
 
         if data is not None:
             q_image = QImage(data, width, height, bytes_per_line, QImage.Format_RGB888)             
@@ -822,65 +822,10 @@ class MainWindow(QMainWindow):
         self.__close_button.setDisabled(True)
 
         self.__ongoing_trial = True
-        
-        self.__trial_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-   
-        # Ensure the output directory exists
-        self.__trial_output_folder = os.path.join(os.path.expanduser(self.__output_folder), self.__trial_timestamp)
-        if not os.path.exists(self.__trial_output_folder):
-            self.loginfo(f"Creating output folder {self.__trial_output_folder}")
-            os.makedirs(self.__trial_output_folder)
 
-        # 1. FOMA Location
-        # Generate file name with current timestamp (YYYYMMDDHHMM)
+        self.__open_file_writers()
 
-        foma_location_filename = os.path.join(self.__trial_output_folder, f"foma_location.csv")
-
-        # Open CSV file in append mode and create writer
-        self.__foma_location_file = open(foma_location_filename, 'a', newline='')
-        self.__foma_location_csv_writer = csv.writer(self.__foma_location_file)
-
-        # Write header if the file is new
-        if os.stat(foma_location_filename).st_size == 0:
-            self.__foma_location_csv_writer.writerow(["time", "x_w", "y_w", "x_i", "y_i"])
-            self.__foma_location_file.flush()  # Ensure the header is written immediately
-
-        # Fish Location
-        fish_location_filename = os.path.join(self.__trial_output_folder, f"fish_location.csv")
-
-        # Open CSV file in append mode and create writer
-        self.__fish_location_file = open(fish_location_filename, 'a', newline='')
-        self.__fish_location_csv_writer = csv.writer(self.__fish_location_file)
-
-        # Write header if the file is new
-        if os.stat(fish_location_filename).st_size == 0:
-            self.__fish_location_csv_writer.writerow(["time", "x", "y", "angle"])
-            self.__fish_location_file.flush()  # Ensure the header is written immediately
-
-        # 2. Room Video
-        room_video_filename = os.path.join(self.__trial_output_folder, f"room_video.mp4")
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
-        room_frame_width = 1024  # Adjust based on your camera resolution
-        room_frame_height = 768
-        room_fps = 10  # Default FPS (adjust based on the camera FPS)
-        self.__room_video_writer = cv2.VideoWriter(room_video_filename, fourcc, room_fps, (room_frame_width, room_frame_height))
-        # if self.__room_video_writer.isOpened():
-        #     self.loginfo(f"Room video writer opened with filename: {room_video_filename}")
-
-
-        # 3. FOMA Video
-        foma_video_filename = os.path.join(self.__trial_output_folder, f"foma_video.mp4")
-        # fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
-        foma_frame_width = 960  # Adjust based on your camera resolution
-        foma_frame_height = 720
-        foma_fps = 10  # Default FPS (adjust based on the camera FPS)
-        self.__foma_video_writer = cv2.VideoWriter(foma_video_filename, fourcc, foma_fps, (foma_frame_width, foma_frame_height))
-
-        # 4. Room Map
-        # Create a white image representing the room
-        self.__room_map = np.ones((500, 500, 3), dtype=np.uint8) * 255
-
-        self.__writers_timer.start(25)
+        self.__writers_timer.start(self.__writers_interval)
 
     def __on_continue_click(self):
         self.__start_button.setDisabled(True)
@@ -889,8 +834,8 @@ class MainWindow(QMainWindow):
         self.__close_button.setDisabled(True)
 
         self.__ongoing_trial = True
-        # self.__motor_control_vector.publish(Vector3(0, 0, 0))
-        self.__writers_timer.start(25)
+        
+        self.__writers_timer.start(self.__writers_interval)
 
     def __on_pause_click(self):
         self.__start_button.setDisabled(False)
@@ -925,6 +870,60 @@ class MainWindow(QMainWindow):
         self.__close_file_writers()
         QApplication.quit()
         rospy.signal_shutdown("Closing GUI")
+
+    def __open_file_writers(self):
+        self.__trial_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+   
+        # Ensure the output directory exists
+        self.__trial_output_folder = os.path.join(os.path.expanduser(self.__output_folder), self.__trial_timestamp)
+        if not os.path.exists(self.__trial_output_folder):
+            self.loginfo(f"Creating output folder {self.__trial_output_folder}")
+            os.makedirs(self.__trial_output_folder)
+
+        # 1. Room Video
+        room_video_filename = os.path.join(self.__trial_output_folder, f"room_video.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
+        room_frame_shape = (1024, 768)  # Adjust based on your camera resolution
+        room_fps = 10  # Default FPS (adjust based on the camera FPS)
+        self.__room_video_writer = cv2.VideoWriter(room_video_filename, fourcc, room_fps, room_frame_shape)
+
+        # 2. Room Map
+        # Create a white image representing the room
+        self.__room_map = np.ones((500, 500, 3), dtype=np.uint8) * 255
+        room_map_filename = os.path.join(self.__trial_output_folder, f"room_map.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
+        map_frame_shape = (500, 500)  # Adjust based on your camera resolution
+        map_fps = 10  # Default FPS (adjust based on the camera FPS)
+        self.__room_video_writer = cv2.VideoWriter(room_map_filename, fourcc, map_fps, map_frame_shape)
+
+
+        # 3. FOMA Location
+        foma_location_filename = os.path.join(self.__trial_output_folder, f"foma_location.csv")
+
+        self.__foma_location_file = open(foma_location_filename, 'a', newline='')
+        self.__foma_location_csv_writer = csv.writer(self.__foma_location_file)
+
+        if os.stat(foma_location_filename).st_size == 0:
+            self.__foma_location_csv_writer.writerow(["time", "x_w", "y_w", "x_i", "y_i"])
+            self.__foma_location_file.flush()  # Ensure the header is written immediately
+
+        # 4. FOMA Video
+        foma_video_filename = os.path.join(self.__trial_output_folder, f"foma_video.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
+        foma_frame_width = 960  # Adjust based on your camera resolution
+        foma_frame_height = 720
+        foma_fps = 10  # Default FPS (adjust based on the camera FPS)
+        self.__foma_video_writer = cv2.VideoWriter(foma_video_filename, fourcc, foma_fps, (foma_frame_width, foma_frame_height))
+
+        # 5. Fish Location
+        fish_location_filename = os.path.join(self.__trial_output_folder, f"fish_location.csv")
+
+        self.__fish_location_file = open(fish_location_filename, 'a', newline='')
+        self.__fish_location_csv_writer = csv.writer(self.__fish_location_file)
+
+        if os.stat(fish_location_filename).st_size == 0:
+            self.__fish_location_csv_writer.writerow(["time", "x", "y", "angle"])
+            self.__fish_location_file.flush()  # Ensure the header is written immediately
 
     def __close_file_writers(self):
         if self.__foma_location_file:
@@ -1000,6 +999,14 @@ class MainWindow(QMainWindow):
         if self.__foma_video_writer and self.__fish_image is not None:
             frame = cv2.cvtColor(self.__fish_image, cv2.COLOR_RGB2BGR)
             self.__foma_video_writer.write(frame)
+
+        if self.__room_video_writer and self.__room_map is not None:
+            map_frame = cv2.cvtColor(self.__room_map, cv2.COLOR_RGB2BGR)
+            if self.__foma_world_location is not None:
+                x = np.clip(self.__foma_world_location.x, 0, 500 - 1)
+                y = np.clip(self.__foma_world_location.y, 0, 500 - 1)
+                cv2.circle(map_frame, (x, y), 5, (0, 0, 255), -1)
+            self.__room_video_writer.write(map_frame)
 
     def resizeEvent(self, event):
         if self.__top_right_image.pixmap():
