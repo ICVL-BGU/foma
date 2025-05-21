@@ -883,10 +883,10 @@ class MainWindow(QMainWindow):
         self.__writers_timer.start(25)
 
     def __on_continue_click(self):
-        self.__start_button.setDisabled(False)
-        self.__pause_button.setDisabled(True)
+        self.__start_button.setDisabled(True)
+        self.__pause_button.setDisabled(False)
         self.__reset_button.setDisabled(True)
-        self.__close_button.setDisabled(False)
+        self.__close_button.setDisabled(True)
 
         self.__ongoing_trial = True
         # self.__motor_control_vector.publish(Vector3(0, 0, 0))

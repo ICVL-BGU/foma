@@ -17,7 +17,7 @@ class FishDetectionNode(AbstractNode):
     def __init__(self):
         super().__init__('fish_detection', 'Fish detection')
 
-        model_path = r"/home/alex/ROS/src/foma/yolo_pose.pt" # /home/icvl/ros_ws/src/foma/yolo_pose.pt" OR /home/alex/ROS/src/foma/yolo_pose.pt
+        model_path = r"/home/alex/ros_ws/src/foma/yolo_pose.pt" # /home/icvl/ros_ws/src/foma/yolo_pose.pt" OR /home/alex/ros_ws/src/foma/yolo_pose.pt
         self.model = YOLO(model_path)
         self.direction = None
         self.img = None
