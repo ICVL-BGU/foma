@@ -76,8 +76,7 @@ class MotorControlNode(AbstractNode):
                 if vComponent > 0 and self.__is_sector_blocked(range(234,306)):
                     vComponent = 0
                 elif vComponent < 0 and self.__is_sector_blocked(range(54,126)):
-                    vComponent = 0
-        # self.__motor_control.move_by_components(hComponent, vComponent)       
+                    vComponent = 0     
         self.__motor_control.move_by_components(hComponent*self.__speed, vComponent*self.__speed)              
 
     def __handle_angle(self, msg: Float32):
@@ -208,7 +207,5 @@ class MotorControlNode(AbstractNode):
 if __name__ == "__main__":
     rospy.init_node('motor_control_node')
     rospy.loginfo("Motor Control Node: node created.")
-    
     MotorControlNode()
-    
     rospy.spin()
