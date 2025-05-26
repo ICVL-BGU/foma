@@ -9,9 +9,10 @@ import csv
 import os
 import datetime
 import math
+import threading, time
 
 # PyQt5 imports
-from PyQt5.QtCore import Qt, QTimer, QEvent
+from PyQt5.QtCore import Qt, QTimer, QEvent, pyqtSignal
 from PyQt5.QtGui import QPixmap, QImage, QDoubleValidator
 from PyQt5.QtWidgets import (
     QApplication,
@@ -42,7 +43,11 @@ from cv_bridge import CvBridge, CvBridgeError
 from foma.srv import Light, Check
 from foma.msg import FomaLocation
 
-class MainWindow(QMainWindow):        
+class MainWindow(QMainWindow):
+    fish_frame_ready = pyqtSignal(np.ndarray)
+    room_frame_ready = pyqtSignal(np.ndarray)
+    services_updated = pyqtSignal(dict)
+
     def __init__(self):
         super(MainWindow, self).__init__()
 
@@ -57,19 +62,26 @@ class MainWindow(QMainWindow):
         self.__init_widgets()
         self.__init_layouts()
         self.__init_attributes()
+        self.__init_signals()
+        self.__init_service_checker()
         self.__init_timers()
 
     def __init_timers(self):
-        self.__image_timer = QTimer(self)
-        self.__image_timer.timeout.connect(self.__update_gui)
-        self.__image_timer.start(20)
+        # self.__image_timer = QTimer(self)
+        # self.__image_timer.timeout.connect(self.__update_gui)
+        # self.__image_timer.start(20)
 
-        self.__services_timer = QTimer(self)
-        self.__services_timer.timeout.connect(self.__update_services)
-        self.__services_timer.start(1000)
+        # self.__services_timer = QTimer(self)
+        # self.__services_timer.timeout.connect(self.__update_services)
+        # self.__services_timer.start(1000)
 
         self.__writers_timer = QTimer(self)
         self.__writers_timer.timeout.connect(self.__write_files)
+
+    def __init_signals(self):
+        self.fish_frame_ready.connect(self.__update_left_display)
+        self.room_frame_ready.connect(self.__update_right_display)
+        self.services_updated.connect(self.__update_services)
 
     def __init_attributes(self):
         # Images and locations
@@ -513,6 +525,31 @@ class MainWindow(QMainWindow):
         self.__feeding_load_window.setLayout(control_layout)
         self.__feeding_load_window.show()
 
+    def __init_service_checker(self):
+        def checker_loop():
+            # list of tuples: (attr_name, ros_service_name, srv_type)
+            services = [
+                ('__feed',                    'fish_feeder/feed',        Trigger),
+                ('__dim_lights',              'light_dimmer/change',     Light),
+                ('__motor_control_system_check','motor_control/system_check', Check),
+                ('__bypass_lidar',            'motor_control/bypass_lidar', SetBool),
+            ]
+            while not rospy.is_shutdown():
+                status = {}
+                for attr, name, srv_type in services:
+                    try:
+                        # quick timeout so we don’t block for a full second
+                        rospy.wait_for_service(name, timeout=0.2)
+                        status[attr] = rospy.ServiceProxy(name, srv_type)
+                    except Exception:
+                        status[attr] = None
+                # emit back to the GUI
+                self.services_updated.emit(status)
+                time.sleep(1)
+
+        t = threading.Thread(target=checker_loop, daemon=True)
+        t.start()
+
     def __systems_toggle(self, state: bool):
         rospy.wait_for_service('fish_camera/system_toggle')
         self.fish_camera_control(state)
@@ -564,6 +601,7 @@ class MainWindow(QMainWindow):
     def __update_fish_image(self, img_msg: Image):
         try:
             self.__fish_image = self.bridge.imgmsg_to_cv2(img_msg)
+            self.fish_frame_ready.emit(self.__fish_image)
         except CvBridgeError as e:
             self.logwarn(e)
 
@@ -621,6 +659,7 @@ class MainWindow(QMainWindow):
                 center_x = self.__foma_img_location.x
                 center_y = self.__foma_img_location.y
                 cv2.circle(self.__room_image, (int(center_x), int(center_y)), 5, (0, 255, 0), -1)
+            self.room_frame_ready.emit(self.__room_image)
         except CvBridgeError as e:
             self.logwarn(f"Error converting image message: {e}")
         except Exception as e:
@@ -636,17 +675,14 @@ class MainWindow(QMainWindow):
             y = np.clip(self.__foma_world_location.y, 0, 500 - 1)
             cv2.circle(self.__room_map, (x, y), 5, (0, 255, 0), -1)
 
-    def __update_left_display(self):
+    def __update_left_display(self, frame: np.ndarray):
         # 1) nothing to do if no frame
-        if self.__fish_image is None:
+        # self.loginfo("Updating left display...")
+        if frame is None:
             return
-
-        # 2) work on a copy so we don't overwrite the original
-        # frame = self.__fish_image.copy()
 
         # 3) draw direction overlay if requested and we have a Twist state
         if self.__show_direction_rb.isChecked() and self.__fish_state is not None:
-            frame = self.__fish_image.copy()
             # extract position
             px = int(self.__fish_state.linear.x)
             py = int(self.__fish_state.linear.y)
@@ -682,8 +718,6 @@ class MainWindow(QMainWindow):
                             2,
                             tipLength=0.3)
 
-        else:
-            frame = self.__fish_image
         # 4) convert BGR → RGB and wrap in QImage
         h, w, ch = frame.shape
         # rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -698,16 +732,17 @@ class MainWindow(QMainWindow):
             Qt.SmoothTransformation
         )
         self.__left_image_frame.setPixmap(pix)
+        # self.loginfo("Left display updated.")
 
-    def __update_right_display(self):
+    def __update_right_display(self, frame: np.ndarray):
         """
         Callback to update the room camera image on the GUI only ATM.
         """
-        data = None
-        if self.__room_camera_display_rb.isChecked() and self.__room_image is not None:
-            height, width, channel = self.__room_image.shape
+        # self.loginfo("Updating right display...")
+        if self.__room_camera_display_rb.isChecked() and frame is not None:
+            height, width, channel = frame.shape
             bytes_per_line = 3 * width
-            data = self.__room_image.data
+            frame = frame.data
 
         elif self.__map_display_rb.isChecked() and self.__room_map is not None:
             height, width, channel = self.__room_map.shape
@@ -717,10 +752,10 @@ class MainWindow(QMainWindow):
             x = np.clip(self.__foma_world_location.x, 0, 500 - 1)
             y = np.clip(self.__foma_world_location.y, 0, 500 - 1)
             cv2.circle(map, (x, y), 5, (0, 0, 255), -1)
-            data = map.data
+            frame = map.frame
 
-        if data is not None:
-            q_image = QImage(data, width, height, bytes_per_line, QImage.Format_RGB888)             
+        if frame is not None:
+            q_image = QImage(frame, width, height, bytes_per_line, QImage.Format_RGB888)             
             # Scale the image to fit the QLabel
             pixmap = QPixmap.fromImage(q_image)
             scaled_pixmap = pixmap.scaled(
@@ -731,73 +766,65 @@ class MainWindow(QMainWindow):
             
             # Update the QLabel with the scaled QPixmap
             self.__top_right_image.setPixmap(scaled_pixmap)
+        # self.loginfo("Right display updated.")
 
-    def __update_services(self):
-        def is_service_available(service_name):
-            try:
-                rospy.wait_for_service(service_name, timeout=1)  # Timeout of 1 second
-                return True
-            except rospy.ROSException:
-                return False
+    def __update_services(self, status: dict):
+        """
+        status is a dict mapping attribute names to either a ServiceProxy or None:
+          {
+            '__feed':            <Trigger proxy> or None,
+            '__dim_lights':      <Light proxy>   or None,
+            '__motor_control_system_check': <Check proxy> or None,
+            '__bypass_lidar':    <SetBool proxy> or None,
+          }
+        """
+        # 1) fish_feeder/feed
+        feed_proxy = status.get('__feed')
+        # became available?
+        if self.__feed is None and feed_proxy is not None:
+            self.loginfo("Feeder service available - enabling buttons")
+            self.__feed_button.setDisabled(False)
+            self.__feed_loading_button.setDisabled(False)
+            self.__feed = feed_proxy
+        # went away?
+        elif self.__feed is not None and feed_proxy is None:
+            self.logerr("Feeder service unavailable - disabling buttons")
+            self.__feed_button.setDisabled(True)
+            self.__feed_loading_button.setDisabled(True)
+            self.__feed = None
 
-        if not (self.__feed is None) ^ is_service_available('fish_feeder/feed'):
-            if self.__feed:
-                self.logerr("Feeder service unavailable - disabling buttons")
-                self.__feed_button.setDisabled(True)
-                self.__feed_loading_button.setDisabled(True)
-                self.__feed = None
-            else:
-                self.loginfo("Feeder service available - enabling buttons")
-                self.__feed_button.setDisabled(False)
-                self.__feed_loading_button.setDisabled(False)
-                self.__feed = rospy.ServiceProxy('fish_feeder/feed', Trigger)
+        # 2) light_dimmer/change
+        lights_proxy = status.get('__dim_lights')
+        if self.__dim_lights is None and lights_proxy is not None:
+            self.loginfo("Light dimming service available - enabling slider")
+            self.__lights_slider.setDisabled(False)
+            self.__dim_lights = lights_proxy
+        elif self.__dim_lights is not None and lights_proxy is None:
+            self.logerr("Light dimming service unavailable - disabling slider")
+            self.__lights_slider.setDisabled(True)
+            self.__dim_lights = None
 
-        if not (self.__dim_lights is None) ^ is_service_available('light_dimmer/change'):
-            if self.__dim_lights:
-                self.logerr("Light dimming service unavailable - disabling buttons")
-                self.__lights_slider.setDisabled(True)
-                self.__dim_lights = None
-            else:
-                self.loginfo("Light dimming service available - enabling buttons")
-                self.__lights_slider.setDisabled(False)
-                self.__dim_lights = rospy.ServiceProxy('light_dimmer/change', Light)
+        # 3) motor_control/system_check
+        motor_check_proxy = status.get('__motor_control_system_check')
+        if self.__motor_control_system_check is None and motor_check_proxy is not None:
+            self.loginfo("Manual control service available - enabling button")
+            self.__manual_control_button.setDisabled(False)
+            self.__motor_control_system_check = motor_check_proxy
+        elif self.__motor_control_system_check is not None and motor_check_proxy is None:
+            self.logerr("Manual control service unavailable - disabling button")
+            self.__manual_control_button.setDisabled(True)
+            self.__motor_control_system_check = None
 
-        if not (self.__motor_control_system_check is None) ^ is_service_available('motor_control/system_check'):
-            if self.__motor_control_system_check:
-                self.logerr("Manual control service unavailable - disabling buttons")
-                self.__manual_control_button.setDisabled(True)
-                self.__motor_control_system_check = None
-            else:
-                self.loginfo("Manual control service available - enabling buttons")
-                self.__manual_control_button.setDisabled(False)
-                self.__motor_control_system_check = rospy.ServiceProxy('motor_control/system_check', Check)
-
-        if not (self.__bypass_lidar is None) ^ is_service_available('motor_control/bypass_lidar'):
-            if self.__bypass_lidar:
-                self.logerr("Manual control service unavailable - disabling buttons")
-                self.__manual_control_button.setDisabled(True)
-                self.__bypass_lidar = None
-            else:
-                self.loginfo("Manual control service available - enabling buttons")
-                self.__manual_control_button.setDisabled(False)
-                self.__bypass_lidar = rospy.ServiceProxy('motor_control/bypass_lidar', SetBool)
-
-        # if not (self.__motor_set_speed is None) ^ is_service_available('motor_control/set_speed'):
-        #     if self.__motor_set_speed:
-        #         self.logerr("Manual control service unavailable - disabling buttons")
-        #         self.__manual_control_button.setDisabled(True)
-        #         self.__motor_set_speed = None
-        #     else:
-        #         self.loginfo("Manual control service available - enabling buttons")
-        #         self.__manual_control_button.setDisabled(False)
-        #         self.__motor_set_speed = rospy.ServiceProxy('motor_control/system_check', Check)
-        
-        # self.fish_camera_control = rospy.ServiceProxy('fish_camera/system_toggle', SetBool)
-        # self.ceiling_cameras_control = rospy.ServiceProxy('ceiling_cameras/system_toggle', SetBool)
-        # self.lidar_control = rospy.ServiceProxy('lidar/system_toggle', SetBool)
-        # self.fish_detection_control = rospy.ServiceProxy('fish_detection/system_toggle', SetBool)
-        # self.light_dimmer_control = rospy.ServiceProxy('light_dimmer/system_toggle', SetBool)
-        # self.motor_control = rospy.ServiceProxy('motor_control/system_toggle', SetBool)
+        # 4) motor_control/bypass_lidar
+        bypass_proxy = status.get('__bypass_lidar')
+        if self.__bypass_lidar is None and bypass_proxy is not None:
+            self.loginfo("Bypass‐LIDAR service available - enabling button")
+            self.__manual_control_button.setDisabled(False)
+            self.__bypass_lidar = bypass_proxy
+        elif self.__bypass_lidar is not None and bypass_proxy is None:
+            self.logerr("Bypass‐LIDAR service unavailable - disabling button")
+            self.__manual_control_button.setDisabled(True)
+            self.__bypass_lidar = None
 
     def __update_gui(self):
         self.__update_left_display()

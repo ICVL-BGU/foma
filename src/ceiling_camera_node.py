@@ -1,60 +1,46 @@
 #!/usr/bin/env python3
-
 import rospy
-from sensor_msgs.msg import Image
-from abstract_node import AbstractNode
 import cv2
-from cv_bridge import CvBridge, CvBridgeError
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+from abstract_node import AbstractNode
 
 class CeilingCameraNode(AbstractNode):
     def __init__(self):
-        # Initialize the node with a name
-        super().__init__('ceiling_camera_node', 'Ceiling Camera Node')
+        super().__init__('ceiling_camera_node', 'Ceiling Camera Node (GStreamer LL)')
+        self.url = "rtsp://admin:icvl2023@1.1.2.103:554"
 
-        # Initialize the camera
-        self.camera = cv2.VideoCapture("rtsp://admin:icvl2023@1.1.2.103:554?network-caching=200", cv2.CAP_FFMPEG)
+        gst_str = (
+            f"rtspsrc location={self.url} protocols=tcp latency=50 ! "
+            "rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! "
+            "video/x-raw,format=BGR ! appsink drop=true max-buffers=1 sync=false"
+        )
 
-        self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.cap = cv2.VideoCapture(gst_str, cv2.CAP_GSTREAMER)
+        if not self.cap.isOpened():
+            rospy.logerr("Failed to open GStreamer pipeline. Check plugins & URL.")
+            rospy.signal_shutdown("pipeline open failed")
+            return
 
-        # Set up the image publisher
-        self.image_pub = rospy.Publisher('ceiling_camera/image', Image, queue_size=10)
-        
-        # OpenCV bridge
+        self.pub    = rospy.Publisher('ceiling_camera/image', Image, queue_size=1)
         self.bridge = CvBridge()
-        
-        # Load calibration parameters
-        self.resize_factor = 1
-        self.fail_counter = 0
-
-        # Shutdown behavior
-        rospy.on_shutdown(self.__on_shutdown)
+        rospy.on_shutdown(self._on_shutdown)
 
     def run(self):
-        rate = rospy.Rate(10)
+        rospy.loginfo("CeilingCameraNode running…")
+        rate = rospy.Rate(30)
         while not rospy.is_shutdown():
-            try:
-                ret, img = self.camera.read()
-                if ret:
-                    img_msg = self.bridge.cv2_to_imgmsg(img, "bgr8")
-                    self.image_pub.publish(img_msg)
-                    self.fail_counter = 0
-                else:
-                    self.logwarn(f"No image captured.")
-                    self.fail_counter += 1
-                    if self.fail_counter >= 10:
-                        self.logwarn(f"Failed to capture image after 10 attempts, attempting to reconnect.")
-                        self.camera = cv2.VideoCapture("rtsp://admin:icvl2023@1.1.2.103:554?network-caching=200", cv2.CAP_FFMPEG)
-            except CvBridgeError as e:
-                rospy.logerr(f"CV Bridge Error - {e}")
-
+            ret, frame = self.cap.read()
+            if ret:
+                self.pub.publish(self.bridge.cv2_to_imgmsg(frame, "bgr8"))
+            else:
+                rospy.logwarn_throttle(5, "Frame drop")
             rate.sleep()
 
-    def __on_shutdown(self):
-        self.loginfo(f"Releasing camera.")
-        self.camera.release()
+    def _on_shutdown(self):
+        if hasattr(self, 'cap'):
+            self.cap.release()
 
 if __name__ == "__main__":
-    rospy.init_node(f'ceiling_camera', anonymous=False)
-    node = CeilingCameraNode()
-    node.run()
-    rospy.spin()
+    rospy.init_node('ceiling_camera', anonymous=False)
+    CeilingCameraNode().run()
