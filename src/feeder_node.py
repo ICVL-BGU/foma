@@ -3,11 +3,8 @@
 import rospy
 from abstract_node import AbstractNode
 from std_srvs.srv import Trigger, TriggerRequest, TriggerResponse
-# import RPi.GPIO as GPIO
 from gpiozero import PWMOutputDevice, BadPinFactory
 import PololuStepper as PS
-
-# print(dir(PS))
 
 class FeederNode(AbstractNode):
     def __init__(self):
