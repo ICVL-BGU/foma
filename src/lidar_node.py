@@ -39,8 +39,13 @@ class LIDARNode(AbstractNode):
                     # rad_angles = np.deg2rad(angles)
                     
                     # Setting up some LaserScan fields based on the data you have
-                    laser_scan.header.stamp = rospy.Time.now()
-                    laser_scan.header.frame_id = 'laser_frame'  # Change this to your LIDAR's frame ID if different
+                    # laser_scan.header.stamp = rospy.Time.now()
+                    # laser_scan.header.frame_id = 'laser_frame'  # Change this to your LIDAR's frame ID if different
+                    # laser_scan.angle_min = min(rad_angles)
+                    # laser_scan.angle_max = max(rad_angles)
+                    # laser_scan.angle_increment = (laser_scan.angle_max - laser_scan.angle_min) / len(angles)
+                    # laser_scan.range_min = 0.1  # Adjust as per your LIDAR's specifications
+                    # laser_scan.range_max = 30.0  # Adjust as per your LIDAR's specifications
                     
                     # Populate the distances into the ranges field
                     laser_scan.ranges = self.scans

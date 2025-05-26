@@ -18,7 +18,7 @@ We'll set the default driving directin to top left
 """
 
 class MotorControl(Serial):
-    def __init__(self, resetPins: tuple, port = DEFAULT_UART_PORT, speed = DEFAULT_MOTOR_SPEED, baudrate = 115200, timeout = 0.020):
+    def __init__(self, resetPins: tuple, port = DEFAULT_UART_PORT, speed = DEFAULT_MOTOR_SPEED, accl = 0, brake = 0, baudrate = 115200, timeout = 0.020):
         super().__init__(port = port, baudrate = baudrate, timeout = timeout)
         if not self.is_open:
             self.open()
@@ -31,6 +31,11 @@ class MotorControl(Serial):
         #set controllers to different IDs to avoid collision due to daisy-chain connection
         self.motorTopBottom.turnOn()
         self.motorRightLeft.turnOn()
+
+        self.motorTopBottom.setAccelerations(accl, accl)
+        self.motorRightLeft.setAccelerations(accl, accl)
+        self.motorTopBottom.setBrakes(brake, brake)
+        self.motorRightLeft.setBrakes(brake, brake)
 
     def move_by_angle(self, angle: int, speed = None):
         if not speed:

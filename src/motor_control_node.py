@@ -2,7 +2,7 @@
 
 import rospy
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import UInt16, Float32
+from std_msgs.msg import Float32
 from geometry_msgs.msg import Twist, Vector3
 from abstract_node import AbstractNode
 from etc.settings import MOTOR_PORT, MOTOR_SPEED, MOTOR_TOP_BOTTOM_RESET, MOTOR_RIGHT_LEFT_RESET, SAFETY_DISTANCE
@@ -15,32 +15,37 @@ class MotorControlNode(AbstractNode):
     safety_distance_vector = SAFETY_DISTANCE / np.cos(np.abs(np.arange(-45,45) * np.pi/180 ))
     def __init__(self):
         super().__init__('motor_control', 'Motor control')
-        
         rospy.Subscriber('lidar/scans', LaserScan, self.__update_lidar, queue_size=10)
-        rospy.Subscriber('motor_control/angle', UInt16, self.__handle_angle) 
+        rospy.Subscriber('motor_control/angle', Float32, self.__handle_angle) 
         rospy.Subscriber('motor_control/vector',  Vector3,  self.__handle_vector)
         rospy.Subscriber('motor_control/twist',   Twist,    self.__handle_twist)
         rospy.Subscriber('motor_control/rotate',  Float32,  self.__handle_rotate)
 
         rospy.Service('motor_control/bypass_lidar', SetBool, self.__bypass_lidar)
-
+        rospy.Subscriber('motor_control/set_speed', Float32, self.__set_speed)
         self.scans = None
 
         try:
             self.__motor_control = MotorControl(resetPins = (MOTOR_TOP_BOTTOM_RESET, MOTOR_RIGHT_LEFT_RESET)
+                                            ,accl = 0
+                                            ,brake = 0
                                             ,port = MOTOR_PORT
                                             ,speed = MOTOR_SPEED)
         except BadPinFactory as e:
-            self.logerr(e.msg)
+            self.logerr("MotorControlNode: "+e.msg)
 
         self.__lidar_bypassed = False
-        
+        self.__speed = 0.5
+
         self.hComponent, self.vComponent = 0, 0
         rospy.on_shutdown(self.__on_shutdown)
 
     def __bypass_lidar(self, request:SetBoolRequest):
         self.__lidar_bypassed = request.data
         return SetBoolResponse(success = True, message = f"LIDAR {'' if self.__lidar_bypassed else 'not'} bypassed.")
+
+    def __set_speed(self, request:Float32):
+        self.__speed = request.data
 
     def __move_by_components(self, hComponent, vComponent):
         '''
@@ -72,9 +77,10 @@ class MotorControlNode(AbstractNode):
                     vComponent = 0
                 elif vComponent < 0 and self.__is_sector_blocked(range(54,126)):
                     vComponent = 0
-        self.__motor_control.move_by_components(hComponent, vComponent)                
+        # self.__motor_control.move_by_components(hComponent, vComponent)       
+        self.__motor_control.move_by_components(hComponent*self.__speed, vComponent*self.__speed)              
 
-    def __handle_angle(self, msg: UInt16):
+    def __handle_angle(self, msg: Float32):
         angle = msg.data % 360
         h, v = self.__split_components(angle_deg=angle)
         self.__move_by_components(h, v)
@@ -83,8 +89,7 @@ class MotorControlNode(AbstractNode):
         x, y = msg.x, msg.y
         mag = np.hypot(x, y)
         if mag < 1e-6:
-            self.logwarn("Received zero vector → stopping.")
-            self.__motor_control.move_by_components(0, 0)
+            self.__move_by_components(0, 0)
             return
         self.__move_by_components(x/mag, y/mag)
 
@@ -93,14 +98,14 @@ class MotorControlNode(AbstractNode):
 
     def __handle_rotate(self, msg: Float32):
         z = msg.data
-        if not self.__lidar_bypassed:
-            if z > 0 and self.lBlocked:
-                self.logwarn("Left blocked → rotation canceled.")
-                return
-            if z < 0 and self.rBlocked:
-                self.logwarn("Right blocked → rotation canceled.")
-                return
-        self.__motor_control.rotate(z)
+        # if not self.__lidar_bypassed:
+        #     if z > 0 and self.lBlocked:
+        #         self.logwarn("Left blocked → rotation canceled.")
+        #         return
+        #     if z < 0 and self.rBlocked:
+        #         self.logwarn("Right blocked → rotation canceled.")
+        #         return
+        self.__motor_control.rotate(z*self.__speed)
 
     def __update_lidar(self, scans:LaserScan):
         self.scans = np.array(scans.ranges)

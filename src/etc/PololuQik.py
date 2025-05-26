@@ -162,20 +162,30 @@ class PololuQik2s15v9(PololuQik):
     def setM0Brake(self, brake):
         if (brake > 127):
             brake = 127
-        
-        cmd = QIK_2S12V10_MOTOR_M0_BRAKE, brake
-        self.write(cmd)
+        self.setConfigurationParameter(QIK_2S12V10_MOTOR_M0_BRAKE, brake)
 
     def setM1Brake(self, brake):
         if (brake > 127):
             brake = 127
-        
-        cmd = QIK_2S12V10_MOTOR_M1_BRAKE, brake
-        self.write(cmd)
+        self.setConfigurationParameter(QIK_2S12V10_MOTOR_M1_BRAKE, brake)
     
     def setBrakes(self, m0Brake, m1Brake):
         self.setM0Brake(m0Brake)
         self.setM1Brake(m1Brake)
+
+    def setM0Acceleration(self, acceleration):
+        if (acceleration > 127):
+            acceleration = 127
+        self.setConfigurationParameter(QIK_CONFIG_MOTOR_M0_ACCELERATION, acceleration)
+
+    def setM1Acceleration(self, acceleration):
+        if (acceleration > 127):
+            acceleration = 127
+        self.setConfigurationParameter(QIK_CONFIG_MOTOR_M1_ACCELERATION, acceleration)
+
+    def setAccelerations(self, m0Acceleration, m1Acceleration):
+        self.setM0Acceleration(m0Acceleration)
+        self.setM1Acceleration(m1Acceleration)
 
     def getM0Current(self):
         self.write(QIK_2S12V10_GET_MOTOR_M0_CURRENT)
