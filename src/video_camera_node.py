@@ -13,7 +13,7 @@ class VideoCameraNode(AbstractNode):
         self.camera_pub = rospy.Publisher('fish_camera/image', Image, queue_size=10)
         self.camera_capture = Picamera2()
         config = self.camera_capture.create_video_configuration(
-            main={"size": (3280, 2464), "format": "BGR888"}
+            main={"size": (2464, 2464), "format": "BGR888"}
         )
         
         config["controls"] = {
@@ -26,7 +26,7 @@ class VideoCameraNode(AbstractNode):
         self.img = None
 
         width, height = config['main']['size']
-        self.__new_size = (height//3, width//3)
+        self.__new_size = (height//2, width//2)
 
         rospy.on_shutdown(self.__on_shutdown)
 

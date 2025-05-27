@@ -27,7 +27,7 @@ class MotorControlNode(AbstractNode):
 
         try:
             self.__motor_control = MotorControl(resetPins = (MOTOR_TOP_BOTTOM_RESET, MOTOR_RIGHT_LEFT_RESET)
-                                            ,accl = 0
+                                            ,accl = 5
                                             ,brake = 0
                                             ,port = MOTOR_PORT
                                             ,speed = MOTOR_SPEED)
