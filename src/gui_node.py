@@ -872,9 +872,9 @@ class MainWindow(QMainWindow):
         # 2. Room Video
         room_video_filename = os.path.join(self.__trial_output_folder, f"room_video.mp4")
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
-        room_frame_width = 1024  # Adjust based on your camera resolution
-        room_frame_height = 768
-        room_fps = 10  # Default FPS (adjust based on the camera FPS)
+        room_frame_width = 2560  # Adjust based on your camera resolution
+        room_frame_height = 2560
+        room_fps = 25  # Default FPS (adjust based on the camera FPS)
         self.__room_video_writer = cv2.VideoWriter(room_video_filename, fourcc, room_fps, (room_frame_width, room_frame_height))
         # if self.__room_video_writer.isOpened():
         #     self.loginfo(f"Room video writer opened with filename: {room_video_filename}")
@@ -882,10 +882,10 @@ class MainWindow(QMainWindow):
 
         # 3. FOMA Video
         foma_video_filename = os.path.join(self.__trial_output_folder, f"foma_video.mp4")
-        # fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
-        foma_frame_width = 960  # Adjust based on your camera resolution
-        foma_frame_height = 720
-        foma_fps = 10  # Default FPS (adjust based on the camera FPS)
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
+        foma_frame_width = 1232  # Adjust based on your camera resolution
+        foma_frame_height = 1232
+        foma_fps = 25  # Default FPS (adjust based on the camera FPS)
         self.__foma_video_writer = cv2.VideoWriter(foma_video_filename, fourcc, foma_fps, (foma_frame_width, foma_frame_height))
 
         # 4. Room Map
