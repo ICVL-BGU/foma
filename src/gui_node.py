@@ -351,6 +351,7 @@ class MainWindow(QMainWindow):
         # self.__motor_control_system_check = rospy.ServiceProxy('motor_control/system_check', Check)
 
     def __init_manual_control_window(self):
+        pressed_keys = set()  # Set to track currently pressed keys
         self.__motor_set_speed.publish(Float32(0.5))
         self.__bypass_lidar(False)
 
@@ -376,25 +377,46 @@ class MainWindow(QMainWindow):
             event.accept()
 
         def on_key_press(event):
-            """
-            Handle key press events for robot control.
-            """
             key = event.key()
-            event_type = True if event.type() == QEvent.KeyPress else False
-            if key == Qt.Key_W:  # Forward
-                self.__update_velocity(0, event_type)
-            elif key == Qt.Key_S:  # Backward
-                self.__update_velocity(180, event_type)
-            elif key == Qt.Key_A:  # Left
-                self.__update_velocity(90, event_type)
-            elif key == Qt.Key_D:  # Right
-                self.__update_velocity(270, event_type)
-            elif key == Qt.Key_Q:  # Counterclockwise rotation
-                self.__update_velocity(-2, event_type)
-            elif key == Qt.Key_E:  # Clockwise rotation
-                self.__update_velocity(-1, event_type)
+            if event.type() == QEvent.KeyPress:
+                pressed_keys.add(key)
+                update_velocity_from_keys()
+            elif event.type() == QEvent.KeyRelease:
+                if key in pressed_keys:
+                    pressed_keys.remove(key)
+                update_velocity_from_keys()
             else:
                 event.ignore()
+
+        def update_velocity_from_keys():
+            # Simple logic example for movement keys:
+            angle = None
+            if Qt.Key_W in pressed_keys and Qt.Key_A in pressed_keys:
+                angle = 45
+            elif Qt.Key_W in pressed_keys and Qt.Key_D in pressed_keys:
+                angle = 315
+            elif Qt.Key_S in pressed_keys and Qt.Key_A in pressed_keys:
+                angle = 135
+            elif Qt.Key_S in pressed_keys and Qt.Key_D in pressed_keys:
+                angle = 225
+            elif Qt.Key_W in pressed_keys:
+                angle = 0
+            elif Qt.Key_S in pressed_keys:
+                angle = 180
+            elif Qt.Key_A in pressed_keys:
+                angle = 90
+            elif Qt.Key_D in pressed_keys:
+                angle = 270
+            elif Qt.Key_Q in pressed_keys:
+                angle = -2
+            elif Qt.Key_E in pressed_keys:
+                angle = -1
+
+            if angle is not None:
+                self.__update_velocity(angle, True)
+            else:
+                # No movement keys pressed, stop or no velocity update
+                self.__update_velocity(0, False)
 
         self.__manual_control_window.closeEvent = on_close
         self.__manual_control_window.keyPressEvent = on_key_press
@@ -409,6 +431,10 @@ class MainWindow(QMainWindow):
         right_button = QPushButton("→")
         cw_button = QPushButton("↻")
         ccw_button = QPushButton("↺")
+        forward_left_button = QPushButton("↖")
+        forward_right_button = QPushButton("↗")
+        backward_left_button = QPushButton("↙")
+        backward_right_button = QPushButton("↘")
         bypass_lidar_label = QLabel("Bypass LIDAR")
         bypass_lidar_checkbox = QCheckBox()
         speed_control_label = QLabel("Speed Control")
@@ -425,19 +451,22 @@ class MainWindow(QMainWindow):
                 # self.__speed = speed
             except ValueError:
                 self.logwarn("Invalid speed value")
-
+        
+        control_layout.addWidget(forward_left_button, 0, 0)
         control_layout.addWidget(forward_button, 0, 1, 1, 2)
-        control_layout.addWidget(backward_button, 2, 1, 1, 2)
+        control_layout.addWidget(forward_right_button, 0, 3)
         control_layout.addWidget(left_button, 1, 0)
-        control_layout.addWidget(right_button, 1, 3)
         control_layout.addWidget(cw_button, 1, 1)
         control_layout.addWidget(ccw_button, 1, 2)
+        control_layout.addWidget(right_button, 1, 3)
+        control_layout.addWidget(backward_left_button, 2, 0)
+        control_layout.addWidget(backward_button, 2, 1, 1, 2)
+        control_layout.addWidget(backward_right_button, 2, 3)
         control_layout.addWidget(bypass_lidar_label, 3, 0, 1, 2)
         control_layout.addWidget(bypass_lidar_checkbox, 3, 2, 1, 2)
         control_layout.addWidget(speed_control_label, 4, 0, 1, 2)
         control_layout.addWidget(speed_control_textbox, 4, 2)
         control_layout.addWidget(speed_control_button, 4, 3)
-
 
         forward_button.pressed.connect(lambda: self.__update_velocity(0, True))
         forward_button.released.connect(lambda: self.__update_velocity(0, False))
@@ -447,6 +476,14 @@ class MainWindow(QMainWindow):
         left_button.released.connect(lambda: self.__update_velocity(90, False))
         right_button.pressed.connect(lambda: self.__update_velocity(270, True))
         right_button.released.connect(lambda: self.__update_velocity(270, False))
+        forward_left_button.pressed.connect(lambda: self.__update_velocity(45, True))
+        forward_left_button.released.connect(lambda: self.__update_velocity(45, False))
+        forward_right_button.pressed.connect(lambda: self.__update_velocity(315, True))
+        forward_right_button.released.connect(lambda: self.__update_velocity(315, False))
+        backward_left_button.pressed.connect(lambda: self.__update_velocity(135, True))
+        backward_left_button.released.connect(lambda: self.__update_velocity(135, False))
+        backward_right_button.pressed.connect(lambda: self.__update_velocity(225, True))
+        backward_right_button.released.connect(lambda: self.__update_velocity(225, False))
         cw_button.pressed.connect(lambda: self.__update_velocity(-1, True))
         cw_button.released.connect(lambda: self.__update_velocity(-1, False))
         ccw_button.pressed.connect(lambda: self.__update_velocity(-2, True))
@@ -558,42 +595,20 @@ class MainWindow(QMainWindow):
         t = threading.Thread(target=checker_loop, daemon=True)
         t.start()
 
-    def __systems_toggle(self, state: bool):
-        rospy.wait_for_service('fish_camera/system_toggle')
-        self.fish_camera_control(state)
-        rospy.wait_for_service('ceiling_cameras/system_toggle')
-        self.ceiling_cameras_control(state)
-        rospy.wait_for_service('lidar/system_toggle')
-        self.lidar_control(state)
-        rospy.wait_for_service('fish_detection/system_toggle')
-        self.fish_detection_control(state)
-        rospy.wait_for_service('light_dimmer/system_toggle')
-        self.light_dimmer_control(state)
-        rospy.wait_for_service('motor_control/system_toggle')
-        self.motor_control(state)
-        
-    def __update_buttons_state(self, state: tuple):
-        self.__start_button.setDisabled(state[0])
-        self.__pause_button.setDisabled(state[1])
-        self.__reset_button.setDisabled(state[2])
-        self.__close_button.setDisabled(state[3])
-        # Add feed button
-        # Add lights slider?
-
     def __update_velocity(self, direction: int, is_pressed: bool):
         """
         Update robot velocity based on button presses.
         """
         if direction >= 0:
             # self.__linear_velocity = Twist()
-            if direction == 0: # "forward"
-                self.__linear_velocity.linear.y = 1 if is_pressed else 0
-            elif direction == 90: # "left"
-                self.__linear_velocity.linear.x = -1 if is_pressed else 0
-            elif direction == 180: # "backward"
-                self.__linear_velocity.linear.y = -1 if is_pressed else 0
-            elif direction == 270: # "right"
-                self.__linear_velocity.linear.x = 1 if is_pressed else 0
+            # Convert direction (degrees) to radians for vector calculation
+            radians = math.radians(direction)
+            if is_pressed:
+                self.__linear_velocity.linear.x = -math.sin(radians)
+                self.__linear_velocity.linear.y = math.cos(radians)
+            else:
+                self.__linear_velocity.linear.x = 0
+                self.__linear_velocity.linear.y = 0
 
             # Publish the velocity to the robot
             self.__motor_control_twist.publish(self.__linear_velocity)  
