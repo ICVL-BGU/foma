@@ -675,8 +675,8 @@ class MainWindow(QMainWindow):
         
         if self.__room_map is not None:
             # Ensure coordinates stay within bounds
-            x = np.clip(self.__foma_world_location.x, 0, 500 - 1)
-            y = np.clip(self.__foma_world_location.y, 0, 500 - 1)
+            x = np.clip(self.__foma_world_location.x, 0, 500 - 1, dtype=int)
+            y = np.clip(self.__foma_world_location.y, 0, 500 - 1, dtype=int)
             cv2.circle(self.__room_map, (x, y), 5, (0, 255, 0), -1)
     def __update_blocked_directions(self, blocked: Int16MultiArray):
         """
@@ -846,10 +846,6 @@ class MainWindow(QMainWindow):
             self.__manual_control_button.setDisabled(True)
             self.__bypass_lidar = None
 
-    def __update_gui(self):
-        self.__update_left_display()
-        self.__update_right_display()
-
     def __on_start_click(self):
         self.__start_button.setDisabled(True)
         self.__pause_button.setDisabled(False)
@@ -885,7 +881,6 @@ class MainWindow(QMainWindow):
         self.__ongoing_trial = False
         self.__motor_control_vector.publish(Vector3(0, 0, 0))
         self.__writers_timer.stop()
-        # self.__close_file_writers()
 
     def __on_reset_click(self):
         self.__start_button.setDisabled(False)
@@ -964,17 +959,6 @@ class MainWindow(QMainWindow):
 
 
         self.__writers_timer.start(25)
-
-    def __on_stop_click(self):
-        self.__update_buttons_state((True,True,False,False))
-        self.__ongoing_trial = False
-        self.__motor_control_vector.publish(Vector3(0, 0, 0))
-        self.__writers_timer.stop()
-        self.__close_file_writers()
-
-    def __on_reset_click(self):
-        self.__update_buttons_state((False,True,True,False))
-        self.__close_file_writers()
 
     def __on_close_click(self, event):
         self.__close_file_writers()
