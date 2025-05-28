@@ -627,26 +627,33 @@ class MainWindow(QMainWindow):
             height, width, _ = self.__fish_image.shape
             center_x = width // 2
             center_y = height // 2
+            # 1. compute the pixel‐offset with y inverted
             vector_x = fish_x - center_x
-            vector_y = fish_y - center_y
+            vector_y = center_y - fish_y   # <— flip the sign here!
 
-            if vector_x == 0 and vector_y == 0:
-                self.__motor_control_vector.publish(Vector3(0, 0, 0))
-
-            # Calculate the direction angle of the fish
-            direction_x = state.angular.x
-            direction_y = state.angular.y
-            direction_angle = math.degrees(math.atan2(direction_y, direction_x))
-
-            # Calculate the angle of the vector from the center to the fish
+            # 2. get the two angles
             center_to_fish_angle = math.degrees(math.atan2(vector_y, vector_x))
 
-            # Check if the direction matches the vector angle within epsilon
-            if abs(direction_angle - center_to_fish_angle) <= self.__direction_epsilon:
+            direction_angle = math.degrees(
+                math.atan2(state.angular.y,   # note: angular.y is the ‘up/down’ component
+                        state.angular.x)   #        angular.x is the ‘left/right’ component
+            )
+
+            # 3. normalize difference into [–180, +180]
+            def shortest_angle_diff(a, b):
+                """Return the signed smallest difference a–b in degrees."""
+                d = (a - b + 180) % 360 - 180
+                return d
+
+            diff = shortest_angle_diff(direction_angle, center_to_fish_angle)
+
+            if abs(diff) <= self.__direction_epsilon:
                 self.__motor_control_dir.publish(direction_angle)
-                self.loginfo(f"Direction match: {direction_angle}° (expected {center_to_fish_angle}°)")
+                # self.loginfo(f"Direction match: {direction_angle:.1f}° (expected {center_to_fish_angle:.1f}°)")
             else:
+                # self.logwarn(f"Direction mismatch: {direction_angle:.1f}° (expected {center_to_fish_angle:.1f}°) – Δ={diff:.1f}°")
                 self.__motor_control_vector.publish(Vector3(0, 0, 0))
+
 
     def __update_room_image(self, img_msg: Image):
         try:
