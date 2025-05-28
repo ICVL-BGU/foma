@@ -35,7 +35,7 @@ from PyQt5.QtWidgets import (
 # ROS imports
 from geometry_msgs.msg import Twist, Vector3
 from sensor_msgs.msg import Image
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Int16MultiArray
 from std_srvs.srv import Trigger, SetBool
 from cv_bridge import CvBridge, CvBridgeError
 
@@ -77,6 +77,12 @@ class MainWindow(QMainWindow):
 
         self.__writers_timer = QTimer(self)
         self.__writers_timer.timeout.connect(self.__write_files)
+        self.__writers_interval = 40 # 25 fps
+
+    def __init_signals(self):
+        self.fish_frame_ready.connect(self.__update_left_display)
+        self.room_frame_ready.connect(self.__update_right_display)
+        self.services_updated.connect(self.__update_services)
 
     def __init_signals(self):
         self.fish_frame_ready.connect(self.__update_left_display)
@@ -116,6 +122,7 @@ class MainWindow(QMainWindow):
         self.__angular_velocity = Float32()
         # self.__speed = 1
         self.__direction_epsilon = 20
+        self.__blocked_directions = None
 
         # Services
         self.__motor_control_system_check = None
@@ -169,7 +176,7 @@ class MainWindow(QMainWindow):
         # Bottom-Right (Control Buttons)
         self.__BR_layout = QGridLayout()
         self.__BR_layout.addWidget(self.__start_button, 0, 0, alignment=Qt.AlignCenter)
-        self.__BR_layout.addWidget(self.__stop_button, 0, 1, alignment=Qt.AlignCenter)
+        self.__BR_layout.addWidget(self.__pause_button, 0, 1, alignment=Qt.AlignCenter)
         self.__BR_layout.addWidget(self.__reset_button, 1, 0, alignment=Qt.AlignCenter)
         self.__BR_layout.addWidget(self.__close_button, 1, 1, alignment=Qt.AlignCenter)
 
@@ -205,11 +212,11 @@ class MainWindow(QMainWindow):
         self.__start_button.clicked.connect(self.__on_start_click)
 
         # Stop button init
-        self.__stop_button = QPushButton()
-        self.__stop_button.setText("Stop")
-        self.__stop_button.setDisabled(True)
-        self.__stop_button.setMaximumHeight(50)
-        self.__stop_button.clicked.connect(self.__on_stop_click)
+        self.__pause_button = QPushButton()
+        self.__pause_button.setText("Pause")
+        self.__pause_button.setDisabled(True)
+        self.__pause_button.setMaximumHeight(50)
+        self.__pause_button.clicked.connect(self.__on_pause_click)
 
         # Reset button init
         self.__reset_button = QPushButton()
@@ -335,6 +342,7 @@ class MainWindow(QMainWindow):
         rospy.Subscriber('fish_detection/state', Twist, self.__update_fish_state)
         rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image)
         rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
+        rospy.Subscriber('motor_control/blocked', Int16MultiArray, self.__update_blocked_directions)
         self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=10)
         self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=10)
@@ -566,7 +574,7 @@ class MainWindow(QMainWindow):
         
     def __update_buttons_state(self, state: tuple):
         self.__start_button.setDisabled(state[0])
-        self.__stop_button.setDisabled(state[1])
+        self.__pause_button.setDisabled(state[1])
         self.__reset_button.setDisabled(state[2])
         self.__close_button.setDisabled(state[3])
         # Add feed button
@@ -611,43 +619,32 @@ class MainWindow(QMainWindow):
         else:
             self.__fish_state = state
         if self.__ongoing_trial and self.__fish_image is not None:
-            # Divide the fish image into 9 tiles
-            height, width, _ = self.__fish_image.shape
-            tile_height = height // 3
-            tile_width = width // 3
-
             # Get fish location
             fish_x = int(state.linear.x)
             fish_y = int(state.linear.y)
 
-            # Determine which tile the fish is in
-            tile_row = fish_y // tile_height
-            tile_col = fish_x // tile_width
+            # Calculate the vector from the image center to the fish location
+            height, width, _ = self.__fish_image.shape
+            center_x = width // 2
+            center_y = height // 2
+            vector_x = fish_x - center_x
+            vector_y = fish_y - center_y
 
-            # Ensure tile indices are within bounds
-            tile_row = max(0, min(2, tile_row))
-            tile_col = max(0, min(2, tile_col))
+            if vector_x == 0 and vector_y == 0:
+                self.__motor_control_vector.publish(Vector3(0, 0, 0))
 
-            # Calculate the direction angle
+            # Calculate the direction angle of the fish
             direction_x = state.angular.x
             direction_y = state.angular.y
             direction_angle = math.degrees(math.atan2(direction_y, direction_x))
 
-            # Define the expected direction for each tile
-            tile_directions = {
-                (0, 0): 135, (0, 1): 90, (0, 2): 45,
-                (1, 0): 180, (1, 1): None, (1, 2): 0,
-                (2, 0): -135, (2, 1): -90, (2, 2): -45,
-            }
+            # Calculate the angle of the vector from the center to the fish
+            center_to_fish_angle = math.degrees(math.atan2(vector_y, vector_x))
 
-            # Get the expected direction for the current tile
-            expected_angle = tile_directions.get((tile_row, tile_col))
-
-            # Check if the direction matches the expected direction within epsilon
-            if expected_angle is not None and abs(direction_angle - expected_angle) <= self.__direction_epsilon:
-                # self.__motor_control_vector.publish(state.angular)
+            # Check if the direction matches the vector angle within epsilon
+            if abs(direction_angle - center_to_fish_angle) <= self.__direction_epsilon:
                 self.__motor_control_dir.publish(direction_angle)
-                self.loginfo(f"Direction match: {direction_angle}° (expected {expected_angle}°)")
+                self.loginfo(f"Direction match: {direction_angle}° (expected {center_to_fish_angle}°)")
             else:
                 self.__motor_control_vector.publish(Vector3(0, 0, 0))
 
@@ -674,12 +671,27 @@ class MainWindow(QMainWindow):
             x = np.clip(self.__foma_world_location.x, 0, 500 - 1)
             y = np.clip(self.__foma_world_location.y, 0, 500 - 1)
             cv2.circle(self.__room_map, (x, y), 5, (0, 255, 0), -1)
+    def __update_blocked_directions(self, blocked: Int16MultiArray):
+        """
+        Update the blocked directions based on the received data.
+        """
+        self.__blocked_directions = blocked.data
+        # self.loginfo(f"Blocked directions: {self.__blocked_directions}")
 
     def __update_left_display(self, frame: np.ndarray):
         # 1) nothing to do if no frame
-        # self.loginfo("Updating left display...")
         if frame is None:
             return
+        
+        if self.__blocked_directions is not None:
+            height, width, _ = frame.shape
+            for angle in self.__blocked_directions:
+                # Calculate the endpoint of the line based on the angle
+                radians = math.radians(angle)
+                x_end = int(width / 2 + (width / 2) * math.cos(radians))
+                y_end = int(height / 2 - (height / 2) * math.sin(radians))
+                # Draw the red line on the border
+                cv2.line(frame, (width // 2, height // 2), (x_end, y_end), (0, 0, 255), 2)
 
         # 3) draw direction overlay if requested and we have a Twist state
         if self.__show_direction_rb.isChecked() and self.__fish_state is not None:
@@ -747,12 +759,13 @@ class MainWindow(QMainWindow):
         elif self.__map_display_rb.isChecked() and self.__room_map is not None:
             height, width, channel = self.__room_map.shape
             bytes_per_line = 3 * width
-            map = self.__room_map.copy()
+            map_frame = self.__room_map.copy()
             # Ensure coordinates stay within bounds
-            x = np.clip(self.__foma_world_location.x, 0, 500 - 1)
-            y = np.clip(self.__foma_world_location.y, 0, 500 - 1)
-            cv2.circle(map, (x, y), 5, (0, 0, 255), -1)
-            frame = map.frame
+            if self.__foma_world_location is not None:
+                x = np.clip(self.__foma_world_location.x, 0, 500 - 1)
+                y = np.clip(self.__foma_world_location.y, 0, 500 - 1)
+                cv2.circle(map_frame, (x, y), 5, (0, 0, 255), -1)
+            frame = map_frame.data
 
         if frame is not None:
             q_image = QImage(frame, width, height, bytes_per_line, QImage.Format_RGB888)             
@@ -831,10 +844,62 @@ class MainWindow(QMainWindow):
         self.__update_right_display()
 
     def __on_start_click(self):
-        self.__update_buttons_state((True,False,True,True))
+        self.__start_button.setDisabled(True)
+        self.__pause_button.setDisabled(False)
+        self.__reset_button.setDisabled(True)
+        self.__close_button.setDisabled(True)
+
+        self.__ongoing_trial = True
+
+        self.__open_file_writers()
+
+        self.__writers_timer.start(self.__writers_interval)
+
+    def __on_continue_click(self):
+        self.__start_button.setDisabled(True)
+        self.__pause_button.setDisabled(False)
+        self.__reset_button.setDisabled(True)
+        self.__close_button.setDisabled(True)
 
         self.__ongoing_trial = True
         
+        self.__writers_timer.start(self.__writers_interval)
+
+    def __on_pause_click(self):
+        self.__start_button.setDisabled(False)
+        self.__pause_button.setDisabled(True)
+        self.__reset_button.setDisabled(False)
+        self.__close_button.setDisabled(False)
+
+        self.__start_button.setText("Continue")
+        self.__start_button.clicked.disconnect()
+        self.__start_button.clicked.connect(self.__on_continue_click)
+
+        self.__ongoing_trial = False
+        self.__motor_control_vector.publish(Vector3(0, 0, 0))
+        self.__writers_timer.stop()
+        # self.__close_file_writers()
+
+    def __on_reset_click(self):
+        self.__start_button.setDisabled(False)
+        self.__pause_button.setDisabled(True)
+        self.__reset_button.setDisabled(True)
+        self.__close_button.setDisabled(False)
+
+        self.__start_button.setText("Start")
+        self.__start_button.clicked.disconnect()
+        self.__start_button.clicked.connect(self.__on_start_click)
+
+        self.__ongoing_trial = False
+        self.__writers_timer.stop()
+        self.__close_file_writers()
+
+    def __on_close_click(self, event):
+        self.__close_file_writers()
+        QApplication.quit()
+        rospy.signal_shutdown("Closing GUI")
+
+    def __open_file_writers(self):
         self.__trial_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
    
         # Ensure the output directory exists
@@ -843,44 +908,35 @@ class MainWindow(QMainWindow):
             self.loginfo(f"Creating output folder {self.__trial_output_folder}")
             os.makedirs(self.__trial_output_folder)
 
-        # 1. FOMA Location
-        # Generate file name with current timestamp (YYYYMMDDHHMM)
-
-        foma_location_filename = os.path.join(self.__trial_output_folder, f"foma_location.csv")
-
-        # Open CSV file in append mode and create writer
-        self.__foma_location_file = open(foma_location_filename, 'a', newline='')
-        self.__foma_location_csv_writer = csv.writer(self.__foma_location_file)
-
-        # Write header if the file is new
-        if os.stat(foma_location_filename).st_size == 0:
-            self.__foma_location_csv_writer.writerow(["time", "x_w", "y_w", "x_i", "y_i"])
-            self.__foma_location_file.flush()  # Ensure the header is written immediately
-
-        # Fish Location
-        fish_location_filename = os.path.join(self.__trial_output_folder, f"fish_location.csv")
-
-        # Open CSV file in append mode and create writer
-        self.__fish_location_file = open(fish_location_filename, 'a', newline='')
-        self.__fish_location_csv_writer = csv.writer(self.__fish_location_file)
-
-        # Write header if the file is new
-        if os.stat(fish_location_filename).st_size == 0:
-            self.__fish_location_csv_writer.writerow(["time", "x", "y", "angle"])
-            self.__fish_location_file.flush()  # Ensure the header is written immediately
-
-        # 2. Room Video
+        # 1. Room Video
         room_video_filename = os.path.join(self.__trial_output_folder, f"room_video.mp4")
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
         room_frame_width = 2560  # Adjust based on your camera resolution
         room_frame_height = 2560
         room_fps = 25  # Default FPS (adjust based on the camera FPS)
         self.__room_video_writer = cv2.VideoWriter(room_video_filename, fourcc, room_fps, (room_frame_width, room_frame_height))
-        # if self.__room_video_writer.isOpened():
-        #     self.loginfo(f"Room video writer opened with filename: {room_video_filename}")
+
+        # 2. Room Map
+        # Create a white image representing the room
+        self.__room_map = np.ones((500, 500, 3), dtype=np.uint8) * 255
+        room_map_filename = os.path.join(self.__trial_output_folder, f"room_map.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
+        map_frame_shape = (500, 500)  # Adjust based on your camera resolution
+        map_fps = 10  # Default FPS (adjust based on the camera FPS)
+        self.__room_video_writer = cv2.VideoWriter(room_map_filename, fourcc, map_fps, map_frame_shape)
 
 
-        # 3. FOMA Video
+        # 3. FOMA Location
+        foma_location_filename = os.path.join(self.__trial_output_folder, f"foma_location.csv")
+
+        self.__foma_location_file = open(foma_location_filename, 'a', newline='')
+        self.__foma_location_csv_writer = csv.writer(self.__foma_location_file)
+
+        if os.stat(foma_location_filename).st_size == 0:
+            self.__foma_location_csv_writer.writerow(["time", "x_w", "y_w", "x_i", "y_i"])
+            self.__foma_location_file.flush()  # Ensure the header is written immediately
+
+        # 4. FOMA Video
         foma_video_filename = os.path.join(self.__trial_output_folder, f"foma_video.mp4")
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
         foma_frame_width = 1232  # Adjust based on your camera resolution
@@ -888,9 +944,17 @@ class MainWindow(QMainWindow):
         foma_fps = 25  # Default FPS (adjust based on the camera FPS)
         self.__foma_video_writer = cv2.VideoWriter(foma_video_filename, fourcc, foma_fps, (foma_frame_width, foma_frame_height))
 
-        # 4. Room Map
-        # Create a white image representing the room
-        self.__room_map = np.ones((500, 500, 3), dtype=np.uint8) * 255
+
+        # 5. Fish Location
+        fish_location_filename = os.path.join(self.__trial_output_folder, f"fish_location.csv")
+
+        self.__fish_location_file = open(fish_location_filename, 'a', newline='')
+        self.__fish_location_csv_writer = csv.writer(self.__fish_location_file)
+
+        if os.stat(fish_location_filename).st_size == 0:
+            self.__fish_location_csv_writer.writerow(["time", "x", "y", "angle"])
+            self.__fish_location_file.flush()  # Ensure the header is written immediately
+
 
         self.__writers_timer.start(25)
 
@@ -984,6 +1048,14 @@ class MainWindow(QMainWindow):
         if self.__foma_video_writer and self.__fish_image is not None:
             frame = cv2.cvtColor(self.__fish_image, cv2.COLOR_RGB2BGR)
             self.__foma_video_writer.write(frame)
+
+        if self.__room_video_writer and self.__room_map is not None:
+            map_frame = cv2.cvtColor(self.__room_map, cv2.COLOR_RGB2BGR)
+            if self.__foma_world_location is not None:
+                x = np.clip(self.__foma_world_location.x, 0, 500 - 1)
+                y = np.clip(self.__foma_world_location.y, 0, 500 - 1)
+                cv2.circle(map_frame, (x, y), 5, (0, 0, 255), -1)
+            self.__room_video_writer.write(map_frame)
 
     def resizeEvent(self, event):
         if self.__top_right_image.pixmap():

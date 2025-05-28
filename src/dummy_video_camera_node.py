@@ -14,7 +14,7 @@ class VideoCameraNode(AbstractNode):
 
     def run(self):
         while not rospy.is_shutdown():
-            img = cv2.imread(r'/home/alex/ROS/src/foma/etc/vlc-record-2025-03-30-13h47m16s-test1.h264_000622.png', cv2.IMREAD_COLOR)
+            img = cv2.imread(r'/home/alex/ros_ws/src/foma/etc/vlc-record-2025-03-30-13h47m16s-test1.h264_000622.png', cv2.IMREAD_COLOR)
             try:
                 img_msg = self.bridge.cv2_to_imgmsg(img, "rgb8")
                 self.camera_pub.publish(img_msg)
