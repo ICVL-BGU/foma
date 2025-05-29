@@ -84,11 +84,6 @@ class MainWindow(QMainWindow):
         self.room_frame_ready.connect(self.__update_right_display)
         self.services_updated.connect(self.__update_services)
 
-    def __init_signals(self):
-        self.fish_frame_ready.connect(self.__update_left_display)
-        self.room_frame_ready.connect(self.__update_right_display)
-        self.services_updated.connect(self.__update_services)
-
     def __init_attributes(self):
         # Images and locations
         self.__foma_img_location = None
@@ -624,7 +619,7 @@ class MainWindow(QMainWindow):
     def __update_fish_image(self, img_msg: Image):
         try:
             self.__fish_image = self.bridge.imgmsg_to_cv2(img_msg)
-            self.fish_frame_ready.emit(self.__fish_image)
+            self.fish_frame_ready.emit(self.__fish_image.copy())
         except CvBridgeError as e:
             self.logwarn(e)
 
@@ -672,13 +667,13 @@ class MainWindow(QMainWindow):
 
     def __update_room_image(self, img_msg: Image):
         try:
-            frame = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="rgb8") # was passthrough
-            self.__room_image = frame.copy() # might not be correct
+            self.__room_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="rgb8") # was passthrough
+            frame = self.__room_image.copy() # might not be correct
             if self.__foma_img_location:
                 center_x = self.__foma_img_location.x
                 center_y = self.__foma_img_location.y
-                cv2.circle(self.__room_image, (int(center_x), int(center_y)), 5, (0, 255, 0), -1)
-            self.room_frame_ready.emit(self.__room_image)
+                cv2.circle(frame, (int(center_x), int(center_y)), 5, (0, 255, 0), -1)
+            self.room_frame_ready.emit(frame)
         except CvBridgeError as e:
             self.logwarn(f"Error converting image message: {e}")
         except Exception as e:
@@ -690,8 +685,8 @@ class MainWindow(QMainWindow):
         
         if self.__room_map is not None:
             # Ensure coordinates stay within bounds
-            x = np.clip(self.__foma_world_location.x, 0, 500 - 1, dtype=int)
-            y = np.clip(self.__foma_world_location.y, 0, 500 - 1, dtype=int)
+            x = np.clip(self.__foma_world_location.x, 0, 500 - 1).astype(int)
+            y = np.clip(self.__foma_world_location.y, 0, 500 - 1).astype(int)
             cv2.circle(self.__room_map, (x, y), 5, (0, 255, 0), -1)
     def __update_blocked_directions(self, blocked: Int16MultiArray):
         """
@@ -784,8 +779,8 @@ class MainWindow(QMainWindow):
             map_frame = self.__room_map.copy()
             # Ensure coordinates stay within bounds
             if self.__foma_world_location is not None:
-                x = np.clip(self.__foma_world_location.x, 0, 500 - 1)
-                y = np.clip(self.__foma_world_location.y, 0, 500 - 1)
+                x = np.clip(self.__foma_world_location.x, 0, 500 - 1).astype(int)
+                y = np.clip(self.__foma_world_location.y, 0, 500 - 1).astype(int)
                 cv2.circle(map_frame, (x, y), 5, (0, 0, 255), -1)
             frame = map_frame.data
 
@@ -940,7 +935,7 @@ class MainWindow(QMainWindow):
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
         map_frame_shape = (500, 500)  # Adjust based on your camera resolution
         map_fps = 10  # Default FPS (adjust based on the camera FPS)
-        self.__room_video_writer = cv2.VideoWriter(room_map_filename, fourcc, map_fps, map_frame_shape)
+        self.__room_map_writer = cv2.VideoWriter(room_map_filename, fourcc, map_fps, map_frame_shape)
 
 
         # 3. FOMA Location
@@ -991,8 +986,9 @@ class MainWindow(QMainWindow):
         if self.__foma_video_writer:
             self.__foma_video_writer.release()
             self.__foma_video_writer = None
-        if self.__room_map is not None:
-            cv2.imwrite(os.path.join(self.__trial_output_folder, f"room_map_{self.__trial_timestamp}.png"), self.__room_map)
+        if self.__room_map_writer:
+            self.__room_map_writer.release()
+            self.__room_map_writer = None
 
     def __update_image(self, img_msg: Image, destination: QLabel):
         """
@@ -1055,13 +1051,13 @@ class MainWindow(QMainWindow):
             frame = cv2.cvtColor(self.__fish_image, cv2.COLOR_RGB2BGR)
             self.__foma_video_writer.write(frame)
 
-        if self.__room_video_writer and self.__room_map is not None:
+        if self.__room_map_writer and self.__room_map is not None:
             map_frame = cv2.cvtColor(self.__room_map, cv2.COLOR_RGB2BGR)
             if self.__foma_world_location is not None:
-                x = np.clip(self.__foma_world_location.x, 0, 500 - 1)
-                y = np.clip(self.__foma_world_location.y, 0, 500 - 1)
+                x = np.clip(self.__foma_world_location.x, 0, 500 - 1).astype(int)
+                y = np.clip(self.__foma_world_location.y, 0, 500 - 1).astype(int)
                 cv2.circle(map_frame, (x, y), 5, (0, 0, 255), -1)
-            self.__room_video_writer.write(map_frame)
+            self.__room_map_writer.write(map_frame)
 
     def resizeEvent(self, event):
         if self.__top_right_image.pixmap():

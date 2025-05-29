@@ -28,7 +28,7 @@ class CeilingCameraNode(AbstractNode):
 
     def run(self):
         rospy.loginfo("CeilingCameraNode running…")
-        rate = rospy.Rate(30)
+        rate = rospy.Rate(25)
         while not rospy.is_shutdown():
             ret, frame = self.cap.read()
             if ret:
