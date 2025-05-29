@@ -221,9 +221,9 @@ class MotorControlNode(AbstractNode):
     
     def __on_shutdown(self):
         if self.__motor_control:
-            self.logwarn("Stopping motors.")
+            self.loginfo("Stopping motors.")
             # self.hBlocked, self.vBlocked = True, True
-            self.__motor_control.move_by_components(0, 0)
+            self.__motor_control.shutdown()
 
 if __name__ == "__main__":
     rospy.init_node('motor_control_node')

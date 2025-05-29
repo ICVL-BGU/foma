@@ -37,6 +37,11 @@ class MotorControl(Serial):
         self.motorTopBottom.setBrakes(brake, brake)
         self.motorRightLeft.setBrakes(brake, brake)
 
+    def shutdown(self):
+        self.motorTopBottom.turnOff()
+        self.motorRightLeft.turnOff()
+        self.close()
+
     def move_by_angle(self, angle: int, speed = None):
         if not speed:
             speed = self.speed

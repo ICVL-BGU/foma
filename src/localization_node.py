@@ -45,7 +45,7 @@ class LocalizationNode(AbstractNode):
                 sensor_width = 5.5 / 1000
                 sensor_height = 4 / 1000
                 cam_x, cam_y, cam_z = (2.5, 2.5, 2.15)
-                image_width, image_height = 1024, 768
+                image_width, image_height = 2560, 2560
                 ground_height = 0.95
                 
                 # Define image center as origin
@@ -61,8 +61,8 @@ class LocalizationNode(AbstractNode):
                 
                 # Convert sensor distances to real-world distances
                 self.location.world = Point()
-                self.location.world.x = cam_x + px * scale
-                self.location.world.y = cam_y + py * scale
+                self.location.world.x = 100*(cam_x + px * scale)
+                self.location.world.y = 100*(cam_y + py * scale)
 
                 self.location_pub.publish(self.location)
 

@@ -30,6 +30,7 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QGroupBox,
     QRadioButton,
+    QInputDialog,
     )
 
 # ROS imports
@@ -97,6 +98,7 @@ class MainWindow(QMainWindow):
         self.__output_folder = '~/trial_output'
         self.__trial_timestamp = None
         self.__room_video_writer = None
+        self.__room_map_writer = None
         self.__foma_video_writer = None
         self.__foma_location_file = None
         self.__foma_location_csv_writer = None
@@ -346,7 +348,6 @@ class MainWindow(QMainWindow):
         # self.__motor_control_system_check = rospy.ServiceProxy('motor_control/system_check', Check)
 
     def __init_manual_control_window(self):
-        pressed_keys = set()  # Set to track currently pressed keys
         self.__motor_set_speed.publish(Float32(0.5))
         self.__bypass_lidar(False)
 
@@ -373,45 +374,29 @@ class MainWindow(QMainWindow):
 
         def on_key_press(event):
             key = event.key()
-            if event.type() == QEvent.KeyPress:
-                pressed_keys.add(key)
-                update_velocity_from_keys()
-            elif event.type() == QEvent.KeyRelease:
-                if key in pressed_keys:
-                    pressed_keys.remove(key)
-                update_velocity_from_keys()
+            # Map numpad keys and +/-
+            key_to_angle = {
+                Qt.Key_8: 0,
+                Qt.Key_2: 180,
+                Qt.Key_4: 90,
+                Qt.Key_6: 270,
+                Qt.Key_7: 45,
+                Qt.Key_9: 315,
+                Qt.Key_1: 135,
+                Qt.Key_3: 225,
+                Qt.Key_Plus: -2,  # ccw
+                Qt.Key_Minus: -1  # cw
+            }
+            if key in key_to_angle:
+                if event.type() == QEvent.KeyPress:
+                    angle = key_to_angle[key]
+                    self.__update_velocity(angle, True)
+                    event.accept()
+                elif event.type() == QEvent.KeyRelease:
+                    self.__update_velocity(0, False)
+                    event.accept()
             else:
                 event.ignore()
-
-        def update_velocity_from_keys():
-            # Simple logic example for movement keys:
-            angle = None
-            if Qt.Key_W in pressed_keys and Qt.Key_A in pressed_keys:
-                angle = 45
-            elif Qt.Key_W in pressed_keys and Qt.Key_D in pressed_keys:
-                angle = 315
-            elif Qt.Key_S in pressed_keys and Qt.Key_A in pressed_keys:
-                angle = 135
-            elif Qt.Key_S in pressed_keys and Qt.Key_D in pressed_keys:
-                angle = 225
-            elif Qt.Key_W in pressed_keys:
-                angle = 0
-            elif Qt.Key_S in pressed_keys:
-                angle = 180
-            elif Qt.Key_A in pressed_keys:
-                angle = 90
-            elif Qt.Key_D in pressed_keys:
-                angle = 270
-            elif Qt.Key_Q in pressed_keys:
-                angle = -2
-            elif Qt.Key_E in pressed_keys:
-                angle = -1
-
-            if angle is not None:
-                self.__update_velocity(angle, True)
-            else:
-                # No movement keys pressed, stop or no velocity update
-                self.__update_velocity(0, False)
 
         self.__manual_control_window.closeEvent = on_close
         self.__manual_control_window.keyPressEvent = on_key_press
@@ -699,16 +684,54 @@ class MainWindow(QMainWindow):
         # 1) nothing to do if no frame
         if frame is None:
             return
+
+        h, w, ch = frame.shape
         
         if self.__blocked_directions is not None:
-            height, width, _ = frame.shape
             for angle in self.__blocked_directions:
-                # Calculate the endpoint of the line based on the angle
-                radians = math.radians(angle)
-                x_end = int(width / 2 + (width / 2) * math.cos(radians))
-                y_end = int(height / 2 - (height / 2) * math.sin(radians))
-                # Draw the red line on the border
-                cv2.line(frame, (width // 2, height // 2), (x_end, y_end), (0, 0, 255), 2)
+                cx, cy = w // 2, h // 2
+                delta_deg = 0.5
+                # define the two boundary angles
+                angles = (angle - delta_deg, angle + delta_deg)
+                pts = []
+
+                for ang in angles:
+                    # remap so that 0° = up, CCW positive
+                    math_ang = math.radians(ang + 90)
+                    dx = math.cos(math_ang)
+                    dy = -math.sin(math_ang)
+
+                    # collect positive t‘s for intersection with each border
+                    ts = []
+
+                    # vertical borders x=0 and x=width
+                    if abs(dx) > 1e-6:
+                        t1 = (0 - cx) / dx
+                        t2 = (w - cx) / dx
+                        if t1 > 0: ts.append(t1)
+                        if t2 > 0: ts.append(t2)
+
+                    # horizontal borders y=0 and y=height
+                    if abs(dy) > 1e-6:
+                        t3 = (0 - cy) / dy
+                        t4 = (h - cy) / dy
+                        if t3 > 0: ts.append(t3)
+                        if t4 > 0: ts.append(t4)
+
+                    if not ts:
+                        # ray is parallel to all borders?
+                        continue
+
+                    t_min = min(ts)
+                    x_edge = int(cx + t_min * dx)
+                    y_edge = int(cy + t_min * dy)
+                    pts.append((x_edge, y_edge))
+
+                # draw either the segment on the border or a dot if degenerate
+                if len(pts) == 2:
+                    cv2.line(frame, pts[0], pts[1], (255, 0, 0), 5)
+                elif len(pts) == 1:
+                    cv2.circle(frame, pts[0], 3, (255, 0, 0), -1)
 
         # 3) draw direction overlay if requested and we have a Twist state
         if self.__show_direction_rb.isChecked() and self.__fish_state is not None:
@@ -747,9 +770,6 @@ class MainWindow(QMainWindow):
                             2,
                             tipLength=0.3)
 
-        # 4) convert BGR → RGB and wrap in QImage
-        h, w, ch = frame.shape
-        # rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         bytes_per_line = ch * w
         qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
 
@@ -761,13 +781,11 @@ class MainWindow(QMainWindow):
             Qt.SmoothTransformation
         )
         self.__left_image_frame.setPixmap(pix)
-        # self.loginfo("Left display updated.")
 
     def __update_right_display(self, frame: np.ndarray):
         """
         Callback to update the room camera image on the GUI only ATM.
         """
-        # self.loginfo("Updating right display...")
         if self.__room_camera_display_rb.isChecked() and frame is not None:
             height, width, channel = frame.shape
             bytes_per_line = 3 * width
@@ -796,7 +814,6 @@ class MainWindow(QMainWindow):
             
             # Update the QLabel with the scaled QPixmap
             self.__top_right_image.setPixmap(scaled_pixmap)
-        # self.loginfo("Right display updated.")
 
     def __update_services(self, status: dict):
         """
@@ -857,6 +874,14 @@ class MainWindow(QMainWindow):
             self.__bypass_lidar = None
 
     def __on_start_click(self):
+        subject_id, ok = QInputDialog.getText(
+            self,
+            "Subject ID",
+            "Please enter subject ID:"
+        )
+        if not ok or not subject_id:
+            return
+        
         self.__start_button.setDisabled(True)
         self.__pause_button.setDisabled(False)
         self.__reset_button.setDisabled(True)
@@ -864,7 +889,7 @@ class MainWindow(QMainWindow):
 
         self.__ongoing_trial = True
 
-        self.__open_file_writers()
+        self.__open_file_writers(subject_id)
 
         self.__writers_timer.start(self.__writers_interval)
 
@@ -911,11 +936,11 @@ class MainWindow(QMainWindow):
         QApplication.quit()
         rospy.signal_shutdown("Closing GUI")
 
-    def __open_file_writers(self):
+    def __open_file_writers(self, subject_id: str):
         self.__trial_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
    
         # Ensure the output directory exists
-        self.__trial_output_folder = os.path.join(os.path.expanduser(self.__output_folder), self.__trial_timestamp)
+        self.__trial_output_folder = os.path.join(os.path.expanduser(self.__output_folder), f"{self.__trial_timestamp}_id-{subject_id}")
         if not os.path.exists(self.__trial_output_folder):
             self.loginfo(f"Creating output folder {self.__trial_output_folder}")
             os.makedirs(self.__trial_output_folder)

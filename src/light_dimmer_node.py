@@ -58,7 +58,12 @@ class LightDimmerNode(AbstractNode):
         
     def __on_shutdown(self):
         self.loginfo(f"Turning off the light dimmer.")
-        self.serial_port.write(f"{0}".encode('utf-8'))
+        if self.serial_port and self.serial_port.is_open:
+            # Send a command to turn off the light dimmer
+            self.serial_port.write(f"{0}".encode('utf-8'))
+            self.serial_port.close()
+        else:
+            self.logwarn("Serial port was not open during shutdown.")
 
 if __name__ == "__main__":
     rospy.init_node('light_dimmer_node')
