@@ -33,8 +33,8 @@ class MotorControlNode(AbstractNode):
             self.__motor_control = MotorControl(resetPins = (MOTOR_TOP_BOTTOM_RESET, MOTOR_RIGHT_LEFT_RESET)
                                             ,encoderChannels = ((MOTOR_TOP_CHA, MOTOR_TOP_CHB),
                                                                (MOTOR_BOTTOM_CHA, MOTOR_BOTTOM_CHB),
-                                                               (MOTOR_RIGHT_CHA, MOTOR_RIGHT_CHB),
-                                                               (MOTOR_LEFT_CHA, MOTOR_LEFT_CHB))
+                                                               (MOTOR_LEFT_CHA, MOTOR_LEFT_CHB),
+                                                               (MOTOR_RIGHT_CHA, MOTOR_RIGHT_CHB))
                                             ,accl = 5
                                             ,brake = 0
                                             ,port = MOTOR_PORT
@@ -54,11 +54,12 @@ class MotorControlNode(AbstractNode):
         self.__current_rotate = 0.0
 
         self.__rate_hz       = 10
-        self.__max_ramp_time = 2.0    # → takes 2 s to go from –1 to +1; adjust X here
-        self.__accel_step    = 2.0/(self.__max_ramp_time*self.__rate_hz)
+        self.__max_ramp_time = 1.5    # → takes 2 s to go from –1 to +1; adjust X here
+        self.__accel_step    = 1.5/(self.__max_ramp_time*self.__rate_hz)
 
         self.__last_cmd_time = rospy.Time(0)
 
+        self.__fresh_threshold = 1.0  # seconds, how long to keep the last command fresh
 
         # self.hComponent, self.vComponent = 0, 0
         rospy.on_shutdown(self.__on_shutdown)
@@ -69,7 +70,7 @@ class MotorControlNode(AbstractNode):
             now = rospy.Time.now()
             dt  = (now - self.__last_cmd_time).to_sec()
 
-            if dt < MotorControlNode.FRESH_THRESHOLD:
+            if dt < self.__fresh_threshold:
                 # 1) move current toward desired
                 self.__current_h      = self.__ramp(self.__current_h,      self.__desired_h,      self.__accel_step)
                 self.__current_v      = self.__ramp(self.__current_v,      self.__desired_v,      self.__accel_step)
