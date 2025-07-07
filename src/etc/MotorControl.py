@@ -3,6 +3,7 @@ from serial import Serial
 from etc.PololuQik import *
 from etc.ResetPin import *
 import numpy as np
+from gpiozero import RotaryEncoder
 
 
 DEFAULT_UART_PORT = "/dev/ttyS0"
@@ -18,13 +19,18 @@ We'll set the default driving directin to top left
 """
 
 class MotorControl(Serial):
-    def __init__(self, resetPins: tuple, port = DEFAULT_UART_PORT, speed = DEFAULT_MOTOR_SPEED, accl = 0, brake = 0, baudrate = 115200, timeout = 0.020):
+    def __init__(self, resetPins: tuple, encoderChannels:tuple, port = DEFAULT_UART_PORT, speed = DEFAULT_MOTOR_SPEED, accl = 0, brake = 0, baudrate = 115200, timeout = 0.020):
         super().__init__(port = port, baudrate = baudrate, timeout = timeout)
         if not self.is_open:
             self.open()
         #init motor controllers instances
         self.motorTopBottom = PololuQik2s15v9(serial = self, resetPin = ResetPin(resetPins[0]), addr = 0x0C , multi_device = True)
         self.motorRightLeft = PololuQik2s15v9(serial = self, resetPin = ResetPin(resetPins[1]), addr = 0x0A , multi_device = True) # 0x0A
+
+        self.encoderTop = RotaryEncoder(encoderChannels[0][0], encoderChannels[0][1])
+        self.encoderBottom = RotaryEncoder(encoderChannels[1][0], encoderChannels[1][1])
+        self.encoderLeft = RotaryEncoder(encoderChannels[2][0], encoderChannels[2][1])
+        self.encoderRight = RotaryEncoder(encoderChannels[3][0], encoderChannels[3][1])
         
         self.speed = speed
 
@@ -80,6 +86,5 @@ class MotorControl(Serial):
         
     def rotate(self, direction: float):
         speed = int(self.speed * direction / max(1, abs(direction)))
-        # print(speed)
         self.motorRightLeft.setSpeeds(speed, speed)
         self.motorTopBottom.setSpeeds(speed, speed)
