@@ -60,14 +60,55 @@ class MotorControl(Serial):
         self.motorRightLeft.setSpeeds(-hSpeed, hSpeed)
         self.motorTopBottom.setSpeeds(vSpeed, -vSpeed)
         
-    def move_by_components(self, horizontal_component: float, vertical_component: float, speed = None):
-        if not speed:
-            speed = self.speed
+    # def move_by_components(self, horizontal_component: float, vertical_component: float, speed = None):
+    #     if not speed:
+    #         speed = self.speed
         
-        hSpeed = int(speed * horizontal_component)
-        vSpeed = int(speed * vertical_component)
-        self.motorRightLeft.setSpeeds(-hSpeed, hSpeed)
-        self.motorTopBottom.setSpeeds(vSpeed, -vSpeed)
+    #     hSpeed = int(speed * horizontal_component)
+    #     vSpeed = int(speed * vertical_component)
+    #     self.motorRightLeft.setSpeeds(-hSpeed, hSpeed)
+    #     self.motorTopBottom.setSpeeds(vSpeed, -vSpeed)
+    def move_by_components(
+        self,
+        horizontal_component: float,
+        vertical_component:   float,
+        speed: float = None
+    ):
+        """
+        Simple error‐based slowdown:
+        - compute base_top/bottom/left/right
+        - if top+bottom>0, top is faster → top = 90% of base_top
+          if top+bottom<0, bottom is faster → bottom = 90% of base_bottom
+        - same for left/right
+        - uses round() instead of int() for speed calculations
+        """
+        if speed is None:
+            speed = self.speed
+
+        # 1) base speeds (rounded)
+        top_speed    = round( vertical_component * speed)
+        bottom_speed = round(-vertical_component * speed)
+        left_speed   = round( horizontal_component * speed)
+        right_speed  = round(-horizontal_component * speed)
+
+        # 2) read encoder counts
+        tb_error  = self.encoderTop.value + self.encoderBottom.value
+        lr_error  = self.encoderLeft.value + self.encoderRight.value
+
+        # 3) slow down *only* the faster wheel in each pair to 90%
+        if   tb_error >  0:  # top is running faster
+            top_speed    = round(top_speed    * 0.9)
+        elif tb_error <  0:  # bottom is running faster
+            bottom_speed = round(bottom_speed * 0.9)
+
+        if   lr_error >  0:  # left is running faster
+            left_speed   = round(left_speed   * 0.9)
+        elif lr_error <  0:  # right is running faster
+            right_speed  = round(right_speed  * 0.9)
+
+        # 4) send to the two PololuQik controllers
+        self.motorRightLeft.setSpeeds(left_speed,  right_speed)
+        self.motorTopBottom.setSpeeds(top_speed,   bottom_speed)
 
     def move_by_wheel(self, wheel: str, speed = None):
         if not speed:
