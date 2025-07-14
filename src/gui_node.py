@@ -474,9 +474,9 @@ class MainWindow(QMainWindow):
 
         self.__manual_control_window.setLayout(control_layout)
         
-        # self.__timer = QTimer(self)
-        # self.__timer.timeout.connect(lambda: self.__motor_control_twist.publish(self.__velocity))
-        # self.__timer.start(50)  # Call every 100ms
+        self.__velocity_timer = QTimer(self)
+        self.__velocity_timer.timeout.connect(self.__publish_velocity)
+        self.__velocity_timer.start(50)  # Call every 100ms
 
         self.__manual_control_window.show()
 
@@ -589,9 +589,7 @@ class MainWindow(QMainWindow):
             else:
                 self.__linear_velocity.linear.x = 0
                 self.__linear_velocity.linear.y = 0
-
-            # Publish the velocity to the robot
-            self.__motor_control_twist.publish(self.__linear_velocity)  
+  
         else:
             # self.__angular_velocity = Float32()
             if direction == -1: # "cw"
@@ -600,6 +598,9 @@ class MainWindow(QMainWindow):
                 self.__angular_velocity.data = -1 if is_pressed else 0
             # Publish the velocity to the robot
             self.__motor_control_rotate.publish(self.__angular_velocity)
+
+    def __publish_velocity(self):
+        self.__motor_control_twist.publish(self.__linear_velocity)
 
     def __update_fish_image(self, img_msg: Image):
         try:
