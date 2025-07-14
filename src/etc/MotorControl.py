@@ -3,6 +3,7 @@ from serial import Serial
 from etc.PololuQik import *
 from etc.ResetPin import *
 import numpy as np
+from gpiozero import RotaryEncoder
 
 
 DEFAULT_UART_PORT = "/dev/ttyS0"
@@ -18,13 +19,18 @@ We'll set the default driving directin to top left
 """
 
 class MotorControl(Serial):
-    def __init__(self, resetPins: tuple, port = DEFAULT_UART_PORT, speed = DEFAULT_MOTOR_SPEED, accl = 0, brake = 0, baudrate = 115200, timeout = 0.020):
+    def __init__(self, resetPins: tuple, encoderChannels:tuple, port = DEFAULT_UART_PORT, speed = DEFAULT_MOTOR_SPEED, accl = 0, brake = 0, baudrate = 115200, timeout = 0.020):
         super().__init__(port = port, baudrate = baudrate, timeout = timeout)
         if not self.is_open:
             self.open()
         #init motor controllers instances
         self.motorTopBottom = PololuQik2s15v9(serial = self, resetPin = ResetPin(resetPins[0]), addr = 0x0C , multi_device = True)
         self.motorRightLeft = PololuQik2s15v9(serial = self, resetPin = ResetPin(resetPins[1]), addr = 0x0A , multi_device = True) # 0x0A
+
+        self.encoderTop = RotaryEncoder(encoderChannels[0][0], encoderChannels[0][1], max_steps = 0)
+        self.encoderBottom = RotaryEncoder(encoderChannels[1][0], encoderChannels[1][1], max_steps = 0)
+        self.encoderLeft = RotaryEncoder(encoderChannels[2][0], encoderChannels[2][1], max_steps = 0)
+        self.encoderRight = RotaryEncoder(encoderChannels[3][0], encoderChannels[3][1], max_steps = 0)
         
         self.speed = speed
 
@@ -54,14 +60,82 @@ class MotorControl(Serial):
         self.motorRightLeft.setSpeeds(-hSpeed, hSpeed)
         self.motorTopBottom.setSpeeds(vSpeed, -vSpeed)
         
-    def move_by_components(self, horizontal_component: float, vertical_component: float, speed = None):
-        if not speed:
+    def move_by_components(
+        self,
+        horizontal_component: float,
+        vertical_component:   float,
+        speed: float = None
+    ):
+        """
+        Simple error‐based slowdown:
+        - compute base_top/bottom/left/right
+        - if top+bottom>0, top is faster → top = 90% of base_top
+          if top+bottom<0, bottom is faster → bottom = 90% of base_bottom
+        - same for left/right
+        - uses round() instead of int() for speed calculations
+        """
+        if speed is None:
             speed = self.speed
+
+        top_speed    = vertical_component * speed
+        bottom_speed = -vertical_component * speed
+        left_speed   = horizontal_component * speed
+        right_speed  = -horizontal_component * speed
+
+        if vertical_component > 0: # Moving Right
+            if self.encoderTop.steps > 0:
+                if abs(self.encoderTop.steps) >  abs(self.encoderBottom.steps):  # top is running faster
+                    bottom_speed = bottom_speed * 0.9
+                elif abs(self.encoderTop.steps) <  abs(self.encoderBottom.steps):  # bottom is running faster
+                    top_speed = top_speed * 0.9
+            elif self.encoderTop.steps < 0:
+                if abs(self.encoderTop.steps) >  abs(self.encoderBottom.steps):  # top is running faster
+                    top_speed = top_speed * 0.9
+                elif abs(self.encoderTop.steps) <  abs(self.encoderBottom.steps):  # bottom is running faster
+                    bottom_speed = bottom_speed * 0.9
+        elif vertical_component < 0: # Moving Left
+            if self.encoderTop.steps > 0:
+                if abs(self.encoderTop.steps) >  abs(self.encoderBottom.steps):  # top is running faster
+                    top_speed = top_speed * 0.9
+                elif abs(self.encoderTop.steps) <  abs(self.encoderBottom.steps):  # bottom is running faster
+                    bottom_speed = bottom_speed * 0.9
+            elif self.encoderTop.steps < 0:
+                if abs(self.encoderTop.steps) >  abs(self.encoderBottom.steps):  # top is running faster
+                    bottom_speed = bottom_speed * 0.9
+                elif abs(self.encoderTop.steps) <  abs(self.encoderBottom.steps):  # bottom is running faster
+                    top_speed = top_speed * 0.9
         
-        hSpeed = int(speed * horizontal_component)
-        vSpeed = int(speed * vertical_component)
-        self.motorRightLeft.setSpeeds(-hSpeed, hSpeed)
-        self.motorTopBottom.setSpeeds(vSpeed, -vSpeed)
+        if horizontal_component > 0:  # Moving Forward
+            if self.encoderRight.steps > 0:
+                if abs(self.encoderRight.steps) >  abs(self.encoderLeft.steps):  # top is running faster
+                    right_speed = right_speed * 0.85
+                elif abs(self.encoderRight.steps) <  abs(self.encoderLeft.steps):  # bottom is running faster
+                    left_speed = left_speed * 0.85
+            elif self.encoderRight.steps < 0:
+                if abs(self.encoderRight.steps) >  abs(self.encoderLeft.steps):  # top is running faster
+                    left_speed = left_speed * 0.85
+                elif abs(self.encoderRight.steps) <  abs(self.encoderLeft.steps):  # bottom is running faster
+                    right_speed = right_speed * 0.85
+        elif horizontal_component < 0: # Moving Backward
+            if self.encoderRight.steps > 0:
+                if abs(self.encoderRight.steps) >  abs(self.encoderLeft.steps):  # top is running faster
+                    left_speed = left_speed * 0.85
+                elif abs(self.encoderRight.steps) <  abs(self.encoderLeft.steps):  # bottom is running faster
+                    right_speed = right_speed * 0.85
+            elif self.encoderRight.steps < 0:
+                if abs(self.encoderRight.steps) >  abs(self.encoderLeft.steps):  # top is running faster
+                    right_speed = right_speed * 0.85
+                elif abs(self.encoderRight.steps) <  abs(self.encoderLeft.steps):  # bottom is running faster
+                    left_speed = left_speed * 0.85
+
+        # Round speeds to nearest integer
+        top_speed = round(top_speed)
+        bottom_speed = round(bottom_speed)
+        left_speed = round(left_speed)
+        right_speed = round(right_speed) 
+
+        self.motorRightLeft.setSpeeds(right_speed,  left_speed)
+        self.motorTopBottom.setSpeeds(top_speed,   bottom_speed)
 
     def move_by_wheel(self, wheel: str, speed = None):
         if not speed:
@@ -80,6 +154,5 @@ class MotorControl(Serial):
         
     def rotate(self, direction: float):
         speed = int(self.speed * direction / max(1, abs(direction)))
-        # print(speed)
         self.motorRightLeft.setSpeeds(speed, speed)
         self.motorTopBottom.setSpeeds(speed, speed)

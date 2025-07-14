@@ -26,6 +26,7 @@ class ResetPin:
             self.led.off()
         else:
             self.led.on()
+        self._active_value = not self._active_value
 
     def turnOn(self):
         """Turns the pin on."""
@@ -33,3 +34,4 @@ class ResetPin:
             self.led.on()
         else:
             self.led.off()
+        self._active_value = not self._active_value
