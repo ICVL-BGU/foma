@@ -6,7 +6,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['NO_ALBUMENTATIONS_UPDATE'] = '1'
 
 import rospy
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage
 from abstract_node import AbstractNode
 from cv_bridge import CvBridge, CvBridgeError
 from geometry_msgs.msg import Twist, Vector3
@@ -23,12 +23,12 @@ class FishDetectionNode(AbstractNode):
         self.img = None
         self.bridge = CvBridge()
 
-        self.image_sub = rospy.Subscriber('fish_camera/image', Image, self.read_image)
+        self.image_sub = rospy.Subscriber('fish_camera/image', CompressedImage, self.read_image)
         self.fish_state_pub = rospy.Publisher('fish_detection/state', Twist, queue_size=10)
 
-    def read_image(self, img_msg: Image):
+    def read_image(self, img_msg: CompressedImage):
         try:
-            self.img = self.bridge.imgmsg_to_cv2(img_msg)
+            self.img = self.bridge.compressed_imgmsg_to_cv2(img_msg)
             self.process_image()
         except CvBridgeError as e:
             self.logerr(f"Error converting image: {e}")

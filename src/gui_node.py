@@ -35,7 +35,7 @@ from PyQt5.QtWidgets import (
 
 # ROS imports
 from geometry_msgs.msg import Twist, Vector3
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CompressedImage
 from std_msgs.msg import Float32, Int16MultiArray
 from std_srvs.srv import Trigger, SetBool
 from cv_bridge import CvBridge, CvBridgeError
@@ -78,7 +78,7 @@ class MainWindow(QMainWindow):
 
         self.__writers_timer = QTimer(self)
         self.__writers_timer.timeout.connect(self.__write_files)
-        self.__writers_interval = 40 # 25 fps
+        self.__writers_interval = 50 # 20 fps
 
     def __init_signals(self):
         self.fish_frame_ready.connect(self.__update_left_display)
@@ -335,7 +335,7 @@ class MainWindow(QMainWindow):
         self.__room_display_group.setLayout(room_display_layout)
 
     def __init_subscriptions_and_services(self):
-        rospy.Subscriber('fish_camera/image', Image, self.__update_fish_image)
+        rospy.Subscriber('fish_camera/image', CompressedImage, self.__update_fish_image)
         rospy.Subscriber('fish_detection/state', Twist, self.__update_fish_state)
         rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image)
         rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
@@ -602,9 +602,9 @@ class MainWindow(QMainWindow):
     def __publish_velocity(self):
         self.__motor_control_twist.publish(self.__linear_velocity)
 
-    def __update_fish_image(self, img_msg: Image):
+    def __update_fish_image(self, img_msg: CompressedImage):
         try:
-            self.__fish_image = self.bridge.imgmsg_to_cv2(img_msg)
+            self.__fish_image = self.bridge.compressed_imgmsg_to_cv2(img_msg)
             self.fish_frame_ready.emit(self.__fish_image.copy())
         except CvBridgeError as e:
             self.logwarn(e)
@@ -951,7 +951,7 @@ class MainWindow(QMainWindow):
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
         room_frame_width = 2560  # Adjust based on your camera resolution
         room_frame_height = 2560
-        room_fps = 25  # Default FPS (adjust based on the camera FPS)
+        room_fps = 20  # Default FPS (adjust based on the camera FPS)
         self.__room_video_writer = cv2.VideoWriter(room_video_filename, fourcc, room_fps, (room_frame_width, room_frame_height))
 
         # 2. Room Map
@@ -977,9 +977,9 @@ class MainWindow(QMainWindow):
         # 4. FOMA Video
         foma_video_filename = os.path.join(self.__trial_output_folder, f"foma_video.mp4")
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
-        foma_frame_width = 1232  # Adjust based on your camera resolution
-        foma_frame_height = 1232
-        foma_fps = 25  # Default FPS (adjust based on the camera FPS)
+        foma_frame_width = 640  # Adjust based on your camera resolution
+        foma_frame_height = 640
+        foma_fps = 20  # Default FPS (adjust based on the camera FPS)
         self.__foma_video_writer = cv2.VideoWriter(foma_video_filename, fourcc, foma_fps, (foma_frame_width, foma_frame_height))
 
 
