@@ -1,75 +1,60 @@
 #!/usr/bin/env python3
 
+import os
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['NO_ALBUMENTATIONS_UPDATE'] = '1'
+
 import rospy
 from sensor_msgs.msg import Image
 from abstract_node import AbstractNode
-import cv2
 from cv_bridge import CvBridge, CvBridgeError
-import numpy as np
 from foma.msg import FomaLocation
 from geometry_msgs.msg import Point
+from ultralytics import YOLO
+import joblib
+import pickle
+
+LIDAR_TAG = 1
 
 class LocalizationNode(AbstractNode):
     def __init__(self):
-        super().__init__('localization', 'Localization')
-        self.image_sub = rospy.Subscriber('ceiling_camera/image', Image, self.process_image)
+        super().__init__('localization', 'FOMA Localization')
+
+        detection_model_path = r"/home/icvl/ros_ws/src/foma/models/foma_detection.pt" # /home/icvl/ros_ws/src/foma/yolo_pose.pt" OR /home/alex/ROS/src/foma/yolo_pose.pt
+        localization_model_path = r"/home/icvl/ros_ws/src/foma/models/foma_localization.pkl"
+        self.detection_model = YOLO(detection_model_path)
+        with open(localization_model_path, 'rb') as f:
+            self.localization_model = pickle.load(f)
+        self.img = None
+        self.image_sub = rospy.Subscriber('ceiling_camera/image', Image, self.read_image)
         self.location_pub = rospy.Publisher('localization/location', FomaLocation, queue_size=10)
+        self.location = FomaLocation()
         self.bridge = CvBridge()
         
-        # Updated HSV bounds for olive green
-        self.lower_bound, self.upper_bound = np.array([30, 100, 150]), np.array([80, 255, 255])
-
-    def process_image(self, img_msg: Image):
+    def read_image(self, img_msg: Image):
         try:
-            img = self.bridge.imgmsg_to_cv2(img_msg)
-            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-
-            # Threshold the image to get only olive green colors
-            mask = cv2.inRange(hsv, self.lower_bound, self.upper_bound)
-
-            # Find contours in the mask
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-            # Process detected contours
-            if contours:
-                # Get the bounding box of the first contour
-                self.location = FomaLocation()
-                x, y, w, h = cv2.boundingRect(contours[0])
-                self.location.image = Point()
-                self.location.image.x = x + w / 2
-                self.location.image.y = y + h / 2
-                # location.z = 0  # Assuming lidar is at z=95, so no need to modify
-                
-                # Camera parameters in meters
-                focal_length = 1.16 / 1000 # focal length in meters
-                sensor_width = 5.5 / 1000
-                sensor_height = 4 / 1000
-                cam_x, cam_y, cam_z = (2.5, 2.5, 2.15)
-                image_width, image_height = 2560, 2560
-                ground_height = 0.95
-                
-                # Define image center as origin
-                origin_x = image_width/2 # 1024 / 2
-                origin_y = image_height/2 # 768 / 2
-                
-                # Compute pixel offsets from the image center
-                px = (self.location.image.x - origin_x) * (sensor_width / image_width)  # Convert pixels to sensor units (mm)
-                py = (self.location.image.y - origin_y) * (sensor_height / image_height)  # Convert pixels to sensor units (mm)
-                
-                # Scale factor to map image coordinates to world coordinates
-                scale = (cam_z - ground_height) / focal_length  # Use focal length in meters
-                
-                # Convert sensor distances to real-world distances
-                self.location.world = Point()
-                self.location.world.x = 100*(cam_x + px * scale)
-                self.location.world.y = 100*(cam_y + py * scale)
-
-                self.location_pub.publish(self.location)
-
+            self.img = self.bridge.imgmsg_to_cv2(img_msg)
+            self.process_image()
         except CvBridgeError as e:
             self.logerr(f"Error converting image: {e}")
 
+    def process_image(self):
+        prediction = self.detection_model(self.img, verbose=False) # max_det=1,
+        indices = prediction[0].boxes.data[:, -1] == LIDAR_TAG
+
+        if indices.shape[0] != 0:
+            bounding_box = prediction[0].boxes.xywhn[indices][0]
+            x_i, y_i, _, _ = bounding_box
+            
+            x_w, y_w = self.localization_model.predict(bounding_box)
+
+            self.location.image = Point(x_i, y_i, 0)
+            self.location.world = Point(x_w, y_w, 0)
+
+        self.location_pub.publish(self.location)
+
 if __name__ == "__main__":
     rospy.init_node('localization_node')
-    localizer = LocalizationNode()
+    LocalizationNode()
     rospy.spin()

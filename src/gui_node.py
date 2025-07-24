@@ -94,6 +94,10 @@ class MainWindow(QMainWindow):
         self.__fish_state = None
         self.__fish_image = None
 
+        # Camera frame dimensions
+        self.__room_frame_shape = (2560,2560)
+        self.__map_frame_shape = (500, 500)
+
         # Writer files and writers
         self.__output_folder = '~/trial_output'
         self.__trial_timestamp = None
@@ -949,19 +953,16 @@ class MainWindow(QMainWindow):
         # 1. Room Video
         room_video_filename = os.path.join(self.__trial_output_folder, f"room_video.mp4")
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
-        room_frame_width = 2560  # Adjust based on your camera resolution
-        room_frame_height = 2560
-        room_fps = 20  # Default FPS (adjust based on the camera FPS)
-        self.__room_video_writer = cv2.VideoWriter(room_video_filename, fourcc, room_fps, (room_frame_width, room_frame_height))
+        room_fps = 25  # Default FPS (adjust based on the camera FPS)
+        self.__room_video_writer = cv2.VideoWriter(room_video_filename, fourcc, room_fps, self.__room_frame_shape)
 
         # 2. Room Map
         # Create a white image representing the room
         self.__room_map = np.ones((500, 500, 3), dtype=np.uint8) * 255
         room_map_filename = os.path.join(self.__trial_output_folder, f"room_map.mp4")
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
-        map_frame_shape = (500, 500)  # Adjust based on your camera resolution
         map_fps = 10  # Default FPS (adjust based on the camera FPS)
-        self.__room_map_writer = cv2.VideoWriter(room_map_filename, fourcc, map_fps, map_frame_shape)
+        self.__room_map_writer = cv2.VideoWriter(room_map_filename, fourcc, map_fps, self.__map_frame_shape)
 
 
         # 3. FOMA Location
