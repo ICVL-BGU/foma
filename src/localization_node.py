@@ -13,6 +13,7 @@ from foma.msg import FomaLocation
 from geometry_msgs.msg import Point
 from ultralytics import YOLO
 import joblib
+import pickle
 
 LIDAR_TAG = 1
 
@@ -20,10 +21,11 @@ class LocalizationNode(AbstractNode):
     def __init__(self):
         super().__init__('localization', 'FOMA Localization')
 
-        detection_model_path = r"/home/alex/ros_ws/src/foma/models/foma_detection.pt" # /home/icvl/ros_ws/src/foma/yolo_pose.pt" OR /home/alex/ROS/src/foma/yolo_pose.pt
-        localization_model_path = r"/home/alex/ros_ws/src/foma/models/foma_localization.pkl"
+        detection_model_path = r"/home/icvl/ros_ws/src/foma/models/foma_detection.pt" # /home/icvl/ros_ws/src/foma/yolo_pose.pt" OR /home/alex/ROS/src/foma/yolo_pose.pt
+        localization_model_path = r"/home/icvl/ros_ws/src/foma/models/foma_localization.pkl"
         self.detection_model = YOLO(detection_model_path)
-        self.localization_model = joblib.load(localization_model_path)
+        with open(localization_model_path, 'rb') as f:
+            self.localization_model = pickle.load(f)
         self.img = None
         self.image_sub = rospy.Subscriber('ceiling_camera/image', Image, self.read_image)
         self.location_pub = rospy.Publisher('localization/location', FomaLocation, queue_size=10)
