@@ -47,7 +47,7 @@ class LocalizationNode(AbstractNode):
             bounding_box = prediction[0].boxes.xywhn[indices][0]
             x_i, y_i, _, _ = bounding_box
             
-            x_w, y_w = self.localization_model.predict(bounding_box)
+            x_w, y_w = self.localization_model.predict(bounding_box.cpu().reshape(1, -1))[0]
 
             self.location.image = Point(x_i, y_i, 0)
             self.location.world = Point(x_w, y_w, 0)
