@@ -33,6 +33,7 @@ class MotorControl(Serial):
         self.encoderRight = RotaryEncoder(encoderChannels[3][0], encoderChannels[3][1], max_steps = 0)
         
         self.speed = speed
+        self.punishment_factor = 0.75
 
         #set controllers to different IDs to avoid collision due to daisy-chain connection
         self.motorTopBottom.turnOn()
@@ -85,54 +86,54 @@ class MotorControl(Serial):
         if vertical_component > 0: # Moving Right
             if self.encoderTop.steps > 0:
                 if abs(self.encoderTop.steps) >  abs(self.encoderBottom.steps):  # top is running faster
-                    bottom_speed = bottom_speed * 0.9
+                    bottom_speed = bottom_speed * self.punishment_factor
                 elif abs(self.encoderTop.steps) <  abs(self.encoderBottom.steps):  # bottom is running faster
-                    top_speed = top_speed * 0.9
+                    top_speed = top_speed * self.punishment_factor
             elif self.encoderTop.steps < 0:
                 if abs(self.encoderTop.steps) >  abs(self.encoderBottom.steps):  # top is running faster
-                    top_speed = top_speed * 0.9
+                    top_speed = top_speed * self.punishment_factor
                 elif abs(self.encoderTop.steps) <  abs(self.encoderBottom.steps):  # bottom is running faster
-                    bottom_speed = bottom_speed * 0.9
+                    bottom_speed = bottom_speed * self.punishment_factor
         elif vertical_component < 0: # Moving Left
             if self.encoderTop.steps > 0:
                 if abs(self.encoderTop.steps) >  abs(self.encoderBottom.steps):  # top is running faster
-                    top_speed = top_speed * 0.9
+                    top_speed = top_speed * self.punishment_factor
                 elif abs(self.encoderTop.steps) <  abs(self.encoderBottom.steps):  # bottom is running faster
-                    bottom_speed = bottom_speed * 0.9
+                    bottom_speed = bottom_speed * self.punishment_factor
             elif self.encoderTop.steps < 0:
                 if abs(self.encoderTop.steps) >  abs(self.encoderBottom.steps):  # top is running faster
-                    bottom_speed = bottom_speed * 0.9
+                    bottom_speed = bottom_speed * self.punishment_factor
                 elif abs(self.encoderTop.steps) <  abs(self.encoderBottom.steps):  # bottom is running faster
-                    top_speed = top_speed * 0.9
+                    top_speed = top_speed * self.punishment_factor
         
         if horizontal_component > 0:  # Moving Forward
             if self.encoderRight.steps > 0:
                 if abs(self.encoderRight.steps) >  abs(self.encoderLeft.steps):  # top is running faster
-                    right_speed = right_speed * 0.85
+                    right_speed = right_speed * self.punishment_factor
                 elif abs(self.encoderRight.steps) <  abs(self.encoderLeft.steps):  # bottom is running faster
-                    left_speed = left_speed * 0.85
+                    left_speed = left_speed * self.punishment_factor
             elif self.encoderRight.steps < 0:
                 if abs(self.encoderRight.steps) >  abs(self.encoderLeft.steps):  # top is running faster
-                    left_speed = left_speed * 0.85
+                    left_speed = left_speed * self.punishment_factor
                 elif abs(self.encoderRight.steps) <  abs(self.encoderLeft.steps):  # bottom is running faster
-                    right_speed = right_speed * 0.85
+                    right_speed = right_speed * self.punishment_factor
         elif horizontal_component < 0: # Moving Backward
             if self.encoderRight.steps > 0:
                 if abs(self.encoderRight.steps) >  abs(self.encoderLeft.steps):  # top is running faster
-                    left_speed = left_speed * 0.85
+                    left_speed = left_speed * self.punishment_factor
                 elif abs(self.encoderRight.steps) <  abs(self.encoderLeft.steps):  # bottom is running faster
-                    right_speed = right_speed * 0.85
+                    right_speed = right_speed * self.punishment_factor
             elif self.encoderRight.steps < 0:
                 if abs(self.encoderRight.steps) >  abs(self.encoderLeft.steps):  # top is running faster
-                    right_speed = right_speed * 0.85
+                    right_speed = right_speed * self.punishment_factor
                 elif abs(self.encoderRight.steps) <  abs(self.encoderLeft.steps):  # bottom is running faster
-                    left_speed = left_speed * 0.85
+                    left_speed = left_speed * self.punishment_factor
 
         # Round speeds to nearest integer
-        top_speed = round(top_speed)
-        bottom_speed = round(bottom_speed)
-        left_speed = round(left_speed)
-        right_speed = round(right_speed) 
+        top_speed = int(top_speed)
+        bottom_speed = int(bottom_speed)
+        left_speed = int(left_speed)
+        right_speed = int(right_speed) 
 
         self.motorRightLeft.setSpeeds(right_speed,  left_speed)
         self.motorTopBottom.setSpeeds(top_speed,   bottom_speed)
