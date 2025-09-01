@@ -40,14 +40,14 @@ class LocalizationNode(AbstractNode):
             self.logerr(f"Error converting image: {e}")
 
     def process_image(self):
-        prediction = self.detection_model(self.img, verbose=False) # max_det=1,
+        prediction = self.detection_model.track(self.img, verbose=False) # max_det=1,
         indices = prediction[0].boxes.data[:, -1] == LIDAR_TAG
-
-        if indices.shape[0] != 0:
+        
+        if indices.any():
             bounding_box = prediction[0].boxes.xywhn[indices][0]
             x_i, y_i, _, _ = bounding_box
             
-            x_w, y_w = self.localization_model.predict(bounding_box)
+            x_w, y_w = self.localization_model.predict(bounding_box.cpu().reshape(1, -1))[0]
 
             self.location.image = Point(x_i, y_i, 0)
             self.location.world = Point(x_w, y_w, 0)

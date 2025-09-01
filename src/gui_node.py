@@ -95,8 +95,8 @@ class MainWindow(QMainWindow):
         self.__fish_image = None
 
         # Camera frame dimensions
-        self.__room_frame_shape = (2560,2560)
-        self.__map_frame_shape = (500, 500)
+        self.__room_frame_shape = (2560, 2560)
+        self.__map_frame_shape = (1000, 1000)
 
         # Writer files and writers
         self.__output_folder = '~/trial_output'
@@ -122,7 +122,7 @@ class MainWindow(QMainWindow):
         self.__linear_velocity = Twist()
         self.__angular_velocity = Float32()
         # self.__speed = 1
-        self.__direction_epsilon = 20
+        self.__direction_epsilon = 45
         self.__blocked_directions = None
 
         # Services
@@ -649,9 +649,7 @@ class MainWindow(QMainWindow):
 
             if abs(diff) <= self.__direction_epsilon:
                 self.__motor_control_dir.publish(direction_angle)
-                # self.loginfo(f"Direction match: {direction_angle:.1f}° (expected {center_to_fish_angle:.1f}°)")
             else:
-                # self.logwarn(f"Direction mismatch: {direction_angle:.1f}° (expected {center_to_fish_angle:.1f}°) – Δ={diff:.1f}°")
                 self.__motor_control_vector.publish(Vector3(0, 0, 0))
 
 
@@ -670,14 +668,24 @@ class MainWindow(QMainWindow):
             self.logwarn(f"Unexpected error in update_room_image: {e}")
 
     def __update_foma_location(self, location: FomaLocation):
-        self.__foma_img_location = location.image
-        self.__foma_world_location = location.world
+        # Convert normalized locations (0..1) to pixel coordinates
+        self.__foma_img_location = Vector3(
+            location.image.x * self.__room_frame_shape[1],
+            location.image.y * self.__room_frame_shape[0],
+            0
+        )
+        self.__foma_world_location = Vector3(
+            location.world.x * self.__map_frame_shape[0],
+            location.world.y * self.__map_frame_shape[1],
+            0
+        )
         
         if self.__room_map is not None:
             # Ensure coordinates stay within bounds
-            x = np.clip(self.__foma_world_location.x, 0, 500 - 1).astype(int)
-            y = np.clip(self.__foma_world_location.y, 0, 500 - 1).astype(int)
+            x = np.clip(self.__foma_world_location.x, 0, self.__room_frame_shape[1] - 1).astype(int)
+            y = np.clip(self.__foma_world_location.y, 0, self.__room_frame_shape[0] - 1).astype(int)
             cv2.circle(self.__room_map, (x, y), 5, (0, 255, 0), -1)
+
     def __update_blocked_directions(self, blocked: Int16MultiArray):
         """
         Update the blocked directions based on the received data.
@@ -802,8 +810,8 @@ class MainWindow(QMainWindow):
             map_frame = self.__room_map.copy()
             # Ensure coordinates stay within bounds
             if self.__foma_world_location is not None:
-                x = np.clip(self.__foma_world_location.x, 0, 500 - 1).astype(int)
-                y = np.clip(self.__foma_world_location.y, 0, 500 - 1).astype(int)
+                x = np.clip(self.__foma_world_location.x, 0, self.__room_frame_shape[1] - 1).astype(int)
+                y = np.clip(self.__foma_world_location.y, 0, self.__room_frame_shape[0] - 1).astype(int)
                 cv2.circle(map_frame, (x, y), 5, (0, 0, 255), -1)
             frame = map_frame.data
 
@@ -958,7 +966,7 @@ class MainWindow(QMainWindow):
 
         # 2. Room Map
         # Create a white image representing the room
-        self.__room_map = np.ones((500, 500, 3), dtype=np.uint8) * 255
+        self.__room_map = np.ones((self.__map_frame_shape[1], self.__map_frame_shape[0], 3), dtype=np.uint8) * 255
         room_map_filename = os.path.join(self.__trial_output_folder, f"room_map.mp4")
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
         map_fps = 10  # Default FPS (adjust based on the camera FPS)
@@ -1081,8 +1089,8 @@ class MainWindow(QMainWindow):
         if self.__room_map_writer and self.__room_map is not None:
             map_frame = cv2.cvtColor(self.__room_map, cv2.COLOR_RGB2BGR)
             if self.__foma_world_location is not None:
-                x = np.clip(self.__foma_world_location.x, 0, 500 - 1).astype(int)
-                y = np.clip(self.__foma_world_location.y, 0, 500 - 1).astype(int)
+                x = np.clip(self.__foma_world_location.x, 0, self.__room_frame_shape[1] - 1).astype(int)
+                y = np.clip(self.__foma_world_location.y, 0, self.__room_frame_shape[0] - 1).astype(int)
                 cv2.circle(map_frame, (x, y), 5, (0, 0, 255), -1)
             self.__room_map_writer.write(map_frame)
 

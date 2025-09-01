@@ -34,7 +34,7 @@ class FishDetectionNode(AbstractNode):
             self.logerr(f"Error converting image: {e}")
 
     def process_image(self):
-        prediction = self.model(self.img, max_det=1, verbose=False)
+        prediction = self.model.track(self.img, max_det=1, verbose=False)
         kp = prediction[0].keypoints
         
         if kp.shape[1] == 0:
