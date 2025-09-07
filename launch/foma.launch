@@ -1,6 +1,7 @@
 <launch>   
     <!-- Node 1 -->
     <node pkg="foma" type="lidar_node.py" name="lidar_node" output="screen"/>
+    <!-- <launch-prefix="gdb args python3"/> add 2 minuses before args-->
 
     <!-- Node 2 -->
     <node pkg="foma" type="motor_control_node.py" name="motor_control_node" output="screen"/>

@@ -11,6 +11,15 @@ from etc.MotorControl import *
 from gpiozero import BadPinFactory
 import numpy as np
 from std_srvs.srv import SetBool, SetBoolRequest, SetBoolResponse
+import faulthandler, sys
+faulthandler.enable(sys.stderr, all_threads=True)
+import signal, traceback
+
+def on_sigill(signum, frame):
+    traceback.print_stack(frame)
+    sys.exit(1)
+
+signal.signal(signal.SIGILL, on_sigill)
 
 class MotorControlNode(AbstractNode):
     safety_distance_vector = SAFETY_DISTANCE / np.cos(np.abs(np.arange(-45,45) * np.pi/180 ))
@@ -54,8 +63,8 @@ class MotorControlNode(AbstractNode):
         self.__current_rotate = 0.0
 
         self.__rate_hz       = 10
-        self.__max_ramp_time = 1.5    # → takes 2 s to go from –1 to +1; adjust X here
-        self.__accel_step    = 1.5/(self.__max_ramp_time*self.__rate_hz)
+        self.__max_ramp_time = 2    # → takes 2 s to go from –1 to +1; adjust X here
+        self.__accel_step    = 0.15#self.__max_ramp_time / self.__steps
 
         self.__last_cmd_time = rospy.Time(0)
 

@@ -33,7 +33,7 @@ class MotorControl(Serial):
         self.encoderRight = RotaryEncoder(encoderChannels[3][0], encoderChannels[3][1], max_steps = 0)
         
         self.speed = speed
-        self.punishment_factor = 0.75
+        self.punishment_factor = 0.8
 
         #set controllers to different IDs to avoid collision due to daisy-chain connection
         self.motorTopBottom.turnOn()

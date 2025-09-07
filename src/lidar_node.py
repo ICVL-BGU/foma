@@ -5,6 +5,17 @@ from sensor_msgs.msg import LaserScan
 from abstract_node import AbstractNode
 from adafruit_rplidar import RPLidar, RPLidarException
 import numpy as np
+import threading
+
+import faulthandler, sys
+faulthandler.enable(sys.stderr, all_threads=True)
+import signal, traceback
+
+def on_sigill(signum, frame):
+    traceback.print_stack(frame)
+    sys.exit(1)
+
+signal.signal(signal.SIGILL, on_sigill)
 
 LIDAR_OFFSET = 90
 
