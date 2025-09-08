@@ -42,6 +42,8 @@ class MotorControlNode(AbstractNode):
         except BadPinFactory as e:
             self.logerr("MotorControlNode: "+e.msg)
 
+        self.__movement = 'linear'  # or 'rotate'
+
         self.__lidar_bypassed = False
         self.__speed = 0.5
 
@@ -118,6 +120,10 @@ class MotorControlNode(AbstractNode):
             Backward = 180
             Right = 270
         '''
+        if self.__movement != 'linear':
+            self.__movement = 'linear'
+            self.__motor_control.reset_encoders()
+
         if not self.__lidar_bypassed and self.scans is not None:
             # Check blocking logic exactly as before:
             if h_component != 0 and v_component != 0:
@@ -148,7 +154,7 @@ class MotorControlNode(AbstractNode):
         if self.__motor_control:
             self.__motor_control.move_by_components(
                 h_component * self.__speed, v_component * self.__speed
-            )          
+            )
 
     def __handle_angle(self, msg: Float32):
         angle = msg.data % 360
@@ -290,6 +296,10 @@ class MotorControlNode(AbstractNode):
         """
         Rotation command (unchanged, but only called from main loop).
         """
+        if self.__movement != 'rotate':
+            self.__movement = 'rotate'
+            self.__motor_control.reset_encoders()
+
         if self.__motor_control:
             self.__motor_control.rotate(z_value * self.__speed)
     

@@ -157,3 +157,9 @@ class MotorControl(Serial):
         speed = int(self.speed * direction / max(1, abs(direction)))
         self.motorRightLeft.setSpeeds(speed, speed)
         self.motorTopBottom.setSpeeds(speed, speed)
+
+    def reset_encoders(self):
+        self.encoderTop.steps = 0
+        self.encoderBottom.steps = 0
+        self.encoderLeft.steps = 0
+        self.encoderRight.steps = 0
