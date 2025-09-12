@@ -47,7 +47,7 @@ class MotorControlNode(AbstractNode):
         self.__movement = 'linear'  # or 'rotate'
 
         self.__lidar_bypassed = False
-        self.__speed = 0.5
+        self.__speed = 1.0
 
         self.__desired_h = 0.0
         self.__desired_v = 0.0

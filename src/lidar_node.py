@@ -5,6 +5,7 @@ from sensor_msgs.msg import LaserScan
 from abstract_node import AbstractNode
 from adafruit_rplidar import RPLidar, RPLidarException
 import numpy as np
+import threading
 
 LIDAR_OFFSET = 90
 
