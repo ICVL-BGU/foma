@@ -752,7 +752,7 @@ class MainWindow(QMainWindow):
 
             # draw the angle text
             cv2.putText(frame,
-                        f"Dir: {angle:.1f}°",
+                        f"Dir: {angle:.1f}",
                         (px + 10, py - 10),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.5,

@@ -141,30 +141,14 @@ class MotorControlNode(AbstractNode):
             Right = 270
         '''
         if not self.__lidar_bypassed and self.__scans is not None:
-            # Check blocking logic exactly as before:
-            if h_component != 0 and v_component != 0:
-                # Quadrant logic
-                if h_component > 0 and v_component > 0:
-                    if self.__is_sector_blocked(range(-45, 45)):
-                        h_component = 0
-                    if self.__is_sector_blocked(range(225, 315)):
-                        v_component = 0
-                elif h_component < 0 and self.__is_sector_blocked(range(135, 225)):
-                    h_component = 0
-                if v_component > 0 and self.__is_sector_blocked(range(225, 315)):
-                    v_component = 0
-                elif v_component < 0 and self.__is_sector_blocked(range(45, 135)):
-                    v_component = 0
-            elif h_component != 0:
-                if h_component > 0 and self.__is_sector_blocked(range(-36, 36)):
-                    h_component = 0
-                elif h_component < 0 and self.__is_sector_blocked(range(144, 216)):
-                    h_component = 0
-            elif v_component != 0:
-                if v_component > 0 and self.__is_sector_blocked(range(234, 306)):
-                    v_component = 0
-                elif v_component < 0 and self.__is_sector_blocked(range(54, 126)):
-                    v_component = 0
+            if h_component > 0 and self.__is_sector_blocked(range(-36, 36)):
+                h_component = 0
+            elif h_component < 0 and self.__is_sector_blocked(range(144, 216)):
+                h_component = 0
+            if v_component > 0 and self.__is_sector_blocked(range(234, 306)):
+                v_component = 0
+            elif v_component < 0 and self.__is_sector_blocked(range(54, 126)):
+                v_component = 0
 
         return h_component, v_component
 
