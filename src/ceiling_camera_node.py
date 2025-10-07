@@ -7,7 +7,7 @@ from abstract_node import AbstractNode
 
 class CeilingCameraNode(AbstractNode):
     def __init__(self):
-        super().__init__('ceiling_camera_node', 'Ceiling Camera Node (GStreamer LL)')
+        super().__init__('ceiling_camera_node', 'Ceiling Camera Node')
         self.url = "rtsp://admin:icvl2023@1.1.2.103:554"
 
         gst_str = (

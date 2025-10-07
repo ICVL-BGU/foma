@@ -18,6 +18,7 @@ class MotorControlNode(AbstractNode):
         super().__init__('motor_control', 'Motor control')
 
         self.__blocked_publisher = rospy.Publisher('motor_control/blocked', Int16MultiArray, queue_size=10)
+        self.__speed_publisher = rospy.Publisher('motor_control/speed', Twist, queue_size=10)
         
         rospy.Subscriber('lidar/scans', LaserScan, self.__update_lidar, queue_size=10)
         rospy.Subscriber('motor_control/angle', Float32, self.__handle_angle) 
@@ -27,7 +28,8 @@ class MotorControlNode(AbstractNode):
 
         rospy.Service('motor_control/bypass_lidar', SetBool, self.__bypass_lidar)
         rospy.Subscriber('motor_control/set_speed', Float32, self.__set_speed)
-        self.scans = None
+        
+        self.__scans = None
 
         try:
             self.__motor_control = MotorControl(resetPins = (MOTOR_TOP_BOTTOM_RESET, MOTOR_RIGHT_LEFT_RESET)
@@ -94,6 +96,10 @@ class MotorControlNode(AbstractNode):
                 else:
                     self.__move_by_components(self.__current_h, self.__current_v)
 
+            self.__speed_publisher.publish(Twist(
+                linear = Vector3(self.__current_v * self.__speed, self.__current_h * self.__speed, 0.0),
+                angular = Vector3(0.0, 0.0, self.__current_rotate * self.__speed)
+            ))
             rate.sleep()
 
     def __ramp(self, current, target, step):
@@ -124,7 +130,7 @@ class MotorControlNode(AbstractNode):
             self.__movement = 'linear'
             self.__motor_control.reset_encoders()
 
-        if not self.__lidar_bypassed and self.scans is not None:
+        if not self.__lidar_bypassed and self.__scans is not None:
             # Check blocking logic exactly as before:
             if h_component != 0 and v_component != 0:
                 # Quadrant logic
@@ -193,10 +199,10 @@ class MotorControlNode(AbstractNode):
         self.__last_cmd_time = rospy.Time.now()
 
     def __update_lidar(self, scans: LaserScan):
-        self.scans = np.array(scans.ranges)
+        self.__scans = np.array(scans.ranges)
 
         # Reshape scans into (4, 90) to match safety_vec shape for elementwise comparison
-        scans_reshaped = self.scans.reshape(4, 90)
+        scans_reshaped = self.__scans.reshape(4, 90)
         distance_checks = (scans_reshaped < MotorControlNode.safety_distance_vector)
         distance_checks = distance_checks.reshape(-1)  # back to 360‐length
 
@@ -206,7 +212,7 @@ class MotorControlNode(AbstractNode):
         self.__blocked_publisher.publish(blocked_array)
 
     def __is_sector_blocked(self, sector):
-        filtered_scans = np.array(self.scans)[sector] 
+        filtered_scans = np.array(self.__scans)[sector] 
         distance_checks = filtered_scans < MotorControlNode.safety_distance_vector[45-len(sector)//2:45+len(sector)//2]
         return np.any(distance_checks)
     
@@ -285,7 +291,7 @@ class MotorControlNode(AbstractNode):
             thr[idx] = t
 
         # vectorized compare
-        scans = np.array(self.scans)[rng]
+        scans = np.array(self.__scans)[rng]
         return np.any(scans < thr)
 
     def __split_components(self, angle_deg: float):

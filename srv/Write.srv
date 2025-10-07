@@ -1,0 +1,6 @@
+# Request
+string msg
+string subject_id
+---
+# Response
+bool success
