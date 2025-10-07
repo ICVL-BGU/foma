@@ -14,48 +14,66 @@ class LIDARNode(AbstractNode):
         self.lidar_pub = rospy.Publisher('lidar/scans', LaserScan, queue_size=10)
         try:
             self.lidar = RPLidar(None, '/dev/lidar', baudrate = 256000, timeout = 3)
+            self.lidar.stop()
+            rospy.sleep(0.1)
+            self.lidar.start()
+            
         except RPLidarException as e:
             self.lidar = None
             self.logwarn(e)
-        self.scanning = False
-        self.scans = np.ones(360)*15000
+
+        self.scan_msg = LaserScan()
+        self.scan_msg.ranges = np.ones(360)*15000
+
+        if self.lidar:
+            self._scan_thread = threading.Thread(target=self._scan_loop, daemon=True)
+            self._scan_thread.start()
+
         rospy.on_shutdown(self.__on_shutdown)
 
-    def run(self):
+    def _scan_loop(self):
+        """Background thread: continuously reads from the lidar and updates scan_msg.ranges."""
         while not rospy.is_shutdown():
             try:
-                for scan in self.lidar.iter_scans():
-                    _, angles, distances = zip(*scan)
-                    angles = 359 - ((np.floor(angles).astype(int) + LIDAR_OFFSET) % 360)
-                    try:
-                        self.scans[angles] = distances
-                    except:
-                        for i, angle in enumerate(angles):
-                            self.scans[angle] = distances[i]
+                for _, quality, angle, distance in self.lidar.iter_measurements():
+                    # _, angles, distances = zip(*scan)
+                    if quality > 0:
+                        if distance < 30:
+                            # self.logwarn(f"LIDAR distance < 30 for angle {angle}, skipping this measurement.")
+                            continue
+                        angle = 359 - round(angle + LIDAR_OFFSET) % 360
+                        self.scan_msg.ranges[angle] = distance
+                    # self.loginfo(f"Angle: {angle}, Distance: {distance}")
 
-                    laser_scan = LaserScan()
-                    laser_scan.ranges = self.scans
-                    
-                    self.lidar_pub.publish(laser_scan)
-            
             except RPLidarException as e:
                 self.logerr(e)
-                self.lidar.disconnect()
-                rospy.sleep(0.005)
-                self.lidar.connect()
-                rospy.sleep(0.005)
+                if str(e).startswith("Failed to connect to the sensor"):
+                    self.lidar.disconnect()
+                    rospy.sleep(0.1)
+                    self.logwarn("Attempting to reconnect to LIDAR...")
+                    self.lidar.connect()
+                else:
+                    self.lidar.stop()
+                    rospy.sleep(0.1)
+                    self.logwarn("Stopping LIDAR due to error, will attempt to restart.")
+                    self.lidar.start()
+                # try to reconnect
+                # try:
+                #     self.lidar.reset()
+                # except Exception as e2:
+                #     self.logerr(f"Reconnect failed: {e2}")
+                rospy.sleep(0.05)
 
-            except AttributeError as e:
-                self._system_on = False
-                self.logerr(e)
-            
             except Exception as e:
-                self.logerr(e)
+                self.logerr(f"Unexpected scan-loop error: {e}")
+                rospy.sleep(0.05)
 
-            except:
-                self.logerr("Something happend.")
-            
-            rospy.sleep(0.05)
+    def run(self):
+        """Main thread: publishes the latest scan_msg at a fixed rate."""
+        rate = rospy.Rate(100)
+        while not rospy.is_shutdown():
+            self.lidar_pub.publish(self.scan_msg)
+            rate.sleep()
 
     def __on_shutdown(self):
         if self.lidar:

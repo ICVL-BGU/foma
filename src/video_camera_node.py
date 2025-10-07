@@ -13,7 +13,7 @@ class VideoCameraNode(AbstractNode):
 
         self.camera_pub = rospy.Publisher('fish_camera/image', CompressedImage, queue_size=1)
         self.camera_capture = Picamera2()
-        config = self.camera_capture.create_preview_configuration(
+        config = self.camera_capture.create_still_configuration(
             main={"size": (2464, 2464), "format": "BGR888"}
         )
         self.camera_capture.configure(config)
@@ -25,15 +25,18 @@ class VideoCameraNode(AbstractNode):
         rospy.on_shutdown(self.__on_shutdown)
 
     def run(self):
-        rate = rospy.Rate(20)
+        rate = rospy.Rate(15)
         while not rospy.is_shutdown():
-            frame = self.camera_capture.capture_array("main")
-            frame = cv2.resize(frame, self.__new_size, interpolation=cv2.INTER_AREA)
-            frame = np.rot90(frame, k=3)
+            try:
+                frame = self.camera_capture.capture_array("main")
+                frame = cv2.resize(frame, self.__new_size, interpolation=cv2.INTER_AREA)
+                frame = np.rot90(frame, k=3)
 
-            success, buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-            self.msg.data = buf.tobytes() if success else b''
-            self.camera_pub.publish(self.msg)
+                success, buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                self.msg.data = buf.tobytes() if success else b''
+                self.camera_pub.publish(self.msg)
+            except Exception as e:
+                self.logerr(f"Error capturing or publishing frame: {e}")
 
             rate.sleep()
 
@@ -41,6 +44,7 @@ class VideoCameraNode(AbstractNode):
         self.loginfo("Shutting down camera")
         try:
             self.camera_capture.stop()
+            self.camera_capture.release()
         except Exception:
             pass
 
