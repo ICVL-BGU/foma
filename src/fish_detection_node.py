@@ -34,17 +34,33 @@ class FishDetectionNode(AbstractNode):
             self.logerr(f"Error converting image: {e}")
 
     def process_image(self):
-        prediction = self.model.track(self.img, max_det=1, verbose=False)
-        kp = prediction[0].keypoints
-        
-        if kp.shape[1] == 0:
-            self.fish_state_pub.publish(Twist(linear = Vector3(0, 0, 0))) # fish not detected
+        predictions = self.model.track(self.img, verbose=False)
+        img_h, img_w = self.img.shape[:2]
+        img_center = (img_w / 2, img_h / 2)
+
+        best_kp = None
+        min_dist = float('inf')
+
+        for pred in predictions:
+            kp = pred.keypoints
+            if kp.shape[1] == 0:
+                continue
+            # Use the first keypoint as reference for center distance
+            # You may adjust which keypoint to use if needed
+            keypoint_xy = kp.data[0][0]
+            dist = ((keypoint_xy[0] - img_center[0]) ** 2 + (keypoint_xy[1] - img_center[1]) ** 2) ** 0.5
+            if dist < min_dist:
+                min_dist = dist
+                best_kp = kp
+
+        if best_kp is None or best_kp.shape[1] == 0:
+            self.fish_state_pub.publish(Twist(linear=Vector3(0, 0, 0)))  # fish not detected
             return
-        
-        points = kp.data[0][0], kp.data[0][3]
+
+        points = best_kp.data[0][0], best_kp.data[0][3]
         dx, dy = points[0] - points[1]
         x, y = points[1]
-        self.direction = Twist(linear = Vector3(x,y,0), angular = Vector3(dx, -dy, 0))
+        self.direction = Twist(linear=Vector3(x, y, 0), angular=Vector3(dx, -dy, 0))
         self.fish_state_pub.publish(self.direction)
 
 if __name__ == "__main__":

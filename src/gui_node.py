@@ -352,7 +352,7 @@ class MainWindow(QMainWindow):
         # self.__motor_control_system_check = rospy.ServiceProxy('motor_control/system_check', Check)
 
     def __init_manual_control_window(self):
-        self.__motor_set_speed.publish(Float32(0.5))
+        self.__motor_set_speed.publish(Float32(1.0))
         self.__bypass_lidar(False)
 
         self.__manual_control_window = QDialog(self)
@@ -425,7 +425,7 @@ class MainWindow(QMainWindow):
         speed_control_textbox = QLineEdit()
         speed_control_button = QPushButton("Set")
         
-        speed_control_textbox.setPlaceholderText("0.5")
+        speed_control_textbox.setPlaceholderText("1.0")
         speed_control_textbox.setValidator(QDoubleValidator(0.0, 1.0, 2))
         def set_speed():
             try:
