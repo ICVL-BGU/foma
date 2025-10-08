@@ -19,8 +19,6 @@ class WriterNode(AbstractNode):
     def __init__(self):
         super().__init__('writer_node', 'Writer Node')
 
-        rospy.Service('write', Write, self.__set_write)
-
         self.__write = False
         self.__foma_speed = Twist()
 
@@ -30,8 +28,10 @@ class WriterNode(AbstractNode):
         rospy.Subscriber('localization/location', FomaLocation, self.__foma_location_callback)
         rospy.Subscriber('motor_control/speed', Twist, self.__foma_speed_callback)
 
+        rospy.Service('writer_node/write', Write, self.__set_write)
+        
         self.bridge = CvBridge()
-        rospy.on_shutdown(self._on_shutdown)
+        rospy.on_shutdown(self.__on_shutdown)
 
     def __start_trial(self):
         output_folder = '~/trial_output'
@@ -61,7 +61,7 @@ class WriterNode(AbstractNode):
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
 
         # Writers
-        self.__room_video_writer = cv2.VideoWriter(room_video_filename, fourcc, room_fps, self.room_frame_shape)
+        self.__room_video_writer = cv2.VideoWriter(room_video_filename, fourcc, room_fps, self.__room_frame_shape)
         
         self.__room_map = np.ones((self.__map_frame_shape[1], self.__map_frame_shape[0], 3), dtype=np.uint8) * 255
         self.__room_map_writer = cv2.VideoWriter(room_map_filename, fourcc, map_fps, self.__map_frame_shape)
@@ -101,7 +101,7 @@ class WriterNode(AbstractNode):
             self.__write = False
         elif write.msg == "continue":
             self.__write = True
-        return SetBoolResponse(success = True, message = "Writer set to {}.".format(self.__write))
+        return WriteResponse(success = True)
     
     def __room_image_callback(self, img_msg: Image):
         if not self.__write:
@@ -167,7 +167,7 @@ class WriterNode(AbstractNode):
     def __foma_speed_callback(self, speed: Twist):
         self.__foma_speed = speed
 
-    def _on_shutdown(self):
+    def __on_shutdown(self):
         self.loginfo("Shutting down WriterNode...")
         if self.__write:
             self.__stop_trial()
@@ -175,3 +175,4 @@ class WriterNode(AbstractNode):
 if __name__ == "__main__":
     rospy.init_node('ceiling_camera', anonymous=False)
     WriterNode()
+    rospy.spin()

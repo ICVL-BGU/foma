@@ -60,6 +60,7 @@ add_service_files(
   FILES
   Check.srv
   Light.srv
+  Write.srv
 )
 
 ## Generate actions in the 'action' folder
