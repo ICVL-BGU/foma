@@ -6,6 +6,7 @@ from abstract_node import AbstractNode
 import numpy as np
 import cv2
 from picamera2 import Picamera2
+from etc.settings import *
 
 class VideoCameraNode(AbstractNode):
     def __init__(self):
@@ -19,17 +20,16 @@ class VideoCameraNode(AbstractNode):
         self.camera_capture.configure(config)
         self.camera_capture.start()
 
-        self.__new_size = (640, 640)
         self.msg = CompressedImage()
 
         rospy.on_shutdown(self.__on_shutdown)
 
     def run(self):
-        rate = rospy.Rate(15)
+        rate = rospy.Rate(FOMA_CAMERA_FPS)
         while not rospy.is_shutdown():
             try:
                 frame = self.camera_capture.capture_array("main")
-                frame = cv2.resize(frame, self.__new_size, interpolation=cv2.INTER_AREA)
+                frame = cv2.resize(frame, FOMA_CAMERA_FRAME_SHAPE, interpolation=cv2.INTER_AREA)
                 frame = np.rot90(frame, k=3)
 
                 success, buf = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
