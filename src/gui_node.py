@@ -34,7 +34,7 @@ from PyQt5.QtWidgets import (
     )
 
 # ROS imports
-from geometry_msgs.msg import Twist, Vector3
+from geometry_msgs.msg import Twist, Vector3, TwistStamped
 from sensor_msgs.msg import Image, CompressedImage
 from std_msgs.msg import Float32, Int16MultiArray
 from std_srvs.srv import Trigger, SetBool
@@ -356,7 +356,7 @@ class MainWindow(QMainWindow):
 
     def __init_subscriptions_and_services(self):
         rospy.Subscriber('fish_camera/image', CompressedImage, self.__update_fish_image)
-        rospy.Subscriber('fish_detection/state', Twist, self.__update_fish_state)
+        rospy.Subscriber('fish_detection/state', TwistStamped, self.__update_fish_state)
         rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image)
         rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
         rospy.Subscriber('motor_control/blocked', Int16MultiArray, self.__update_blocked_directions)
@@ -631,7 +631,8 @@ class MainWindow(QMainWindow):
         except CvBridgeError as e:
             self.logwarn(e)
 
-    def __update_fish_state(self, state: Twist):
+    def __update_fish_state(self, state_msg: TwistStamped):
+        state = state_msg.twist
         if state.angular == Vector3(0, 0, 0):
             self.__fish_state = None
         else:

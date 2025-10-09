@@ -14,6 +14,7 @@ from foma.msg import FomaLocation
 import math
 from etc.settings import *
 from collections import deque
+import threading
 
 class WriterNode(AbstractNode):
     def __init__(self):
@@ -115,8 +116,6 @@ class WriterNode(AbstractNode):
             self.__fish_location_csv_writer.writerow(["time", "x", "y", "angle"])
             self.__fish_location_file.flush()  # Ensure the header is written immediately
 
-        self.__write_loop()
-
     def __stop_trial(self):
         if np.any([len(q) > 0 for q in self.__queues.values()]):
             rospy.Timer(rospy.Duration(0.05), lambda event: self.__stop_trial(), oneshot=True)
@@ -129,8 +128,9 @@ class WriterNode(AbstractNode):
     def __set_write(self, write: WriteRequest):
         if write.msg == "start":
             self.__subject_id = write.subject_id
-            self.__start_trial()
             self.__write = True
+            self.__start_trial()
+            threading.Thread(target=self.__write_loop, daemon=True).start()
         elif write.msg == "stop":
             self.__write = False
             self.__stop_trial()
@@ -204,8 +204,7 @@ class WriterNode(AbstractNode):
 
     def __on_shutdown(self):
         self.loginfo("Shutting down WriterNode...")
-        if self.__write:
-            self.__stop_trial()
+        self.__stop_trial()
 
 if __name__ == "__main__":
     rospy.init_node('ceiling_camera', anonymous=False)
