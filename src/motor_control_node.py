@@ -66,9 +66,9 @@ class MotorControlNode(AbstractNode):
         self.__current_v = 0.0
         self.__current_rotate = 0.0
 
-        self.__rate_hz       = 10
+        self.__rate_hz       = 50
         self.__max_ramp_time = 2    # → takes 2 s to go from –1 to +1; adjust X here
-        self.__accel_step    = 0.15#self.__max_ramp_time / self.__steps
+        self.__accel_step    = 0.03#self.__max_ramp_time / self.__steps
 
         self.__last_cmd_time = rospy.Time(0)
 

@@ -30,7 +30,7 @@ class LIDARNode(AbstractNode):
             
         except RPLidarException as e:
             self.lidar = None
-            self.logwarn(e)
+            self.logerr(e)
 
         self.scan_msg = LaserScan()
         self.scan_msg.ranges = np.ones(360)*15000
