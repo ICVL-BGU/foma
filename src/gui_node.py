@@ -976,11 +976,8 @@ class MainWindow(QMainWindow):
         self.__close_button.setDisabled(True)
 
         self.__ongoing_trial = True
-
-        # self.__open_file_writers(subject_id)
-        self.__writer_control("start", subject_id)
-
-        # self.__writers_timer.start(self.__writers_interval)
+        
+        self.__writer_control("start", subject_id, rospy.Time.now().to_sec())
 
     def __on_continue_click(self):
         self.__start_button.setDisabled(True)
@@ -990,10 +987,6 @@ class MainWindow(QMainWindow):
 
         self.__ongoing_trial = True
         
-        self.__writer_control("continue", None)
-        
-        # self.__writers_timer.start(self.__writers_interval)
-
     def __on_pause_click(self):
         self.__start_button.setDisabled(False)
         self.__pause_button.setDisabled(True)
@@ -1006,10 +999,7 @@ class MainWindow(QMainWindow):
 
         self.__ongoing_trial = False
         self.__motor_control_vector.publish(Vector3(0, 0, 0))
-
-        self.__writer_control("pause", None)
-        # self.__writers_timer.stop()
-
+        
     def __on_reset_click(self):
         self.__start_button.setDisabled(False)
         self.__pause_button.setDisabled(True)
@@ -1021,155 +1011,12 @@ class MainWindow(QMainWindow):
         self.__start_button.clicked.connect(self.__on_start_click)
 
         self.__ongoing_trial = False
-        # self.__writers_timer.stop()
-        self.__writer_control("stop", None)
-        # self.__close_file_writers()
+        self.__writer_control("stop", None, rospy.Time.now().to_sec())
 
     def __on_close_click(self, event):
-        # self.__close_file_writers()
         self.__writer_control("stop", None)
         QApplication.quit()
         rospy.signal_shutdown("Closing GUI")
-
-    # def __open_file_writers(self, subject_id: str):
-    #     self.__trial_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-   
-    #     # Ensure the output directory exists
-    #     self.__trial_output_folder = os.path.join(os.path.expanduser(self.__output_folder), f"{self.__trial_timestamp}_id-{subject_id}")
-    #     if not os.path.exists(self.__trial_output_folder):
-    #         self.loginfo(f"Creating output folder {self.__trial_output_folder}")
-    #         os.makedirs(self.__trial_output_folder)
-
-    #     # 1. Room Video
-    #     room_video_filename = os.path.join(self.__trial_output_folder, f"room_video.mp4")
-    #     fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
-    #     room_fps = 25  # Default FPS (adjust based on the camera FPS)
-    #     self.__room_video_writer = cv2.VideoWriter(room_video_filename, fourcc, room_fps, self.__room_frame_shape)
-
-    #     # 2. Room Map
-    #     # Create a white image representing the room
-    #     self.__room_map = np.ones((self.__map_frame_shape[1], self.__map_frame_shape[0], 3), dtype=np.uint8) * 255
-    #     room_map_filename = os.path.join(self.__trial_output_folder, f"room_map.mp4")
-    #     fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
-    #     map_fps = 10  # Default FPS (adjust based on the camera FPS)
-    #     self.__room_map_writer = cv2.VideoWriter(room_map_filename, fourcc, map_fps, self.__map_frame_shape)
-
-
-    #     # 3. FOMA Location
-    #     foma_location_filename = os.path.join(self.__trial_output_folder, f"foma_location.csv")
-
-    #     self.__foma_location_file = open(foma_location_filename, 'a', newline='')
-    #     self.__foma_location_csv_writer = csv.writer(self.__foma_location_file)
-
-    #     if os.stat(foma_location_filename).st_size == 0:
-    #         self.__foma_location_csv_writer.writerow(["time", "x_w", "y_w", "x_i", "y_i"])
-    #         self.__foma_location_file.flush()  # Ensure the header is written immediately
-
-    #     # 4. FOMA Video
-    #     foma_video_filename = os.path.join(self.__trial_output_folder, f"foma_video.mp4")
-    #     fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
-    #     foma_frame_width = 640  # Adjust based on your camera resolution
-    #     foma_frame_height = 640
-    #     foma_fps = 20  # Default FPS (adjust based on the camera FPS)
-    #     self.__foma_video_writer = cv2.VideoWriter(foma_video_filename, fourcc, foma_fps, (foma_frame_width, foma_frame_height))
-
-
-    #     # 5. Fish Location
-    #     fish_location_filename = os.path.join(self.__trial_output_folder, f"fish_location.csv")
-
-    #     self.__fish_location_file = open(fish_location_filename, 'a', newline='')
-    #     self.__fish_location_csv_writer = csv.writer(self.__fish_location_file)
-
-    #     if os.stat(fish_location_filename).st_size == 0:
-    #         self.__fish_location_csv_writer.writerow(["time", "x", "y", "angle"])
-    #         self.__fish_location_file.flush()  # Ensure the header is written immediately
-
-
-    #     self.__writers_timer.start(25)
-
-    # def __close_file_writers(self):
-    #     if self.__foma_location_file:
-    #         self.__foma_location_file.close()
-    #         self.__foma_location_file = None
-    #         self.__foma_location_csv_writer = None
-    #     if self.__room_video_writer:
-    #         self.__room_video_writer.release()
-    #         self.__room_video_writer = None
-    #     if self.__foma_video_writer:
-    #         self.__foma_video_writer.release()
-    #         self.__foma_video_writer = None
-    #     if self.__room_map_writer:
-    #         self.__room_map_writer.release()
-    #         self.__room_map_writer = None
-
-    # def __update_image(self, img_msg: Image, destination: QLabel):
-    #     """
-    #     Callback to update the camera image on the GUI.
-    #     """
-    #     try:
-    #         # Convert the ROS Image message to a numpy array
-    #         img = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="passthrough")
-            
-    #         # Check the shape to ensure it's compatible with OpenCV's BGR format
-    #         if img.ndim == 3 and img.shape[2] == 3:
-    #             # Assume the image is BGR and proceed
-    #             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    #         else:
-    #             self.logwarn("Unexpected image format, expected 3-channel image.")
-    #             return
-            
-    #         # Convert to QImage
-    #         height, width, channel = img.shape
-    #         bytes_per_line = 3 * width
-    #         q_image = QImage(img.data, width, height, bytes_per_line, QImage.Format_RGB888)
-            
-    #         # Scale the image to fit the QLabel
-    #         pixmap = QPixmap.fromImage(q_image)
-    #         scaled_pixmap = pixmap.scaled(
-    #             destination.size(),
-    #             Qt.KeepAspectRatio,
-    #             Qt.SmoothTransformation
-    #         )
-            
-    #         # Update the QLabel with the scaled QPixmap
-    #         destination.setPixmap(scaled_pixmap)
-            
-    #     except CvBridgeError as e:
-    #         self.logwarn(f"Error converting image message: {e}")
-    #     except Exception as e:
-    #         self.logwarn(f"Unexpected error in update_image: {e}")
-
-    # def __write_files(self):
-    #     timestamp = rospy.get_time()  # ROS time in seconds
-
-    #     if self.__foma_img_location is not None and self.__foma_world_location is not None:
-    #         self.__foma_location_csv_writer.writerow([timestamp, self.__foma_world_location.x, self.__foma_world_location.y, self.__foma_img_location.x, self.__foma_img_location.y])
-    #         self.__foma_location_file.flush()  # Ensure data is written to the file
-
-    #     if self.__fish_state is not None:
-    #         self.__fish_location_csv_writer.writerow([
-    #             timestamp,
-    #             self.__fish_state.linear.x,
-    #             self.__fish_state.linear.y,
-    #             math.degrees(math.atan2(self.__fish_state.angular.y, self.__fish_state.angular.x))
-    #         ])
-    #         self.__fish_location_file.flush()  # Ensure data is written to the file
-
-    #     if self.__room_video_writer and self.__room_image is not None:
-    #         frame = cv2.cvtColor(self.__room_image, cv2.COLOR_RGB2BGR)
-    #         self.__room_video_writer.write(frame)
-
-    #     if self.__foma_video_writer and self.__fish_image is not None:
-    #         frame = cv2.cvtColor(self.__fish_image, cv2.COLOR_RGB2BGR)
-    #         self.__foma_video_writer.write(frame)
-
-    #     if self.__room_map_writer and self.__room_map is not None:
-    #         map_frame = cv2.cvtColor(self.__room_map, cv2.COLOR_RGB2BGR)
-    #         if self.__foma_world_location is not None:
-    #             x = np.clip(self.__foma_world_location.x, 0, self.__room_frame_shape[1] - 1).astype(int)
-    #             y = np.clip(self.__foma_world_location.y, 0, self.__room_frame_shape[0] - 1).astype(int)
-    #             cv2.circle(map_frame, (x, y), 5, (0, 0, 255), -1)
-    #         self.__room_map_writer.write(map_frame)
 
     def resizeEvent(self, event):
         if self.__top_right_image.pixmap():
