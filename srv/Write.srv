@@ -1,6 +1,7 @@
 # Request
 string msg
 string subject_id
+time stamp
 ---
 # Response
 bool success
