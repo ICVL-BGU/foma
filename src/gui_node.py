@@ -34,14 +34,14 @@ from PyQt5.QtWidgets import (
     )
 
 # ROS imports
-from geometry_msgs.msg import Twist, Vector3
+from geometry_msgs.msg import Twist, Vector3, TwistStamped
 from sensor_msgs.msg import Image, CompressedImage
 from std_msgs.msg import Float32, Int16MultiArray
 from std_srvs.srv import Trigger, SetBool
 from cv_bridge import CvBridge, CvBridgeError
 
 # Custom ROS messages
-from foma.srv import Light, Check
+from foma.srv import Light, Check, Write
 from foma.msg import FomaLocation
 
 class MainWindow(QMainWindow):
@@ -59,26 +59,13 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Trial control")
         self.drag_start = self.pos()
         self.closeEvent = self.__on_close_click
-
+        
+        self.__init_attributes()
         self.__init_widgets()
         self.__init_layouts()
-        self.__init_attributes()
         self.__init_signals()
         self.__init_service_checker()
         self.__init_timers()
-
-    def __init_timers(self):
-        # self.__image_timer = QTimer(self)
-        # self.__image_timer.timeout.connect(self.__update_gui)
-        # self.__image_timer.start(20)
-
-        # self.__services_timer = QTimer(self)
-        # self.__services_timer.timeout.connect(self.__update_services)
-        # self.__services_timer.start(1000)
-
-        self.__writers_timer = QTimer(self)
-        self.__writers_timer.timeout.connect(self.__write_files)
-        self.__writers_interval = 50 # 20 fps
 
     def __init_signals(self):
         self.fish_frame_ready.connect(self.__update_left_display)
@@ -98,17 +85,6 @@ class MainWindow(QMainWindow):
         self.__room_frame_shape = (2560, 2560)
         self.__map_frame_shape = (1000, 1000)
 
-        # Writer files and writers
-        self.__output_folder = '~/trial_output'
-        self.__trial_timestamp = None
-        self.__room_video_writer = None
-        self.__room_map_writer = None
-        self.__foma_video_writer = None
-        self.__foma_location_file = None
-        self.__foma_location_csv_writer = None
-        self.__fish_location_file = None
-        self.__fish_location_csv_writer = None
-
         # Windows
         self.__manual_control_window = None
         self.__feeding_load_window = None
@@ -116,12 +92,12 @@ class MainWindow(QMainWindow):
         # Timers
         self.__image_timer = None
         self.__services_timer = None
-        self.__writers_timer = None
+        # self.__writers_timer = None
 
         # Motor Control
         self.__linear_velocity = Twist()
         self.__angular_velocity = Float32()
-        # self.__speed = 1
+        self.__foma_speed = Twist()
         self.__direction_epsilon = 45
         self.__blocked_directions = None
 
@@ -166,8 +142,9 @@ class MainWindow(QMainWindow):
         # self.__BL_layout.addWidget(self.__manual_control_label, 0, 2, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__manual_control_button, 0, 2, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__feed_loading_button, 1, 2, alignment=Qt.AlignCenter)
-        self.__BL_layout.addWidget(self.__direction_group, 0, 3, 2, 1, alignment=Qt.AlignCenter)
-        self.__BL_layout.addWidget(self.__room_display_group, 0, 4, 2, 1, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__fish_direction_group, 0, 3, 2, 1, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__foma_direction_group, 0, 4, 2, 1, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__room_display_group, 0, 5, 2, 1, alignment=Qt.AlignCenter)
         
         self.__BL_widget = QFrame()
         self.__BL_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
@@ -253,8 +230,8 @@ class MainWindow(QMainWindow):
         self.__lights_slider.setTickPosition(QSlider.TicksAbove|QSlider.TicksBelow)
         self.__lights_slider.setPageStep(1)
         self.__lights_slider.setMaximumHeight(50)
-        self.__lights_slider.valueChanged.connect(lambda val:self.__dim_lights(int(255*val/self.__lights_slider.maximum())))
         self.__lights_slider.setDisabled(True)
+        self.__lights_slider.setValue(1)
 
         # Lights slider label init
         self.__lights_label = QLabel("Lights dimming")
@@ -311,18 +288,32 @@ class MainWindow(QMainWindow):
         self.__room_image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         # Add radio buttons for toggling direction display
-        self.__show_direction_rb = QRadioButton("Yes")
-        self.__hide_direction_rb = QRadioButton("No")
-        self.__show_direction_rb.setChecked(True)
+        self.__show_fish_direction_rb = QRadioButton("Yes")
+        self.__hide_fish_direction_rb = QRadioButton("No")
+        self.__show_fish_direction_rb.setChecked(True)
 
         # Create and add radio buttons to layout
-        direction_layout = QGridLayout()
-        direction_layout.addWidget(self.__show_direction_rb, 0, 0, alignment=Qt.AlignCenter)
-        direction_layout.addWidget(self.__hide_direction_rb, 1, 0, alignment=Qt.AlignCenter)
+        fish_direction_layout = QGridLayout()
+        fish_direction_layout.addWidget(self.__show_fish_direction_rb, 0, 0, alignment=Qt.AlignCenter)
+        fish_direction_layout.addWidget(self.__hide_fish_direction_rb, 1, 0, alignment=Qt.AlignCenter)
         
         # Create a group box for the radio buttons and set the layout
-        self.__direction_group = QGroupBox("Display Direction")
-        self.__direction_group.setLayout(direction_layout)
+        self.__fish_direction_group = QGroupBox("Display Fish Direction")
+        self.__fish_direction_group.setLayout(fish_direction_layout)
+
+        # Add radio buttons for toggling direction display
+        self.__show_foma_direction_rb = QRadioButton("Yes")
+        self.__hide_foma_direction_rb = QRadioButton("No")
+        self.__show_foma_direction_rb.setChecked(True)
+
+        # Create and add radio buttons to layout
+        foma_direction_layout = QGridLayout()
+        foma_direction_layout.addWidget(self.__show_foma_direction_rb, 0, 0, alignment=Qt.AlignCenter)
+        foma_direction_layout.addWidget(self.__hide_foma_direction_rb, 1, 0, alignment=Qt.AlignCenter)
+        
+        # Create a group box for the radio buttons and set the layout
+        self.__foma_direction_group = QGroupBox("Display FOMA Direction")
+        self.__foma_direction_group.setLayout(foma_direction_layout)
 
         # Add radio buttons for toggling direction display
         self.__room_camera_display_rb = QRadioButton("Camera")
@@ -340,15 +331,17 @@ class MainWindow(QMainWindow):
 
     def __init_subscriptions_and_services(self):
         rospy.Subscriber('fish_camera/image', CompressedImage, self.__update_fish_image)
-        rospy.Subscriber('fish_detection/state', Twist, self.__update_fish_state)
+        rospy.Subscriber('fish_detection/state', TwistStamped, self.__update_fish_state)
         rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image)
         rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
         rospy.Subscriber('motor_control/blocked', Int16MultiArray, self.__update_blocked_directions)
+        rospy.Subscriber('motor_control/speed', Twist, self.__update_foma_speed)
         self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=10)
         self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=10)
         self.__motor_control_rotate = rospy.Publisher('motor_control/rotate', Float32, queue_size=10)
         self.__motor_set_speed = rospy.Publisher('motor_control/set_speed', Float32, queue_size=10)
+        self.__writer_control = rospy.ServiceProxy('writer_node/write', Write)
         # self.__motor_control_system_check = rospy.ServiceProxy('motor_control/system_check', Check)
 
     def __init_manual_control_window(self):
@@ -613,7 +606,8 @@ class MainWindow(QMainWindow):
         except CvBridgeError as e:
             self.logwarn(e)
 
-    def __update_fish_state(self, state: Twist):
+    def __update_fish_state(self, state_msg: TwistStamped):
+        state = state_msg.twist
         if state.angular == Vector3(0, 0, 0):
             self.__fish_state = None
         else:
@@ -652,7 +646,6 @@ class MainWindow(QMainWindow):
             else:
                 self.__motor_control_vector.publish(Vector3(0, 0, 0))
 
-
     def __update_room_image(self, img_msg: Image):
         try:
             self.__room_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="rgb8") # was passthrough
@@ -685,6 +678,9 @@ class MainWindow(QMainWindow):
             x = np.clip(self.__foma_world_location.x, 0, self.__room_frame_shape[1] - 1).astype(int)
             y = np.clip(self.__foma_world_location.y, 0, self.__room_frame_shape[0] - 1).astype(int)
             cv2.circle(self.__room_map, (x, y), 5, (0, 255, 0), -1)
+
+    def __update_foma_speed(self, speed: Twist):
+        self.__foma_speed = speed
 
     def __update_blocked_directions(self, blocked: Int16MultiArray):
         """
@@ -747,7 +743,7 @@ class MainWindow(QMainWindow):
                     cv2.circle(frame, pts[0], 3, (255, 0, 0), -1)
 
         # 3) draw direction overlay if requested and we have a Twist state
-        if self.__show_direction_rb.isChecked() and self.__fish_state is not None:
+        if self.__show_fish_direction_rb.isChecked() and self.__fish_state is not None:
             # extract position
             px = int(self.__fish_state.linear.x)
             py = int(self.__fish_state.linear.y)
@@ -783,6 +779,60 @@ class MainWindow(QMainWindow):
                             2,
                             tipLength=0.3)
 
+        # Draw FOMA direction overlay if requested and we have a Twist state
+        if self.__show_foma_direction_rb.isChecked() and self.__foma_speed is not None:
+            # Extract linear and angular speeds
+            linear_speed = math.sqrt(
+                self.__foma_speed.linear.x**2 + self.__foma_speed.linear.y**2
+            )
+            angular_speed = self.__foma_speed.angular.z
+
+            center_x, center_y = w // 2, h // 2
+
+            # Draw linear speed arrow if linear part is not 0
+            if linear_speed > 0:
+            # Calculate direction angle
+                angle = math.degrees(math.atan2(self.__foma_speed.linear.y, self.__foma_speed.linear.x))
+
+                # Calculate arrow endpoint
+                arrow_length = 30  # Length of the arrow
+                end_x = int(center_x + arrow_length * math.cos(math.radians(angle)))
+                end_y = int(center_y - arrow_length * math.sin(math.radians(angle)))
+
+                # Draw the arrow
+                cv2.arrowedLine(frame, (center_x, center_y), (end_x, end_y), (0, 255, 255), 2, tipLength=0.3)
+
+                # Draw the speed text
+                cv2.putText(frame,
+                        f"{linear_speed:.2f}",
+                        (end_x + 10, end_y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (255, 255, 255),
+                        1,
+                        cv2.LINE_AA)
+
+            # Draw angular speed arrow if angular part is not 0
+            if angular_speed != 0:
+            # Define rotation arrow parameters
+                radius = 30
+                start_angle = 0
+                end_angle = 270 if angular_speed > 0 else -270
+                color = (255, 255, 0)
+
+                # Draw the rotation arrow
+                cv2.ellipse(frame, (center_x, center_y), (radius, radius), 0, start_angle, end_angle, color, 2)
+
+                # Draw the angular speed text
+                cv2.putText(frame,
+                        f"{angular_speed:.2f}",
+                        (center_x + radius + 10, center_y),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (255, 255, 255),
+                        1,
+                        cv2.LINE_AA)
+                
         bytes_per_line = ch * w
         qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
 
@@ -859,6 +909,7 @@ class MainWindow(QMainWindow):
             self.loginfo("Light dimming service available - enabling slider")
             self.__lights_slider.setDisabled(False)
             self.__dim_lights = lights_proxy
+            self.__lights_slider.valueChanged.connect(lambda val:self.__dim_lights(int(255*val/self.__lights_slider.maximum())))
         elif self.__dim_lights is not None and lights_proxy is None:
             self.logerr("Light dimming service unavailable - disabling slider")
             self.__lights_slider.setDisabled(True)
@@ -901,10 +952,8 @@ class MainWindow(QMainWindow):
         self.__close_button.setDisabled(True)
 
         self.__ongoing_trial = True
-
-        self.__open_file_writers(subject_id)
-
-        self.__writers_timer.start(self.__writers_interval)
+        
+        self.__writer_control("start", subject_id, rospy.Time.now())
 
     def __on_continue_click(self):
         self.__start_button.setDisabled(True)
@@ -914,8 +963,6 @@ class MainWindow(QMainWindow):
 
         self.__ongoing_trial = True
         
-        self.__writers_timer.start(self.__writers_interval)
-
     def __on_pause_click(self):
         self.__start_button.setDisabled(False)
         self.__pause_button.setDisabled(True)
@@ -928,8 +975,7 @@ class MainWindow(QMainWindow):
 
         self.__ongoing_trial = False
         self.__motor_control_vector.publish(Vector3(0, 0, 0))
-        self.__writers_timer.stop()
-
+        
     def __on_reset_click(self):
         self.__start_button.setDisabled(False)
         self.__pause_button.setDisabled(True)
@@ -941,158 +987,12 @@ class MainWindow(QMainWindow):
         self.__start_button.clicked.connect(self.__on_start_click)
 
         self.__ongoing_trial = False
-        self.__writers_timer.stop()
-        self.__close_file_writers()
+        self.__writer_control("stop", None, rospy.Time.now())
 
     def __on_close_click(self, event):
-        self.__close_file_writers()
+        self.__writer_control("stop", None, rospy.Time.now())
         QApplication.quit()
         rospy.signal_shutdown("Closing GUI")
-
-    def __open_file_writers(self, subject_id: str):
-        self.__trial_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-   
-        # Ensure the output directory exists
-        self.__trial_output_folder = os.path.join(os.path.expanduser(self.__output_folder), f"{self.__trial_timestamp}_id-{subject_id}")
-        if not os.path.exists(self.__trial_output_folder):
-            self.loginfo(f"Creating output folder {self.__trial_output_folder}")
-            os.makedirs(self.__trial_output_folder)
-
-        # 1. Room Video
-        room_video_filename = os.path.join(self.__trial_output_folder, f"room_video.mp4")
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
-        room_fps = 25  # Default FPS (adjust based on the camera FPS)
-        self.__room_video_writer = cv2.VideoWriter(room_video_filename, fourcc, room_fps, self.__room_frame_shape)
-
-        # 2. Room Map
-        # Create a white image representing the room
-        self.__room_map = np.ones((self.__map_frame_shape[1], self.__map_frame_shape[0], 3), dtype=np.uint8) * 255
-        room_map_filename = os.path.join(self.__trial_output_folder, f"room_map.mp4")
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
-        map_fps = 10  # Default FPS (adjust based on the camera FPS)
-        self.__room_map_writer = cv2.VideoWriter(room_map_filename, fourcc, map_fps, self.__map_frame_shape)
-
-
-        # 3. FOMA Location
-        foma_location_filename = os.path.join(self.__trial_output_folder, f"foma_location.csv")
-
-        self.__foma_location_file = open(foma_location_filename, 'a', newline='')
-        self.__foma_location_csv_writer = csv.writer(self.__foma_location_file)
-
-        if os.stat(foma_location_filename).st_size == 0:
-            self.__foma_location_csv_writer.writerow(["time", "x_w", "y_w", "x_i", "y_i"])
-            self.__foma_location_file.flush()  # Ensure the header is written immediately
-
-        # 4. FOMA Video
-        foma_video_filename = os.path.join(self.__trial_output_folder, f"foma_video.mp4")
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
-        foma_frame_width = 640  # Adjust based on your camera resolution
-        foma_frame_height = 640
-        foma_fps = 20  # Default FPS (adjust based on the camera FPS)
-        self.__foma_video_writer = cv2.VideoWriter(foma_video_filename, fourcc, foma_fps, (foma_frame_width, foma_frame_height))
-
-
-        # 5. Fish Location
-        fish_location_filename = os.path.join(self.__trial_output_folder, f"fish_location.csv")
-
-        self.__fish_location_file = open(fish_location_filename, 'a', newline='')
-        self.__fish_location_csv_writer = csv.writer(self.__fish_location_file)
-
-        if os.stat(fish_location_filename).st_size == 0:
-            self.__fish_location_csv_writer.writerow(["time", "x", "y", "angle"])
-            self.__fish_location_file.flush()  # Ensure the header is written immediately
-
-
-        self.__writers_timer.start(25)
-
-    def __on_close_click(self, event):
-        self.__close_file_writers()
-        QApplication.quit()
-        rospy.signal_shutdown("Closing GUI")
-
-    def __close_file_writers(self):
-        if self.__foma_location_file:
-            self.__foma_location_file.close()
-            self.__foma_location_file = None
-            self.__foma_location_csv_writer = None
-        if self.__room_video_writer:
-            self.__room_video_writer.release()
-            self.__room_video_writer = None
-        if self.__foma_video_writer:
-            self.__foma_video_writer.release()
-            self.__foma_video_writer = None
-        if self.__room_map_writer:
-            self.__room_map_writer.release()
-            self.__room_map_writer = None
-
-    def __update_image(self, img_msg: Image, destination: QLabel):
-        """
-        Callback to update the camera image on the GUI.
-        """
-        try:
-            # Convert the ROS Image message to a numpy array
-            img = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="passthrough")
-            
-            # Check the shape to ensure it's compatible with OpenCV's BGR format
-            if img.ndim == 3 and img.shape[2] == 3:
-                # Assume the image is BGR and proceed
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            else:
-                self.logwarn("Unexpected image format, expected 3-channel image.")
-                return
-            
-            # Convert to QImage
-            height, width, channel = img.shape
-            bytes_per_line = 3 * width
-            q_image = QImage(img.data, width, height, bytes_per_line, QImage.Format_RGB888)
-            
-            # Scale the image to fit the QLabel
-            pixmap = QPixmap.fromImage(q_image)
-            scaled_pixmap = pixmap.scaled(
-                destination.size(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            
-            # Update the QLabel with the scaled QPixmap
-            destination.setPixmap(scaled_pixmap)
-            
-        except CvBridgeError as e:
-            self.logwarn(f"Error converting image message: {e}")
-        except Exception as e:
-            self.logwarn(f"Unexpected error in update_image: {e}")
-
-    def __write_files(self):
-        timestamp = rospy.get_time()  # ROS time in seconds
-
-        if self.__foma_img_location is not None and self.__foma_world_location is not None:
-            self.__foma_location_csv_writer.writerow([timestamp, self.__foma_world_location.x, self.__foma_world_location.y, self.__foma_img_location.x, self.__foma_img_location.y])
-            self.__foma_location_file.flush()  # Ensure data is written to the file
-
-        if self.__fish_state is not None:
-            self.__fish_location_csv_writer.writerow([
-                timestamp,
-                self.__fish_state.linear.x,
-                self.__fish_state.linear.y,
-                math.degrees(math.atan2(self.__fish_state.angular.y, self.__fish_state.angular.x))
-            ])
-            self.__fish_location_file.flush()  # Ensure data is written to the file
-
-        if self.__room_video_writer and self.__room_image is not None:
-            frame = cv2.cvtColor(self.__room_image, cv2.COLOR_RGB2BGR)
-            self.__room_video_writer.write(frame)
-
-        if self.__foma_video_writer and self.__fish_image is not None:
-            frame = cv2.cvtColor(self.__fish_image, cv2.COLOR_RGB2BGR)
-            self.__foma_video_writer.write(frame)
-
-        if self.__room_map_writer and self.__room_map is not None:
-            map_frame = cv2.cvtColor(self.__room_map, cv2.COLOR_RGB2BGR)
-            if self.__foma_world_location is not None:
-                x = np.clip(self.__foma_world_location.x, 0, self.__room_frame_shape[1] - 1).astype(int)
-                y = np.clip(self.__foma_world_location.y, 0, self.__room_frame_shape[0] - 1).astype(int)
-                cv2.circle(map_frame, (x, y), 5, (0, 0, 255), -1)
-            self.__room_map_writer.write(map_frame)
 
     def resizeEvent(self, event):
         if self.__top_right_image.pixmap():

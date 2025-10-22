@@ -5,6 +5,7 @@ from abstract_node import AbstractNode
 import numpy as np
 import cv2
 from picamera2 import Picamera2
+from etc.settings import *
 from concurrent.futures import TimeoutError
 import faulthandler, sys, signal, traceback
 
@@ -15,7 +16,6 @@ def on_sigill(signum, frame):
     sys.exit(1)
 
 signal.signal(signal.SIGILL, on_sigill)
-
 
 class VideoCameraNode(AbstractNode):
     def __init__(self):
@@ -46,7 +46,7 @@ class VideoCameraNode(AbstractNode):
         rospy.on_shutdown(self._on_shutdown)
 
     def run(self):
-        rate = rospy.Rate(15)
+        rate = rospy.Rate(FOMA_CAMERA_FPS)
         while not rospy.is_shutdown():
             try:
                 # Non-blocking read from the *lores* stream so the loop never deadlocks.

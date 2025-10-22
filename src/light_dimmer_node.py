@@ -12,7 +12,7 @@ class LightDimmerNode(AbstractNode):
 
         # Use the alias for the serial port
         self.serial_port_alias = '/dev/light_dimmer'  # Replace this with your configured alias
-        self.serial_baud_rate = 9600
+        self.serial_baud_rate = 115200 #9600
         self.serial_timeout = 1
 
         # Initialize serial port as None

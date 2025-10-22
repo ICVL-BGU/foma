@@ -4,10 +4,11 @@ import cv2
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from abstract_node import AbstractNode
+from etc.settings import *
 
 class CeilingCameraNode(AbstractNode):
     def __init__(self):
-        super().__init__('ceiling_camera_node', 'Ceiling Camera Node (GStreamer LL)')
+        super().__init__('ceiling_camera_node', 'Ceiling Camera Node')
         self.url = "rtsp://admin:icvl2023@1.1.2.103:554"
 
         gst_str = (
@@ -28,7 +29,7 @@ class CeilingCameraNode(AbstractNode):
 
     def run(self):
         rospy.loginfo("CeilingCameraNode running…")
-        rate = rospy.Rate(20)
+        rate = rospy.Rate(ROOM_CAMERA_FPS)
         while not rospy.is_shutdown():
             ret, frame = self.cap.read()
             if ret:

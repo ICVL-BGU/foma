@@ -40,6 +40,8 @@ class LocalizationNode(AbstractNode):
             self.logerr(f"Error converting image: {e}")
 
     def process_image(self):
+        timestamp = rospy.Time.now()
+        self.location.header.stamp = timestamp
         prediction = self.detection_model.track(self.img, verbose=False) # max_det=1,
         indices = prediction[0].boxes.data[:, -1] == LIDAR_TAG
         
