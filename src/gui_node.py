@@ -59,27 +59,13 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Trial control")
         self.drag_start = self.pos()
         self.closeEvent = self.__on_close_click
-
+        
+        self.__init_attributes()
         self.__init_widgets()
         self.__init_layouts()
-        self.__init_attributes()
         self.__init_signals()
         self.__init_service_checker()
         self.__init_timers()
-
-    def __init_timers(self):
-        # self.__image_timer = QTimer(self)
-        # self.__image_timer.timeout.connect(self.__update_gui)
-        # self.__image_timer.start(20)
-
-        # self.__services_timer = QTimer(self)
-        # self.__services_timer.timeout.connect(self.__update_services)
-        # self.__services_timer.start(1000)
-
-        # self.__writers_timer = QTimer(self)
-        # self.__writers_timer.timeout.connect(self.__write_files)
-        # self.__writers_interval = 50 # 20 fps
-        pass
 
     def __init_signals(self):
         self.fish_frame_ready.connect(self.__update_left_display)
@@ -98,17 +84,6 @@ class MainWindow(QMainWindow):
         # Camera frame dimensions
         self.__room_frame_shape = (2560, 2560)
         self.__map_frame_shape = (1000, 1000)
-
-        # Writer files and writers
-        self.__output_folder = '~/trial_output'
-        self.__trial_timestamp = None
-        self.__room_video_writer = None
-        self.__room_map_writer = None
-        self.__foma_video_writer = None
-        self.__foma_location_file = None
-        # self.__foma_location_csv_writer = None
-        # self.__fish_location_file = None
-        # self.__fish_location_csv_writer = None
 
         # Windows
         self.__manual_control_window = None
@@ -255,8 +230,8 @@ class MainWindow(QMainWindow):
         self.__lights_slider.setTickPosition(QSlider.TicksAbove|QSlider.TicksBelow)
         self.__lights_slider.setPageStep(1)
         self.__lights_slider.setMaximumHeight(50)
-        self.__lights_slider.valueChanged.connect(lambda val:self.__dim_lights(int(255*val/self.__lights_slider.maximum())))
         self.__lights_slider.setDisabled(True)
+        self.__lights_slider.setValue(1)
 
         # Lights slider label init
         self.__lights_label = QLabel("Lights dimming")
@@ -934,6 +909,7 @@ class MainWindow(QMainWindow):
             self.loginfo("Light dimming service available - enabling slider")
             self.__lights_slider.setDisabled(False)
             self.__dim_lights = lights_proxy
+            self.__lights_slider.valueChanged.connect(lambda val:self.__dim_lights(int(255*val/self.__lights_slider.maximum())))
         elif self.__dim_lights is not None and lights_proxy is None:
             self.logerr("Light dimming service unavailable - disabling slider")
             self.__lights_slider.setDisabled(True)
@@ -977,7 +953,7 @@ class MainWindow(QMainWindow):
 
         self.__ongoing_trial = True
         
-        self.__writer_control("start", subject_id, rospy.Time.now().to_sec())
+        self.__writer_control("start", subject_id, rospy.Time.now())
 
     def __on_continue_click(self):
         self.__start_button.setDisabled(True)
@@ -1011,10 +987,10 @@ class MainWindow(QMainWindow):
         self.__start_button.clicked.connect(self.__on_start_click)
 
         self.__ongoing_trial = False
-        self.__writer_control("stop", None, rospy.Time.now().to_sec())
+        self.__writer_control("stop", None, rospy.Time.now())
 
     def __on_close_click(self, event):
-        self.__writer_control("stop", None)
+        self.__writer_control("stop", None, rospy.Time.now())
         QApplication.quit()
         rospy.signal_shutdown("Closing GUI")
 

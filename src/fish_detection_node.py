@@ -20,7 +20,6 @@ class FishDetectionNode(AbstractNode):
 
         model_path = r"/home/icvl/ros_ws/src/foma/models/fish_detection.pt" # /home/icvl/ros_ws/src/foma/yolo_pose.pt" OR /home/alex/ROS/src/foma/yolo_pose.pt 
         self.model = YOLO(model_path)
-        self.direction = None
         self.img = None
         self.bridge = CvBridge()
         self.no_fish_count = 0
@@ -57,9 +56,9 @@ class FishDetectionNode(AbstractNode):
         x, y = points[1]
 
         # Check if the tail position is far off
-        if hasattr(self, 'prev_tail') and (abs(self.prev_tail[0] - x) > 50 or abs(self.prev_tail[1] - y) > 50):
-            self.fish_state_pub.publish(TwistStamped(twist = self.direction, header = Header(stamp = timestamp)))  # send previous direction
-            return
+        # if hasattr(self, 'prev_tail') and (abs(self.prev_tail[0] - x) > 50 or abs(self.prev_tail[1] - y) > 50):
+        #     self.fish_state_pub.publish(TwistStamped(twist = self.direction, header = Header(stamp = timestamp)))  # send previous direction
+        #     return
 
         self.direction = Twist(linear=Vector3(x, y, 0), angular=Vector3(dx, -dy, 0))
         self.prev_tail = points[1]
