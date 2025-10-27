@@ -46,15 +46,14 @@ class WriterNode(AbstractNode):
         self.__fish_location_file = None
         self.__fish_location_csv_writer = None
         self.__trial_output_folder = ""
-        self.__trial_timestamp = ""
         self.__subject_id = ""
         self.__start_time = None
         self.__stop_time = None
 
     def __start_trial(self):
         output_folder = '~/trial_output'
-        self.__trial_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M") # change to sent timestamp later
-        self.__trial_output_folder = os.path.join(os.path.expanduser(output_folder), f"{self.__trial_timestamp}_id-{self.__subject_id}")
+        trial_timestamp = datetime.datetime.fromtimestamp(self.__start_time.to_sec()).strftime("%Y%m%d_%H%M")
+        self.__trial_output_folder = os.path.join(os.path.expanduser(output_folder), f"{trial_timestamp}_id-{self.__subject_id}")
         if not os.path.exists(self.__trial_output_folder):
             self.loginfo(f"Creating output folder {self.__trial_output_folder}")
             os.makedirs(self.__trial_output_folder)

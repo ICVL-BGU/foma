@@ -56,7 +56,7 @@ class MainWindow(QMainWindow):
         self.__init_subscriptions_and_services()
         self.bridge = CvBridge()
 
-        self.setWindowTitle("Trial control")
+        self.setWindowTitle("FOMA Trial control")
         self.drag_start = self.pos()
         self.closeEvent = self.__on_close_click
         
@@ -65,7 +65,6 @@ class MainWindow(QMainWindow):
         self.__init_layouts()
         self.__init_signals()
         self.__init_service_checker()
-        self.__init_timers()
 
     def __init_signals(self):
         self.fish_frame_ready.connect(self.__update_left_display)
@@ -358,15 +357,8 @@ class MainWindow(QMainWindow):
             self.__motor_set_speed.publish(Float32(1.0))
             self.__bypass_lidar(False)
 
-            # Stop the timer
-            # if self.__timer:
-            #     self.__timer.stop()
-            #     self.__timer = None
-
-            # Clean up the widget reference
             self.__manual_control_window = None
 
-            # Accept the close event
             event.accept()
 
         def on_key_press(event):

@@ -83,27 +83,21 @@ class MotorControlNode(AbstractNode):
             now = rospy.Time.now()
             dt  = (now - self.__last_cmd_time).to_sec()
 
-            if dt < self.__fresh_threshold:
-                # 1) move current toward desired
-                self.__current_h      = self.__ramp(self.__current_h,      self.__desired_h,      self.__accel_step)
-                self.__current_v      = self.__ramp(self.__current_v,      self.__desired_v,      self.__accel_step)
-                self.__current_rotate = self.__ramp(self.__current_rotate, self.__desired_rotate, self.__accel_step)
+            if dt > self.__fresh_threshold:
+                self.__desired_h = 0.0
+                self.__desired_v = 0.0
+                self.__desired_rotate = 0.0
 
-                # 2) issue command
-                if abs(self.__current_rotate) > 1e-6:
-                    self.__rotate_motor(self.__current_rotate)
-                else:
-                    self.__move_by_components(self.__current_h, self.__current_v)
+            # command expired → ramp back to zero
+            self.__current_h      = self.__ramp(self.__current_h,      self.__desired_h)
+            self.__current_v      = self.__ramp(self.__current_v,      self.__desired_v)
+            self.__current_rotate = self.__ramp(self.__current_rotate, self.__desired_rotate)
+
+            if abs(self.__current_rotate) > 1e-6:
+                self.__rotate_motor(self.__current_rotate)
             else:
-                # command expired → ramp back to zero
-                self.__current_h      = self.__ramp(self.__current_h,      0.0, self.__accel_step)
-                self.__current_v      = self.__ramp(self.__current_v,      0.0, self.__accel_step)
-                self.__current_rotate = self.__ramp(self.__current_rotate, 0.0, self.__accel_step)
-
-                if abs(self.__current_rotate) > 1e-6:
-                    self.__rotate_motor(self.__current_rotate)
-                else:
-                    self.__move_by_components(self.__current_h, self.__current_v)
+                self.__current_h, self.__current_v = self.__check_blocking(self.__current_h, self.__current_v)
+                self.__move_by_components(self.__current_h, self.__current_v)
 
             self.__speed_publisher.publish(Twist(
                 linear = Vector3(self.__current_v * self.__speed, self.__current_h * self.__speed, 0.0),
@@ -111,15 +105,15 @@ class MotorControlNode(AbstractNode):
             ))
             rate.sleep()
 
-    def __ramp(self, current, target, step):
+    def __ramp(self, current, target):
         '''
         Ramp the current value towards the target value by a fixed step.
         If the target is within the step range, it will return the target value.
         '''
         delta = target - current
-        if abs(delta) <= step:
+        if abs(delta) <= self.__accel_step:
             return target
-        return current + step * np.sign(delta)
+        return current + self.__accel_step * np.sign(delta)
     
     def __bypass_lidar(self, request:SetBoolRequest):
         self.__lidar_bypassed = request.data
@@ -129,16 +123,23 @@ class MotorControlNode(AbstractNode):
         self.__speed = request.data
 
     def __move_by_components(self, h_component, v_component):
+        if self.__movement != 'linear':
+            self.__movement = 'linear'
+            self.__motor_control.reset_encoders()
+
+        # Send final components to motor
+        if self.__motor_control:
+            self.__motor_control.move_by_components(
+                h_component * self.__speed, v_component * self.__speed
+            )
+
+    def __check_blocking(self, h_component, v_component):
         '''
             Forward = 0
             Left = 90
             Backward = 180
             Right = 270
         '''
-        if self.__movement != 'linear':
-            self.__movement = 'linear'
-            self.__motor_control.reset_encoders()
-
         if not self.__lidar_bypassed and self.__scans is not None:
             # Check blocking logic exactly as before:
             if h_component != 0 and v_component != 0:
@@ -165,11 +166,7 @@ class MotorControlNode(AbstractNode):
                 elif v_component < 0 and self.__is_sector_blocked(range(54, 126)):
                     v_component = 0
 
-        # Send final components to motor
-        if self.__motor_control:
-            self.__motor_control.move_by_components(
-                h_component * self.__speed, v_component * self.__speed
-            )
+        return h_component, v_component
 
     def __handle_angle(self, msg: Float32):
         angle = msg.data % 360

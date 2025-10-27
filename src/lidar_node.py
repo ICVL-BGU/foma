@@ -6,6 +6,7 @@ from abstract_node import AbstractNode
 from adafruit_rplidar import RPLidar, RPLidarException
 import numpy as np
 import threading
+from etc.settings import LIDAR_PORT, LIDAR_PORT_SPEED, LIDAR_OFFSET
 
 import faulthandler, sys
 faulthandler.enable(sys.stderr, all_threads=True)
@@ -17,14 +18,12 @@ def on_sigill(signum, frame):
 
 signal.signal(signal.SIGILL, on_sigill)
 
-LIDAR_OFFSET = 90
-
 class LIDARNode(AbstractNode):
     def __init__(self):
         super().__init__('lidar', 'LIDAR')
         self.lidar_pub = rospy.Publisher('lidar/scans', LaserScan, queue_size=10)
         try:
-            self.lidar = RPLidar(None, '/dev/lidar', baudrate = 256000, timeout = 3)
+            self.lidar = RPLidar(None, LIDAR_PORT, baudrate = LIDAR_PORT_SPEED, timeout = 3)
             self.lidar.stop()
             rospy.sleep(0.1)
             self.lidar.start()
@@ -50,11 +49,9 @@ class LIDARNode(AbstractNode):
                     # _, angles, distances = zip(*scan)
                     if quality > 0:
                         if distance < 30:
-                            # self.logwarn(f"LIDAR distance < 30 for angle {angle}, skipping this measurement.")
                             continue
                         angle = 359 - round(angle + LIDAR_OFFSET) % 360
                         self.scan_msg.ranges[angle] = distance
-                    # self.loginfo(f"Angle: {angle}, Distance: {distance}")
 
             except RPLidarException as e:
                 self.logerr(e)
@@ -68,11 +65,6 @@ class LIDARNode(AbstractNode):
                     rospy.sleep(0.1)
                     self.logwarn("Stopping LIDAR due to error, will attempt to restart.")
                     self.lidar.start()
-                # try to reconnect
-                # try:
-                #     self.lidar.reset()
-                # except Exception as e2:
-                #     self.logerr(f"Reconnect failed: {e2}")
                 rospy.sleep(0.05)
 
             except Exception as e:
