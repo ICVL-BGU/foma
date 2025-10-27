@@ -16,7 +16,7 @@ from etc.settings import *
 import shutil
 import tempfile
 import subprocess
-import threading
+import sys
 
 class WriterNode(AbstractNode):
     def __init__(self):
@@ -52,8 +52,8 @@ class WriterNode(AbstractNode):
 
     def __start_trial(self):
         output_folder = '~/trial_output'
-        trial_timestamp = datetime.datetime.fromtimestamp(self.__start_time.to_sec()).strftime("%Y%m%d_%H%M")
-        self.__trial_output_folder = os.path.join(os.path.expanduser(output_folder), f"{trial_timestamp}_id-{self.__subject_id}")
+        self.__trial_timestamp = datetime.datetime.fromtimestamp(self.__start_time.to_sec()).strftime("%Y%m%d_%H%M")
+        self.__trial_output_folder = os.path.join(os.path.expanduser(output_folder), f"{self.__trial_timestamp}_id-{self.__subject_id}")
         if not os.path.exists(self.__trial_output_folder):
             self.loginfo(f"Creating output folder {self.__trial_output_folder}")
             os.makedirs(self.__trial_output_folder)
@@ -118,19 +118,46 @@ class WriterNode(AbstractNode):
             start_t = self.__start_time
             stop_t = self.__stop_time
             folder = self.__trial_output_folder
+            
+            # path to worker script (adjust if stored elsewhere)
+            worker_path = os.path.join(os.path.dirname(__file__),"etc", "reframe_worker.py")
 
-            # spawn a daemon thread so it won't block shutdown
-            threading.Thread(
-                target=self.__reframe_videos,
-                kwargs={
-                    "start_time": start_t,
-                    "stop_time": stop_t,
-                    "output_folder": folder,
-                    "force_reencode": False,
-                    "try_ffmpeg_first": True
-                },
-                daemon=True
-            ).start()
+            start_s = float(start_t.to_sec())
+            stop_s = float(stop_t.to_sec())
+
+            # log file for the worker
+            logpath = os.path.join(folder, f"reframe_{self.__trial_timestamp}.log")
+
+            cmd = [
+                sys.executable,        # uses same Python interpreter
+                worker_path,
+                str(start_s),
+                str(stop_s),
+                folder,
+                # flags:
+                # "--force",           # uncomment to force reencode (skip ffmpeg fast path)
+                # "--no-ffmpeg",       # uncomment to disable ffmpeg entirely
+                "--log", logpath
+            ]
+
+            # spawn detached process; send stdout/stderr to the log file
+            logf = open(logpath, "a")
+            p = subprocess.Popen(cmd, stdout=logf, stderr=logf, start_new_session=True, close_fds=True)
+            self.loginfo(f"Spawned reframe worker pid={p.pid} log={logpath}")
+            
+            # we intentionally do not call p.wait() — detached worker runs independently
+            # # spawn a daemon thread so it won't block shutdown
+            # threading.Thread(
+            #     target=self.__reframe_videos,
+            #     kwargs={
+            #         "start_time": start_t,
+            #         "stop_time": stop_t,
+            #         "output_folder": folder,
+            #         "force_reencode": False,
+            #         "try_ffmpeg_first": True
+            #     },
+            #     daemon=True
+            # ).start()
 
         return WriteResponse(success = True)
     
