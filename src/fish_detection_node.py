@@ -26,7 +26,7 @@ class FishDetectionNode(AbstractNode):
         self.direction = Twist(linear=Vector3(0, 0, 0))
         self.prediction = None
 
-        self.image_sub = rospy.Subscriber('fish_camera/image', CompressedImage, self.read_image)
+        self.image_sub = rospy.Subscriber('fish_camera/image', CompressedImage, self.read_image, queue_size=1)
         self.fish_state_pub = rospy.Publisher('fish_detection/state', TwistStamped, queue_size=10)
 
     def read_image(self, img_msg: CompressedImage):
