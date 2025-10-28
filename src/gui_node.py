@@ -334,7 +334,7 @@ class MainWindow(QMainWindow):
         rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image)
         rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
         rospy.Subscriber('motor_control/blocked', Int16MultiArray, self.__update_blocked_directions)
-        rospy.Subscriber('motor_control/speed', Twist, self.__update_foma_speed)
+        rospy.Subscriber('motor_control/speed', TwistStamped, self.__update_foma_speed)
         self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=10)
         self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=10)
@@ -671,8 +671,8 @@ class MainWindow(QMainWindow):
             y = np.clip(self.__foma_world_location.y, 0, self.__room_frame_shape[0] - 1).astype(int)
             cv2.circle(self.__room_map, (x, y), 5, (0, 255, 0), -1)
 
-    def __update_foma_speed(self, speed: Twist):
-        self.__foma_speed = speed
+    def __update_foma_speed(self, speed: TwistStamped):
+        self.__foma_speed = speed.twist
 
     def __update_blocked_directions(self, blocked: Int16MultiArray):
         """
