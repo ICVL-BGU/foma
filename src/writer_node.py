@@ -30,7 +30,7 @@ class WriterNode(AbstractNode):
         rospy.Subscriber('fish_camera/image', CompressedImage, self.__foma_image_callback)
         rospy.Subscriber('fish_detection/state', TwistStamped, self.__fish_state_callback)
         rospy.Subscriber('localization/location', FomaLocation, self.__foma_location_callback)
-        rospy.Subscriber('motor_control/speed', Twist, self.__foma_speed_callback)
+        rospy.Subscriber('motor_control/speed', TwistStamped, self.__foma_speed_callback)
 
         rospy.Service('writer_node/write', Write, self.__set_write)
         
@@ -63,6 +63,7 @@ class WriterNode(AbstractNode):
         room_map_filename = os.path.join(self.__trial_output_folder, f"room_map.mp4")
         foma_video_filename = os.path.join(self.__trial_output_folder, f"foma_video.mp4")
         foma_location_filename = os.path.join(self.__trial_output_folder, f"foma_location.csv")
+        foma_speed_filename = os.path.join(self.__trial_output_folder, f"foma_speed.csv")
         fish_location_filename = os.path.join(self.__trial_output_folder, f"fish_location.csv")
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
@@ -81,6 +82,13 @@ class WriterNode(AbstractNode):
         if os.stat(foma_location_filename).st_size == 0:
             self.__foma_location_csv_writer.writerow(["time", "x_w", "y_w", "x_i", "y_i"])
             self.__foma_location_file.flush()  # Ensure the header is written immediately
+
+        self.__foma_speed_file = open(foma_speed_filename, 'a', newline='')
+        self.__foma_speed_csv_writer = csv.writer(self.__foma_speed_file)
+
+        if os.stat(foma_speed_filename).st_size == 0:
+            self.__foma_speed_csv_writer.writerow(["time", "v", "h", "r"])
+            self.__foma_speed_file.flush()  # Ensure the header is written immediately
 
         self.__fish_location_file = open(fish_location_filename, 'a', newline='')
         self.__fish_location_csv_writer = csv.writer(self.__fish_location_file)
@@ -146,18 +154,6 @@ class WriterNode(AbstractNode):
             self.loginfo(f"Spawned reframe worker pid={p.pid} log={logpath}")
             
             # we intentionally do not call p.wait() — detached worker runs independently
-            # # spawn a daemon thread so it won't block shutdown
-            # threading.Thread(
-            #     target=self.__reframe_videos,
-            #     kwargs={
-            #         "start_time": start_t,
-            #         "stop_time": stop_t,
-            #         "output_folder": folder,
-            #         "force_reencode": False,
-            #         "try_ffmpeg_first": True
-            #     },
-            #     daemon=True
-            # ).start()
 
         return WriteResponse(success = True)
     
@@ -222,372 +218,17 @@ class WriterNode(AbstractNode):
         cv2.circle(frame, (x, y), 5, (0, 0, 255), -1)
         self.__room_map_writer.write(frame)
 
-    def __foma_speed_callback(self, speed: Twist):
-        self.__foma_speed = speed
-
-    def __reframe_videos(self, start_time,
-                        stop_time,
-                        output_folder,
-                        force_reencode=False,
-                        try_ffmpeg_first=True):
-        """
-        Re-encode pipeline that replaces originals atomically.
-        Only logs a single line per file: either a compact success message
-        or a compact failure message.
-        """
-
-        # Validate times (expect rospy.Time)
-        if start_time is None or stop_time is None:
-            self.logerr("reframe_videos: start_time or stop_time is None. Aborting.")
-            return {}
-
-        try:
-            start_s = float(start_time.to_sec())
-            stop_s = float(stop_time.to_sec())
-        except Exception as e:
-            self.logerr(f"reframe_videos: error converting times to seconds: {e}")
-            return {}
-
-        duration = stop_s - start_s
-        if duration <= 0:
-            self.logerr(f"reframe_videos: invalid duration ({duration}s). Aborting.")
-            return {}
-
-        video_filenames = [
-            os.path.join(output_folder, "room_video.mp4"),
-            os.path.join(output_folder, "room_map.mp4"),
-            os.path.join(output_folder, "foma_video.mp4"),
+    def __foma_speed_callback(self, speed_msg: TwistStamped):
+        if not self.__write:
+            return
+        row = [
+                speed_msg.header.stamp.to_sec(),
+                speed_msg.twist.linear.x,
+                speed_msg.twist.linear.y,
+                speed_msg.twist.angular.z
         ]
-
-        ffmpeg_path = shutil.which("ffmpeg")
-        ffprobe_path = shutil.which("ffprobe")
-
-        def _ffprobe_duration(path):
-            if not ffprobe_path:
-                return None
-            try:
-                p = subprocess.run([ffprobe_path, "-v", "error", "-show_entries", "format=duration",
-                                    "-of", "default=noprint_wrappers=1:nokey=1", path],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
-                out = p.stdout.strip()
-                return float(out) if out else None
-            except Exception:
-                return None
-
-        def _has_audio(path):
-            if not ffprobe_path:
-                return False
-            try:
-                p = subprocess.run([ffprobe_path, "-v", "error", "-select_streams", "a",
-                                    "-show_entries", "stream=index", "-of", "csv=p=0", path],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
-                return bool(p.stdout.strip())
-            except Exception:
-                return False
-
-        # tolerance: allow small mismatch (half-second or 3% of duration)
-        duration_tolerance_s = max(0.5, 0.03 * duration)
-
-        for vf in video_filenames:
-            # per-file status info (no logs until the end)
-            info = {
-                "frames": None,
-                "new_fps": None,
-                "method": None,
-                "success": False,
-                "notes": []  # short reasons / notes accumulated
-            }
-
-            shortname = os.path.basename(vf)
-
-            if not os.path.exists(vf):
-                info["notes"].append("file not found")
-                self.logerr(f"reframe_videos: {shortname}: failed: file not found")
-                continue
-
-            # count frames (fast property, fallback to manual)
-            cap = cv2.VideoCapture(vf)
-            if not cap.isOpened():
-                info["notes"].append("cv2 open failed")
-                self.logerr(f"reframe_videos: {shortname}: failed: cv2 cannot open file")
-                continue
-
-            try:
-                prop_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-            except Exception:
-                prop_count = 0
-
-            frames = prop_count
-            if frames <= 0 or frames > 1e9:
-                # count manually but don't log here, just add a note
-                info["notes"].append("framecount unreliable; counted manually")
-                frames = 0
-                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                while True:
-                    ret, _ = cap.read()
-                    if not ret:
-                        break
-                    frames += 1
-            cap.release()
-
-            if frames == 0:
-                info["notes"].append("no frames")
-                self.logerr(f"reframe_videos: {shortname}: failed: no frames found")
-                continue
-
-            new_fps = frames / float(duration)
-            info["frames"] = int(frames)
-            info["new_fps"] = float(new_fps)
-
-            _, ext = os.path.splitext(vf)
-            tmpout = None
-            final_tmp = None
-            tmp_files_to_clean = []
-
-            # ---------- Try ffmpeg re-encode to temp file (fast path) ----------
-            if ffmpeg_path and not force_reencode and try_ffmpeg_first:
-                try:
-                    tmpfd, tmpout = tempfile.mkstemp(suffix=ext)
-                    os.close(tmpfd)
-                    tmp_files_to_clean.append(tmpout)
-                    fps_arg = f"{new_fps:.6f}"
-                    cmd = [
-                        ffmpeg_path,
-                        "-y",
-                        "-r", fps_arg,        # treat input as this fps
-                        "-i", vf,
-                        "-c:v", "libx264",
-                        "-preset", "veryfast",
-                        "-crf", "23",
-                        "-r", fps_arg,        # output fps
-                        "-c:a", "copy",
-                        tmpout
-                    ]
-                    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    if p.returncode == 0:
-                        out_dur = _ffprobe_duration(tmpout) if ffprobe_path else None
-                        if out_dur is None or abs(out_dur - duration) <= duration_tolerance_s:
-                            final_tmp = tmpout
-                            info["method"] = "ffmpeg_reencode"
-                        else:
-                            info["notes"].append("ffmpeg duration mismatch")
-                            try:
-                                os.remove(tmpout)
-                            except Exception:
-                                pass
-                    else:
-                        info["notes"].append("ffmpeg failed")
-                        try:
-                            os.remove(tmpout)
-                        except Exception:
-                            pass
-                except Exception:
-                    info["notes"].append("ffmpeg exception")
-                    try:
-                        if tmpout and os.path.exists(tmpout):
-                            os.remove(tmpout)
-                    except Exception:
-                        pass
-
-            # ---------- If ffmpeg failed, fallback to OpenCV re-encode deterministically ----------
-            if final_tmp is None:
-                tmpfd, tmp_video = tempfile.mkstemp(suffix=ext)
-                os.close(tmpfd)
-                tmp_files_to_clean.append(tmp_video)
-                written = 0
-                try:
-                    cap = cv2.VideoCapture(vf)
-                    if not cap.isOpened():
-                        info["notes"].append("opencv open failed for re-encode")
-                        try:
-                            os.remove(tmp_video)
-                        except Exception:
-                            pass
-                        # final single log below will show failure
-                    else:
-                        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        if w <= 0 or h <= 0:
-                            ret, frame = cap.read()
-                            if not ret or frame is None:
-                                info["notes"].append("cannot determine frame size")
-                                cap.release()
-                                try:
-                                    os.remove(tmp_video)
-                                except Exception:
-                                    pass
-                            else:
-                                h, w = frame.shape[0], frame.shape[1]
-                                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-
-                        if info["notes"] and info["notes"][-1].startswith("cannot"):
-                            # skip writing
-                            pass
-                        else:
-                            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                            out = cv2.VideoWriter(tmp_video, fourcc, new_fps, (w, h))
-                            if not out.isOpened():
-                                info["notes"].append("opencv writer failed")
-                                cap.release()
-                                try:
-                                    os.remove(tmp_video)
-                                except Exception:
-                                    pass
-                            else:
-                                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                                while True:
-                                    ret, frame = cap.read()
-                                    if not ret:
-                                        break
-                                    if frame is None:
-                                        continue
-                                    if len(frame.shape) == 2:
-                                        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-                                    elif frame.shape[2] == 4:
-                                        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-                                    out.write(frame)
-                                    written += 1
-                                cap.release()
-                                out.release()
-                                final_tmp = tmp_video
-                                info["method"] = "opencv_reencode"
-                except Exception:
-                    info["notes"].append("opencv exception")
-                    try:
-                        if tmp_video and os.path.exists(tmp_video):
-                            os.remove(tmp_video)
-                    except Exception:
-                        pass
-
-            # ---------- If final_tmp exists and original had audio, attempt mux into a new temp (use ffmpeg) ----------
-            tmp_mux = None
-            if final_tmp and ffmpeg_path and _has_audio(vf):
-                try:
-                    tmpfd2, tmp_mux = tempfile.mkstemp(suffix=ext)
-                    os.close(tmpfd2)
-                    tmp_files_to_clean.append(tmp_mux)
-                    cmd_mux = [
-                        ffmpeg_path, "-y", "-fflags", "+genpts",
-                        "-i", final_tmp, "-i", vf,
-                        "-map", "0:v:0", "-map", "1:a:0",
-                        "-c:v", "copy", "-c:a", "copy",
-                        "-shortest",
-                        tmp_mux
-                    ]
-                    pm = subprocess.run(cmd_mux, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    if pm.returncode == 0:
-                        try:
-                            if final_tmp != tmp_mux and os.path.exists(final_tmp):
-                                os.remove(final_tmp)
-                        except Exception:
-                            pass
-                        final_tmp = tmp_mux
-                        info["method"] = (info.get("method") or "") + "_with_audio_mux"
-                    else:
-                        info["notes"].append("audio mux failed")
-                        try:
-                            os.remove(tmp_mux)
-                        except Exception:
-                            pass
-                except Exception:
-                    info["notes"].append("audio mux exception")
-                    try:
-                        if tmp_mux and os.path.exists(tmp_mux):
-                            os.remove(tmp_mux)
-                    except Exception:
-                        pass
-
-            # ---------- Now replace original atomically: rename original->backup, move final_tmp->original, remove backup ----------
-            if final_tmp:
-                bak = vf + ".bak_reframe"
-                try:
-                    if os.path.exists(bak):
-                        try:
-                            os.remove(bak)
-                        except Exception:
-                            pass
-                    os.replace(vf, bak)    # atomic rename
-                    try:
-                        os.replace(final_tmp, vf)
-                        # success: remove backup
-                        try:
-                            os.remove(bak)
-                        except Exception:
-                            pass
-                        # cleanup any leftover tmp files in list
-                        for tfile in tmp_files_to_clean:
-                            try:
-                                if os.path.exists(tfile):
-                                    os.remove(tfile)
-                            except Exception:
-                                pass
-                        info["success"] = True
-                    except Exception as e_move:
-                        info["notes"].append("move temp failed")
-                        # attempt to restore backup -> original
-                        try:
-                            if os.path.exists(bak):
-                                os.replace(bak, vf)
-                                info["notes"].append("backup restored")
-                        except Exception:
-                            info["notes"].append("backup restore failed")
-                        try:
-                            if os.path.exists(final_tmp):
-                                os.remove(final_tmp)
-                        except Exception:
-                            pass
-                except Exception:
-                    info["notes"].append("rename to backup failed")
-                    try:
-                        if final_tmp and os.path.exists(final_tmp):
-                            os.remove(final_tmp)
-                    except Exception:
-                        pass
-                finally:
-                    # ensure we didn't leave stray temp files
-                    for tfile in tmp_files_to_clean:
-                        try:
-                            if os.path.exists(tfile):
-                                # keep only final_tmp moved - others delete
-                                if final_tmp and os.path.abspath(tfile) == os.path.abspath(final_tmp):
-                                    continue
-                                os.remove(tfile)
-                        except Exception:
-                            pass
-            else:
-                info["notes"].append("no final temp produced")
-
-            # ---- Single-line logging per file ----
-            if info["success"]:
-                # concise success: filename, new fps, frames, method
-                self.loginfo(f"reframe_videos: {shortname}: success fps={info['new_fps']:.3f}, frames={info['frames']}, method={info['method']}")
-            else:
-                # concise failure: filename + last note (or joined notes)
-                reason = info["notes"][-1] if info["notes"] else "unknown error"
-                # prefer short descriptive messages
-                pretty = {
-                    "file not found": "file not found",
-                    "cv2 open failed": "cannot open with OpenCV",
-                    "no frames": "no frames",
-                    "ffmpeg failed": "ffmpeg failed",
-                    "ffmpeg exception": "ffmpeg exception",
-                    "ffmpeg duration mismatch": "ffmpeg produced wrong duration",
-                    "ffmpeg re-encode duration mismatch": "ffmpeg produced wrong duration",
-                    "ffmpeg duration mismatch": "ffmpeg produced wrong duration",
-                    "ffmpeg exception": "ffmpeg exception",
-                    "ffmpeg duration mismatch": "ffmpeg produced wrong duration",
-                    "audio mux failed": "audio mux failed",
-                    "audio mux exception": "audio mux exception",
-                    "move temp failed": "moving new file into place failed",
-                    "backup restore failed": "failed to restore backup after move failure",
-                    "rename to backup failed": "failed to rename original to backup",
-                    "opencv open failed for re-encode": "cannot open for re-encode",
-                    "cannot determine frame size": "cannot determine frame size",
-                    "opencv writer failed": "OpenCV writer failed",
-                    "opencv exception": "OpenCV exception",
-                    "no final temp produced": "no final temp produced",
-                }.get(reason, reason)
-                self.logerr(f"reframe_videos: {shortname}: failed: {pretty}")
+        self.__foma_speed_csv_writer.writerow(row)
+        self.__foma_speed_file.flush()
 
     def __on_shutdown(self):
         self.loginfo("Shutting down WriterNode...")

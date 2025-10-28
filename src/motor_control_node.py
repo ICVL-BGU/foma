@@ -3,8 +3,8 @@
 from pickletools import dis
 import rospy
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import Float32, Int16MultiArray
-from geometry_msgs.msg import Twist, Vector3
+from std_msgs.msg import Float32, Int16MultiArray, Header
+from geometry_msgs.msg import Twist, TwistStamped, Vector3
 from abstract_node import AbstractNode
 from etc.settings import *
 from etc.MotorControl import *
@@ -27,7 +27,7 @@ class MotorControlNode(AbstractNode):
         super().__init__('motor_control', 'Motor control')
 
         self.__blocked_publisher = rospy.Publisher('motor_control/blocked', Int16MultiArray, queue_size=10)
-        self.__speed_publisher = rospy.Publisher('motor_control/speed', Twist, queue_size=10)
+        self.__speed_publisher = rospy.Publisher('motor_control/speed', TwistStamped, queue_size=10)
         
         rospy.Subscriber('lidar/scans', LaserScan, self.__update_lidar, queue_size=10)
         rospy.Subscriber('motor_control/angle', Float32, self.__handle_angle) 
@@ -74,7 +74,6 @@ class MotorControlNode(AbstractNode):
 
         self.__fresh_threshold = 1.0  # seconds, how long to keep the last command fresh
 
-        # self.hComponent, self.vComponent = 0, 0
         rospy.on_shutdown(self.__on_shutdown)
 
     def run(self):
@@ -99,10 +98,13 @@ class MotorControlNode(AbstractNode):
                 self.__current_h, self.__current_v = self.__check_blocking(self.__current_h, self.__current_v)
                 self.__move_by_components(self.__current_h, self.__current_v)
 
-            self.__speed_publisher.publish(Twist(
-                linear = Vector3(self.__current_v * self.__speed, self.__current_h * self.__speed, 0.0),
-                angular = Vector3(0.0, 0.0, self.__current_rotate * self.__speed)
-            ))
+            self.__speed_publisher.publish(
+                TwistStamped(
+                    twist = Twist(linear = Vector3(self.__current_v * self.__speed, self.__current_h * self.__speed, 0.0),
+                                  angular = Vector3(0.0, 0.0, self.__current_rotate * self.__speed)),
+                    header = Header(stamp = rospy.Time.now())
+                )
+            )
             rate.sleep()
 
     def __ramp(self, current, target):
