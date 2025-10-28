@@ -940,7 +940,7 @@ class MainWindow(QMainWindow):
         
         self.__start_button.setDisabled(True)
         self.__pause_button.setDisabled(False)
-        self.__reset_button.setDisabled(True)
+        self.__reset_button.setDisabled(False)
         self.__close_button.setDisabled(True)
 
         self.__ongoing_trial = True
@@ -950,7 +950,7 @@ class MainWindow(QMainWindow):
     def __on_continue_click(self):
         self.__start_button.setDisabled(True)
         self.__pause_button.setDisabled(False)
-        self.__reset_button.setDisabled(True)
+        self.__reset_button.setDisabled(False)
         self.__close_button.setDisabled(True)
 
         self.__ongoing_trial = True

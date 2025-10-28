@@ -28,18 +28,48 @@ except Exception:
     cv2 = None
     np = None
 
+def setup_logger(logfile_path=None, logger_name="reframe_worker"):
+    """
+    Create a named logger once. If logfile_path is provided we add a FileHandler.
+    We only add a StreamHandler when stdout is a tty (interactive) to avoid
+    duplicating logs when parent redirects stdout to the same logfile.
+    Returns the logger.
+    """
+    logger = logging.getLogger(logger_name)
 
-def setup_logger(logfile_path=None):
-    logger = logging.getLogger("reframe_worker")
+    # If already configured return it — prevents duplicate handlers on repeated calls
+    if getattr(logger, "_reframe_configured", False):
+        return logger
+
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
-    sh = logging.StreamHandler(sys.stdout)
-    sh.setFormatter(fmt)
-    logger.addHandler(sh)
+
+    # If a logfile is provided, add a FileHandler. Do NOT also unconditionally add
+    # a StreamHandler that writes the same records to stdout (which the parent may
+    # redirect into the same logfile).
     if logfile_path:
-        fh = logging.FileHandler(logfile_path)
-        fh.setFormatter(fmt)
-        logger.addHandler(fh)
+        try:
+            fh = logging.FileHandler(logfile_path, mode="a")
+            fh.setFormatter(fmt)
+            logger.addHandler(fh)
+        except Exception:
+            # fallback: still add stream handler if file handler can't be created
+            sh = logging.StreamHandler(sys.stdout)
+            sh.setFormatter(fmt)
+            logger.addHandler(sh)
+        # only add stream handler if stdout is interactive (user watching)
+        if sys.stdout.isatty():
+            sh2 = logging.StreamHandler(sys.stdout)
+            sh2.setFormatter(fmt)
+            logger.addHandler(sh2)
+    else:
+        # no logfile: log to stdout
+        sh = logging.StreamHandler(sys.stdout)
+        sh.setFormatter(fmt)
+        logger.addHandler(sh)
+
+    # mark configured so repeated calls don't add extra handlers
+    logger._reframe_configured = True
     return logger
 
 
