@@ -67,7 +67,7 @@ class VideoCameraNode(AbstractNode):
                 self.pub.publish(self.msg)
 
             except TimeoutError:
-                self.logwarn_throttle(5.0, "Camera frame timeout (lores).")
+                self.logwarn("Camera frame timeout (lores).")
             except Exception as e:
                 self.logerr(f"Error capturing/publishing frame: {e}")
 
