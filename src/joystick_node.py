@@ -13,24 +13,23 @@ class JoystickNode:
         rospy.init_node("joystick_node")
         rospy.loginfo("Joystick node started")
 
-        # ----- mode handling -----
+        # mode handling 
         self.mode = "disabled"
         rospy.Subscriber("control/mode", String, self.set_mode)
         self.mode_pub = rospy.Publisher("control/mode", String, queue_size=1)
 
-        # ----- publishers to MotorControlNode -----
+        #  publishers to MotorControlNode 
         self.pub_vector = rospy.Publisher("motor_control/vector", Vector3, queue_size=10)
         self.pub_rotate = rospy.Publisher("motor_control/rotate", Float32, queue_size=10)
-        # (not strictly needed, but here if you want it later)
         self.pub_twist  = rospy.Publisher("motor_control/twist", Twist, queue_size=10)
 
-        # ----- services -----
-        # fish feeder (Trigger, from your feeder_node)
+        #  services 
+        # fish feeder 
         self.feed_srv  = rospy.ServiceProxy("fish_feeder/feed", Trigger)
 
-        # lidar bypass (SetBool, from MotorControlNode)
+        # lidar bypass
         self.lidar_srv = rospy.ServiceProxy("motor_control/bypass_lidar", SetBool)
-        self.lidar_bypassed = False   # we’ll toggle this from the joystick
+        self.lidar_bypassed = False   
 
         # speed control (optional)
         self.speed_pub = rospy.Publisher("motor_control/set_speed", Float32, queue_size=1)
@@ -41,14 +40,12 @@ class JoystickNode:
 
         # for edge detection on buttons (so we don’t spam services)
         self.prev_buttons = []
-
-    # ------------------------------------------------------------------    
+   
 
     def set_mode(self, msg: String):
         self.mode = msg.data
         rospy.loginfo(f"[joystick_node] Control mode set to: {self.mode}")
 
-    # ------------------------------------------------------------------    
 
     def on_joy(self, msg: Joy):
         # store buttons for rising edge checks
@@ -73,7 +70,7 @@ class JoystickNode:
         BTN_LB = msg.buttons[4]
         BTN_RB = msg.buttons[5]
 
-        # ----- A: feed fish -----
+        #  A: feed fish 
         if BTN_A and not self.prev_buttons[0]:
             try:
                 self.feed_srv(TriggerRequest())
@@ -81,7 +78,7 @@ class JoystickNode:
             except rospy.ServiceException as e:
                 rospy.logerr(f"[joystick_node] Feeder service call failed: {e}")
 
-        # ----- B: toggle lidar bypass -----
+        #  B: toggle lidar bypass 
         if BTN_B and not self.prev_buttons[1]:
             self.lidar_bypassed = not self.lidar_bypassed
             req = SetBoolRequest(data=self.lidar_bypassed)
@@ -91,13 +88,13 @@ class JoystickNode:
             except rospy.ServiceException as e:
                 rospy.logerr(f"[joystick_node] LIDAR bypass service call failed: {e}")
 
-        # ----- X/Y: change global mode if you want -----
+        #  X/Y: change global mode if you want 
         if BTN_X and not self.prev_buttons[2]:
             self.mode_pub.publish("manual")
         if BTN_Y and not self.prev_buttons[3]:
             self.mode_pub.publish("fish_feeder")
 
-        # ----- LB/RB: simple speed control example -----
+        #  LB/RB: simple speed control example 
         if BTN_LB and not self.prev_buttons[4]:
             self.current_speed = max(0.2, self.current_speed - 0.2)
             self.speed_pub.publish(self.current_speed)
@@ -107,7 +104,7 @@ class JoystickNode:
             self.speed_pub.publish(self.current_speed)
             rospy.loginfo(f"[joystick_node] Speed up: {self.current_speed:.2f}")
 
-        # ----- movement: rotate or translate -----
+        #  movement: rotate or translate 
 
         # rotation wins if strong enough
         if abs(rx) > 0.2:
@@ -123,8 +120,7 @@ class JoystickNode:
             self.pub_vector.publish(vec)
 
         self.prev_buttons = msg.buttons[:]
-
-    # ------------------------------------------------------------------    
+ 
 
     def run(self):
         rospy.spin()
