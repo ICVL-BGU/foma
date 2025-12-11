@@ -13,7 +13,8 @@ from foma.msg import FomaLocation
 from geometry_msgs.msg import Point
 from ultralytics import YOLO
 import joblib
-import pickle
+import json
+import numpy as np
 
 LIDAR_TAG = 1
 
@@ -22,10 +23,10 @@ class LocalizationNode(AbstractNode):
         super().__init__('localization', 'FOMA Localization')
 
         detection_model_path = r"/home/icvl/ros_ws/src/foma/models/foma_detection.pt" # /home/icvl/ros_ws/src/foma/yolo_pose.pt" OR /home/alex/ROS/src/foma/yolo_pose.pt
-        localization_model_path = r"/home/icvl/ros_ws/src/foma/models/foma_localization.pkl"
+        mapper_path = r"/home/alex/FOMA/repo/models/image_world_mapper.json"
         self.detection_model = YOLO(detection_model_path)
-        with open(localization_model_path, 'rb') as f:
-            self.localization_model = pickle.load(f)
+        with open(mapper_path, 'r') as f:
+            self.mapper_params = json.load(f)
         self.img = None
         self.image_sub = rospy.Subscriber('ceiling_camera/image', Image, self.read_image)
         self.location_pub = rospy.Publisher('localization/location', FomaLocation, queue_size=10)
@@ -42,19 +43,78 @@ class LocalizationNode(AbstractNode):
     def process_image(self):
         timestamp = rospy.Time.now()
         self.location.header.stamp = timestamp
-        prediction = self.detection_model.track(self.img, verbose=False) # max_det=1,
-        indices = prediction[0].boxes.data[:, -1] == LIDAR_TAG
         
-        if indices.any():
-            bounding_box = prediction[0].boxes.xywhn[indices][0]
-            x_i, y_i, _, _ = bounding_box
+        result = self.__detect_lidar()
+        
+        if result is not None:
+            x_i, y_i = result
             
-            x_w, y_w = self.localization_model.predict(bounding_box.cpu().reshape(1, -1))[0]
+            x_w, y_w = self._map(x_i, y_i)
 
             self.location.image = Point(x_i, y_i, 0)
             self.location.world = Point(x_w, y_w, 0)
 
         self.location_pub.publish(self.location)
+
+    def __detect_lidar(self):
+        prediction = self.detection_model.track(self.img, verbose=False)
+        indices = prediction[0].boxes.data[:, -1] == LIDAR_TAG
+        
+        if indices.any():
+            # Filter boxes by LIDAR_TAG
+            lidar_boxes = prediction[0].boxes.xywhn[indices]
+            lidar_conf = prediction[0].boxes.conf[indices]
+            
+            # Find the detection with the highest confidence
+            max_conf_idx = lidar_conf.argmax()
+            x, y, _, _ = lidar_boxes[max_conf_idx]
+            
+            return x, y
+        
+        return None
+
+    def _map(self, x, y):
+        """Complete transformation: image coordinates -> undistort -> world coordinates."""
+        # Extract parameters
+        cx = self.mapper_params['cx']
+        cy = self.mapper_params['cy']
+        f = self.mapper_params['f']
+        
+        # Step 1: Undistort fisheye point
+        # Normalize by focal length and center
+        x_d = (x - cx) / f
+        y_d = (y - cy) / f
+        r_d = np.sqrt(x_d**2 + y_d**2)
+        
+        # Apply distortion model (equisolid)
+        arg = np.clip(r_d / 2, -1.0, 1.0)
+        theta = 2 * np.arcsin(arg)
+        
+        # Convert to undistorted coordinates
+        if r_d > 1e-9:
+            scale = np.tan(theta) / r_d
+        else:
+            scale = 1.0
+        x_u = x_d * scale
+        y_u = y_d * scale
+        
+        # Convert back to pixel coordinates
+        undistorted_x = x_u * f + cx
+        undistorted_y = y_u * f + cy
+        
+        # Step 2: Apply homography
+        # Convert to homogeneous coordinates
+        H = np.array(self.mapper_params['homography'])
+        point_h = np.array([undistorted_x, undistorted_y, 1.0])
+        
+        # Apply homography
+        world_h = H @ point_h
+        
+        # Convert back from homogeneous coordinates
+        x_w = world_h[0] / world_h[2]
+        y_w = world_h[1] / world_h[2]
+        
+        return x_w, y_w
 
 if __name__ == "__main__":
     rospy.init_node('localization_node')
