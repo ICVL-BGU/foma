@@ -22,8 +22,8 @@ class LocalizationNode(AbstractNode):
     def __init__(self):
         super().__init__('localization', 'FOMA Localization')
 
-        detection_model_path = r"/home/icvl/ros_ws/src/foma/models/foma_detection.pt" # /home/icvl/ros_ws/src/foma/yolo_pose.pt" OR /home/alex/ROS/src/foma/yolo_pose.pt
-        mapper_path = r"/home/alex/FOMA/repo/models/image_world_mapper.json"
+        detection_model_path = r"/home/icvl/ros_ws/src/foma/models/foma_detection.pt"
+        mapper_path = r"/home/icvl/ros_ws/src/foma/models/image_world_mapper.json"
         self.detection_model = YOLO(detection_model_path)
         with open(mapper_path, 'r') as f:
             self.mapper_params = json.load(f)
