@@ -15,6 +15,7 @@ from ultralytics import YOLO
 import joblib
 import json
 import numpy as np
+from etc.settings import *
 
 LIDAR_TAG = 1
 
@@ -49,11 +50,11 @@ class LocalizationNode(AbstractNode):
         if result is not None:
             x_i, y_i = result
             
-            x_w, y_w = self._map(x_i, y_i)
+            x_w, y_w = self._map(x_i * ROOM_CAMERA_FRAME_SHAPE[1], y_i * ROOM_CAMERA_FRAME_SHAPE[0])
 
             self.location.image = Point(x_i, y_i, 0)
-            self.location.world = Point(x_w, y_w, 0)
-
+            self.location.world = Point(x_w / ROOM_FLOOR_MAP_SHAPE[1], y_w / ROOM_FLOOR_MAP_SHAPE[1], 0)
+        
         self.location_pub.publish(self.location)
 
     def __detect_lidar(self):

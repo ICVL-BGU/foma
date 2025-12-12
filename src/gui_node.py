@@ -43,6 +43,7 @@ from cv_bridge import CvBridge, CvBridgeError
 # Custom ROS messages
 from foma.srv import Light, Check, Write
 from foma.msg import FomaLocation
+from etc.settings import *
 
 class MainWindow(QMainWindow):
     fish_frame_ready = pyqtSignal(np.ndarray)
@@ -76,7 +77,7 @@ class MainWindow(QMainWindow):
         self.__foma_img_location = None
         self.__foma_world_location = None
         self.__room_image = None
-        self.__room_map = None
+        self.__room_map = np.ones((ROOM_MAP_FRAME_SHAPE[1], ROOM_MAP_FRAME_SHAPE[0], 3), dtype=np.uint8) * 255
         self.__fish_state = None
         self.__fish_image = None
 
@@ -669,7 +670,7 @@ class MainWindow(QMainWindow):
             # Ensure coordinates stay within bounds
             x = np.clip(self.__foma_world_location.x, 0, self.__room_frame_shape[1] - 1).astype(int)
             y = np.clip(self.__foma_world_location.y, 0, self.__room_frame_shape[0] - 1).astype(int)
-            cv2.circle(self.__room_map, (x, y), 5, (0, 255, 0), -1)
+            cv2.circle(self.__room_map, (x, y), 2, (0, 255, 0), -1)
 
     def __update_foma_speed(self, speed: TwistStamped):
         self.__foma_speed = speed.twist
@@ -854,7 +855,7 @@ class MainWindow(QMainWindow):
             if self.__foma_world_location is not None:
                 x = np.clip(self.__foma_world_location.x, 0, self.__room_frame_shape[1] - 1).astype(int)
                 y = np.clip(self.__foma_world_location.y, 0, self.__room_frame_shape[0] - 1).astype(int)
-                cv2.circle(map_frame, (x, y), 5, (0, 0, 255), -1)
+                cv2.circle(map_frame, (x, y), 2, (0, 0, 255), -1)
             frame = map_frame.data
 
         if frame is not None:
@@ -937,6 +938,8 @@ class MainWindow(QMainWindow):
         )
         if not ok or not subject_id:
             return
+        
+        self.__room_map = np.ones((ROOM_MAP_FRAME_SHAPE[1], ROOM_MAP_FRAME_SHAPE[0], 3), dtype=np.uint8) * 255
         
         self.__start_button.setDisabled(True)
         self.__pause_button.setDisabled(False)
