@@ -3,7 +3,7 @@ import os
 import json
 import argparse
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import cv2
 import numpy as np
@@ -51,22 +51,18 @@ def _create_grid_background(size_px: int = 1000) -> tuple[np.ndarray, float]:
     grid_bg = np.ones((size_px, size_px, 3), dtype=np.uint8) * 255
     scale = size_px / 5000.0  # px per mm
 
-    for i in range(0, 5001, 500):
+    for i in range(0, 5001, 1000):
         px = int(i * scale)
-        color = (220, 220, 220) if i % 1000 else (180, 180, 180)
-        thickness = 1 if i % 1000 else 2
+        color = (220, 220, 220)
+        thickness = 1
         cv2.line(grid_bg, (px, 0), (px, size_px - 1), color, thickness)
         cv2.line(grid_bg, (0, px), (size_px - 1, px), color, thickness)
 
     font = cv2.FONT_HERSHEY_SIMPLEX
-    cv2.putText(grid_bg, "Floor Plan (5000x5000mm)", (10, 30), font, 0.7, (0, 0, 0), 2)
-    cv2.putText(grid_bg, "X (mm)", (size_px - 90, size_px - 10), font, 0.5, (0, 0, 0), 1)
-    cv2.putText(grid_bg, "Y", (10, 20), font, 0.5, (0, 0, 0), 1)
-    cv2.putText(grid_bg, "(mm)", (10, 40), font, 0.5, (0, 0, 0), 1)
 
     for i in range(0, 5001, 1000):
         px = int(i * scale)
-        cv2.putText(grid_bg, str(i), (px + 5, size_px - 5), font, 0.4, (0, 0, 0), 1)
+        cv2.putText(grid_bg, str(i), (px + 5, 15), font, 0.4, (0, 0, 0), 1)
         cv2.putText(grid_bg, str(i), (5, px + 15), font, 0.4, (0, 0, 0), 1)
 
     return grid_bg, scale
@@ -75,7 +71,7 @@ def _create_grid_background(size_px: int = 1000) -> tuple[np.ndarray, float]:
 def _init_models(model_path: str, mapper_path: str):
     global _MODEL, _MAPPER
     if _MODEL is None:
-        _MODEL = YOLO(model_path)
+        _MODEL = YOLO(model_path, verbose=False)
     if _MAPPER is None:
         with open(mapper_path, "r") as f:
             _MAPPER = json.load(f)
@@ -94,14 +90,16 @@ def _process_video(folder: Path, model_path: str, mapper_path: str, grid_size_px
 
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS) or 15.0
+        
+        if frame_count == 0:
+            return folder, False, "video has 0 frames (corrupted)"
 
         grid_bg, scale = _create_grid_background(grid_size_px)
         out_path = folder / "room_map.mp4"
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(str(out_path), fourcc, fps, (grid_size_px, grid_size_px))
 
-        last_point = None
-        pbar = tqdm(total=frame_count, desc=f"{folder.name}", leave=False)
+        path_history = []
 
         while True:
             ret, frame = cap.read()
@@ -121,35 +119,37 @@ def _process_video(folder: Path, model_path: str, mapper_path: str, grid_size_px
                         best_box = box
 
             grid_frame = grid_bg.copy()
+            
+            # Add current point to path history
             if best_box is not None:
                 cx, cy, _, _ = best_box.xywh[0].cpu().numpy()
                 x_w, y_w = _map_point(cx, cy, _MAPPER)
-
-                pt = (int(x_w * scale), int(y_w * scale))
-                cv2.circle(grid_frame, pt, 6, (0, 0, 255), -1)
-
-                if last_point is not None:
-                    cv2.line(grid_frame, last_point, pt, (0, 255, 0), 2)
-                last_point = pt
-            else:
-                # No detection this frame; keep last_point but do not draw
-                pass
+                # Flip y-axis so origin is at bottom-left
+                pt = (int(x_w * scale), int(grid_size_px - y_w * scale))
+                path_history.append(pt)
+            
+            # Draw entire path history
+            if len(path_history) > 1:
+                for i in range(len(path_history) - 1):
+                    cv2.line(grid_frame, path_history[i], path_history[i + 1], (0, 255, 0), 2)
+            
+            # Draw current point
+            if len(path_history) > 0:
+                cv2.circle(grid_frame, path_history[-1], 6, (0, 0, 255), -1)
 
             writer.write(grid_frame)
-            pbar.update(1)
 
-        pbar.close()
         cap.release()
         writer.release()
         return folder, True, None
-    except Exception as exc:  # pylint: disable=broad-except
+    except Exception as exc:
         return folder, False, str(exc)
 
 
 def main():
     parser = argparse.ArgumentParser(description="Batch room map generator")
     parser.add_argument("root", type=str, help="Path containing folders to process")
-    parser.add_argument("--model", type=str, default=r"/home/icvl/ros_ws/src/foma/models/foma_detection.pt", help="YOLO model path")
+    parser.add_argument("--model", type=str, default=r"/home/alex/FOMA/repo/models/foma_detection.pt", help="YOLO model path")
     parser.add_argument("--mapper", type=str, default=r"/home/alex/FOMA/repo/models/image_world_mapper.json", help="Mapper JSON path")
     parser.add_argument("--workers", type=int, default=os.cpu_count() or 4, help="Number of parallel workers")
     parser.add_argument("--grid-size", type=int, default=1000, help="Output grid size in pixels (square)")
@@ -165,21 +165,30 @@ def main():
         raise SystemExit("No folders found to process.")
 
     failures = []
-    with ProcessPoolExecutor(max_workers=args.workers) as executor:
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
         futures = {
             executor.submit(_process_video, folder, args.model, args.mapper, args.grid_size): folder
             for folder in folders
         }
 
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Folders", unit="folder"):
+        for future in tqdm(
+            as_completed(futures),
+            total=len(futures),
+            desc="Processing folders",
+            unit="folder",
+        ):
             folder, ok, err = future.result()
             if not ok:
                 failures.append((folder, err or "unknown error"))
 
     if failures:
-        print("\nSkipped or failed videos:")
+        print("\n" + "="*60)
+        print("SKIPPED OR FAILED VIDEOS:")
+        print("="*60)
         for folder, reason in failures:
-            print(f"- {folder}: {reason}")
+            print(f"  {folder.name}: {reason}")
+        print("="*60)
+        print(f"Total failed: {len(failures)}/{len(folders)}")
     else:
         print("\nAll videos processed successfully.")
 
