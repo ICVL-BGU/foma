@@ -357,6 +357,7 @@ class MainWindow(QMainWindow):
             self.__motor_control_twist.publish(Twist())
             self.__motor_set_speed.publish(Float32(1.0))
             self.__bypass_lidar(False)
+            self.__velocity_timer.stop()
 
             self.__manual_control_window = None
 
