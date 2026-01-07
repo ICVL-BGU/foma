@@ -78,7 +78,7 @@ class MotorControlNode(AbstractNode):
         self.__last_cmd_time = rospy.Time(0)
 
         self.__fresh_threshold = 1.0  # seconds, how long to keep the last command fresh
-        self.__go_home_enabled = False
+        
 
 
         rospy.on_shutdown(self.__on_shutdown)
@@ -190,6 +190,9 @@ class MotorControlNode(AbstractNode):
         self.__last_cmd_time = rospy.Time.now()
 
     def __handle_twist(self, msg: Twist):
+        if not self.__go_home_enabled:
+            return
+
         self.__desired_h = msg.linear.y
         self.__desired_v = msg.linear.x
         self.__desired_rotate = 0.0
@@ -327,15 +330,15 @@ class MotorControlNode(AbstractNode):
             self.__motor_control.shutdown()
 
     def __on_go_home_enabled(self, msg: Bool):
-    self.__go_home_enabled = bool(msg.data)
+        self.__go_home_enabled = bool(msg.data)
 
-    # Optional: if enabling go-home, clear any stale auto command
-    # (manual still can override via twist/rotate)
-    if self.__go_home_enabled:
-        self.__desired_h = 0.0
-        self.__desired_v = 0.0
-        self.__desired_rotate = 0.0
-        self.__last_cmd_time = rospy.Time.now()
+        # Optional: if enabling go-home, clear any stale auto command
+        # (manual still can override via twist/rotate)
+        if self.__go_home_enabled:
+            self.__desired_h = 0.0
+            self.__desired_v = 0.0
+            self.__desired_rotate = 0.0
+            self.__last_cmd_time = rospy.Time.now()
 
     def __handle_go_home_vector(self, msg: Vector3):
         # Only accept go-home commands when enabled

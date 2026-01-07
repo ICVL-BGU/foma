@@ -964,10 +964,10 @@ class MainWindow(QMainWindow):
         self.__close_button.setDisabled(True)
 
         if self.__go_home_enable is not None:
-        try:
-            self.__go_home_enable(False)
-        except Exception as e:
-            self.logwarn(f"Failed disabling go_home: {e}")
+            try:
+                self.__go_home_enable(False)
+            except Exception as e:
+                self.logwarn(f"Failed disabling go_home: {e}")
 
 
         self.__ongoing_trial = True
@@ -995,10 +995,10 @@ class MainWindow(QMainWindow):
         self.__ongoing_trial = False
 
         if self.__go_home_enable is not None:
-        try:
-            self.__go_home_enable(True)
-        except Exception as e:
-            self.logwarn(f"Failed enabling go_home: {e}")
+            try:
+                self.__go_home_enable(True)
+            except Exception as e:
+                self.logwarn(f"Failed enabling go_home: {e}")
 
 
         self.__motor_control_vector.publish(Vector3(0, 0, 0))
@@ -1017,10 +1017,10 @@ class MainWindow(QMainWindow):
         self.__writer_control("stop", None, rospy.Time.now())
 
         if self.__go_home_enable is not None:
-        try:
-            self.__go_home_enable(False)
-        except Exception as e:
-            self.logwarn(f"Failed disabling go_home: {e}")
+            try:
+                self.__go_home_enable(False)
+            except Exception as e:
+                self.logwarn(f"Failed disabling go_home: {e}")
 
 
     def __on_close_click(self, event):

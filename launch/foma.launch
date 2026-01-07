@@ -11,8 +11,7 @@
 
     <!-- Node 4 -->
     <node pkg="foma" type="feeder_node.py" name="feeder_node" output="screen"/>
-</launch>
 
     <!-- Node 5 -->
-    <node pkg="foma" type="go_home_node.py" name="go_home_node" output="screen"/>
-
+    <node pkg="foma" type="goHomeNode.py" name="go_home_node" output="screen"/>
+</launch>
