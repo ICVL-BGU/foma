@@ -17,6 +17,7 @@ from PyQt5.QtGui import QPixmap, QImage, QDoubleValidator
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
+    QMessageBox,
     QWidget,
     QGridLayout,
     QFrame,
@@ -108,7 +109,13 @@ class MainWindow(QMainWindow):
         self.__bypass_lidar = None
 
         # Trial Control
-        self.__ongoing_trial = False 
+        self.__ongoing_trial = False
+        self.__session_folder = None
+        self.__subject_id = None
+        self.__current_trial = 0
+        self.__event_log_file = None
+        self.__event_log_writer = None
+        self.__trial_folder = None 
 
     def __init_layouts(self):
         # Top-Left (Fish Camera)
@@ -213,7 +220,7 @@ class MainWindow(QMainWindow):
         # Feed button init
         self.__feed_button = QPushButton()
         self.__feed_button.setText("Feed")
-        self.__feed_button.clicked.connect(lambda:self.__feed())
+        self.__feed_button.clicked.connect(lambda: self.__on_feed_click())
         self.__feed_button.setDisabled(True)
 
         # Feed button label init
@@ -341,12 +348,24 @@ class MainWindow(QMainWindow):
         self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=10)
         self.__motor_control_rotate = rospy.Publisher('motor_control/rotate', Float32, queue_size=10)
         self.__motor_set_speed = rospy.Publisher('motor_control/set_speed', Float32, queue_size=10)
-        self.__writer_control = rospy.ServiceProxy('writer_node/write', Write)
+        
+        # Writer services - one for each writer node
+        self.__writer_services = [
+            rospy.ServiceProxy('csv_writer_foma_location/write', Write),
+            rospy.ServiceProxy('csv_writer_fish_location/write', Write),
+            rospy.ServiceProxy('csv_writer_foma_speed/write', Write),
+            rospy.ServiceProxy('video_writer_room/write', Write),
+            rospy.ServiceProxy('video_writer_foma/write', Write),
+            rospy.ServiceProxy('video_writer_room_map/write', Write),
+        ]
         # self.__motor_control_system_check = rospy.ServiceProxy('motor_control/system_check', Check)
 
     def __init_manual_control_window(self):
         self.__motor_set_speed.publish(Float32(1.0))
         self.__bypass_lidar(False)
+        
+        # Log manual control start
+        self.__log_event("manual_control", "Manual control window opened")
 
         self.__manual_control_window = QDialog(self)
         self.__manual_control_window.setWindowTitle("Manual Robot Control")
@@ -358,6 +377,9 @@ class MainWindow(QMainWindow):
             self.__motor_set_speed.publish(Float32(1.0))
             self.__bypass_lidar(False)
             self.__velocity_timer.stop()
+            
+            # Log manual control end
+            self.__log_event("manual_control", "Manual control window closed")
 
             self.__manual_control_window = None
 
@@ -565,6 +587,33 @@ class MainWindow(QMainWindow):
 
         t = threading.Thread(target=checker_loop, daemon=True)
         t.start()
+
+    def __init_event_log(self, trial_folder):
+        """Initialize event log CSV file for the trial"""
+        self.__trial_folder = trial_folder
+        event_log_path = os.path.join(trial_folder, "trial_events.csv")
+        self.__event_log_file = open(event_log_path, 'w', newline='')
+        self.__event_log_writer = csv.writer(self.__event_log_file)
+        self.__event_log_writer.writerow(["timestamp", "event_type", "details"])
+        self.__event_log_file.flush()
+        rospy.loginfo(f"Created event log: {event_log_path}")
+
+    def __log_event(self, event_type, details=""):
+        """Log an event to the trial events CSV"""
+        if self.__event_log_writer is None:
+            return
+        
+        timestamp = rospy.Time.now().to_sec()
+        self.__event_log_writer.writerow([timestamp, event_type, details])
+        self.__event_log_file.flush()
+        self.loginfo(f"Event logged: {event_type} - {details}")
+
+    def __close_event_log(self):
+        """Close the event log file"""
+        if self.__event_log_file is not None:
+            self.__event_log_file.close()
+            self.__event_log_file = None
+            self.__event_log_writer = None
 
     def __update_velocity(self, direction: int, is_pressed: bool):
         """
@@ -903,7 +952,7 @@ class MainWindow(QMainWindow):
             self.loginfo("Light dimming service available - enabling slider")
             self.__lights_slider.setDisabled(False)
             self.__dim_lights = lights_proxy
-            self.__lights_slider.valueChanged.connect(lambda val:self.__dim_lights(int(255*val/self.__lights_slider.maximum())))
+            self.__lights_slider.valueChanged.connect(lambda val: self.__on_lights_change(val))
         elif self.__dim_lights is not None and lights_proxy is None:
             self.logerr("Light dimming service unavailable - disabling slider")
             self.__lights_slider.setDisabled(True)
@@ -931,14 +980,69 @@ class MainWindow(QMainWindow):
             self.__manual_control_button.setDisabled(True)
             self.__bypass_lidar = None
 
+    def __on_feed_click(self):
+        """Wrapper for feed action to log event"""
+        if self.__feed is not None:
+            self.__feed()
+            self.__log_event("feeding", "Manual feed triggered")
+
+    def __on_lights_change(self, val):
+        """Wrapper for lights change to log event"""
+        if self.__dim_lights is not None:
+            brightness = int(255 * val / self.__lights_slider.maximum())
+            self.__dim_lights(brightness)
+            self.__log_event("light_control", f"Brightness set to {brightness}/255")
+
     def __on_start_click(self):
-        subject_id, ok = QInputDialog.getText(
-            self,
-            "Subject ID",
-            "Please enter subject ID:"
-        )
-        if not ok or not subject_id:
+        # Ask if New Session or New Trial        
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Start Trial")
+        msg_box.setText("What would you like to start?")
+        new_session_btn = msg_box.addButton("New Session", QMessageBox.ActionRole)
+        new_trial_btn = msg_box.addButton("New Trial", QMessageBox.ActionRole)
+        msg_box.addButton(QMessageBox.Cancel)
+        msg_box.exec_()
+        
+        if msg_box.clickedButton() == new_session_btn:
+            # New Session: ask for subject ID and create session folder
+            subject_id, ok = QInputDialog.getText(
+                self,
+                "Subject ID",
+                "Please enter subject ID:"
+            )
+            if not ok or not subject_id:
+                return
+            
+            # Create session folder with timestamp
+            output_folder = os.path.expanduser('~/trial_output')
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+            self.__session_folder = os.path.join(output_folder, f"{timestamp}-{subject_id}")
+            self.__current_trial = 0
+            
+            if not os.path.exists(self.__session_folder):
+                os.makedirs(self.__session_folder)
+                rospy.loginfo(f"Created session folder: {self.__session_folder}")
+        
+        elif msg_box.clickedButton() == new_trial_btn:
+            # New Trial: check if session exists
+            if self.__session_folder is None:
+                QMessageBox.warning(self, "No Session", "Please create a New Session first!")
+                return
+        else:
+            # Cancelled
             return
+        
+        # Increment trial number
+        self.__current_trial += 1
+        trial_folder = os.path.join(self.__session_folder, f"trial_{self.__current_trial}")
+        
+        if not os.path.exists(trial_folder):
+            os.makedirs(trial_folder)
+            rospy.loginfo(f"Created trial folder: {trial_folder}")
+        
+        # Initialize event log
+        self.__init_event_log(trial_folder)
+        self.__log_event("trial_start", f"Trial {self.__current_trial} started")
         
         self.__room_map = np.ones((ROOM_MAP_FRAME_SHAPE[1], ROOM_MAP_FRAME_SHAPE[0], 3), dtype=np.uint8) * 255
         
@@ -949,7 +1053,12 @@ class MainWindow(QMainWindow):
 
         self.__ongoing_trial = True
         
-        self.__writer_control("start", subject_id, rospy.Time.now())
+        # Call all writer services with trial folder path
+        for writer_service in self.__writer_services:
+            try:
+                writer_service("start", trial_folder, rospy.Time.now())
+            except rospy.ServiceException as e:
+                rospy.logerr(f"Writer service call failed: {e}")
 
     def __on_continue_click(self):
         self.__start_button.setDisabled(True)
@@ -958,6 +1067,9 @@ class MainWindow(QMainWindow):
         self.__close_button.setDisabled(True)
 
         self.__ongoing_trial = True
+        
+        # Log continue event
+        self.__log_event("trial_continue", "Trial resumed by user")
         
     def __on_pause_click(self):
         self.__start_button.setDisabled(False)
@@ -972,6 +1084,9 @@ class MainWindow(QMainWindow):
         self.__ongoing_trial = False
         self.__motor_control_vector.publish(Vector3(0, 0, 0))
         
+        # Log pause event
+        self.__log_event("trial_pause", "Trial paused by user")
+        
     def __on_reset_click(self):
         self.__start_button.setDisabled(False)
         self.__pause_button.setDisabled(True)
@@ -983,10 +1098,33 @@ class MainWindow(QMainWindow):
         self.__start_button.clicked.connect(self.__on_start_click)
 
         self.__ongoing_trial = False
-        self.__writer_control("stop", None, rospy.Time.now())
+        
+        # Log stop event
+        self.__log_event("trial_stop", f"Trial {self.__current_trial} stopped")
+        
+        # Close event log
+        self.__close_event_log()
+        
+        # Call all writer services to stop
+        for writer_service in self.__writer_services:
+            try:
+                writer_service("stop", "", rospy.Time.now())
+            except rospy.ServiceException as e:
+                rospy.logerr(f"Writer service call failed: {e}")
 
     def __on_close_click(self, event):
-        self.__writer_control("stop", None, rospy.Time.now())
+        # Log stop event if trial is ongoing
+        if self.__event_log_writer is not None:
+            self.__log_event("trial_stop", "Trial stopped - GUI closing")
+            self.__close_event_log()
+        
+        # Call all writer services to stop
+        for writer_service in self.__writer_services:
+            try:
+                writer_service("stop", "", rospy.Time.now())
+            except rospy.ServiceException as e:
+                rospy.logerr(f"Writer service call failed: {e}")
+        
         QApplication.quit()
         rospy.signal_shutdown("Closing GUI")
 

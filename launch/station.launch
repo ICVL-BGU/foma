@@ -15,7 +15,8 @@
     <node pkg="foma" type="light_dimmer_node.py" name="light_dimmer_node" output="screen"/>
 
     <!-- Node 6 -->
-    <node pkg="foma" type="writer_node.py" name="writer_node" output="screen"/>
+    <!-- <node pkg="foma" type="writer_node.py" name="writer_node" output="screen"/> -->
+    <include file="$(find foma)/launch/writers.launch"/>
 
     <!-- Joystick to Motor-->
     <node pkg="foma" type="joystick_node.py" name="joystick_node" output="screen"/>
