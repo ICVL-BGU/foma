@@ -39,6 +39,8 @@ from sensor_msgs.msg import Image, CompressedImage
 from std_msgs.msg import Float32, Int16MultiArray
 from std_srvs.srv import Trigger, SetBool
 from cv_bridge import CvBridge, CvBridgeError
+from std_srvs.srv import SetBool, SetBoolRequest
+
 
 # Custom ROS messages
 from foma.srv import Light, Check, Write
@@ -109,6 +111,9 @@ class MainWindow(QMainWindow):
 
         # Trial Control
         self.__ongoing_trial = False 
+
+        self.__go_home_enable = None
+
 
     def __init_layouts(self):
         # Top-Left (Fish Camera)
@@ -548,6 +553,8 @@ class MainWindow(QMainWindow):
                 ('__dim_lights',              'light_dimmer/change',     Light),
                 ('__motor_control_system_check','motor_control/system_check', Check),
                 ('__bypass_lidar',            'motor_control/bypass_lidar', SetBool),
+                ('__go_home_enable', 'go_home/enable', SetBool),
+
             ]
             while not rospy.is_shutdown():
                 status = {}
@@ -930,6 +937,16 @@ class MainWindow(QMainWindow):
             self.__manual_control_button.setDisabled(True)
             self.__bypass_lidar = None
 
+
+        go_home_proxy = status.get('__go_home_enable')
+        if self.__go_home_enable is None and go_home_proxy is not None:
+            self.loginfo("GoHome enable service available")
+            self.__go_home_enable = go_home_proxy
+        elif self.__go_home_enable is not None and go_home_proxy is None:
+            self.logerr("GoHome enable service unavailable")
+            self.__go_home_enable = None
+
+
     def __on_start_click(self):
         subject_id, ok = QInputDialog.getText(
             self,
@@ -945,6 +962,13 @@ class MainWindow(QMainWindow):
         self.__pause_button.setDisabled(False)
         self.__reset_button.setDisabled(False)
         self.__close_button.setDisabled(True)
+
+        if self.__go_home_enable is not None:
+        try:
+            self.__go_home_enable(False)
+        except Exception as e:
+            self.logwarn(f"Failed disabling go_home: {e}")
+
 
         self.__ongoing_trial = True
         
@@ -969,6 +993,14 @@ class MainWindow(QMainWindow):
         self.__start_button.clicked.connect(self.__on_continue_click)
 
         self.__ongoing_trial = False
+
+        if self.__go_home_enable is not None:
+        try:
+            self.__go_home_enable(True)
+        except Exception as e:
+            self.logwarn(f"Failed enabling go_home: {e}")
+
+
         self.__motor_control_vector.publish(Vector3(0, 0, 0))
         
     def __on_reset_click(self):
@@ -983,6 +1015,13 @@ class MainWindow(QMainWindow):
 
         self.__ongoing_trial = False
         self.__writer_control("stop", None, rospy.Time.now())
+
+        if self.__go_home_enable is not None:
+        try:
+            self.__go_home_enable(False)
+        except Exception as e:
+            self.logwarn(f"Failed disabling go_home: {e}")
+
 
     def __on_close_click(self, event):
         self.__writer_control("stop", None, rospy.Time.now())

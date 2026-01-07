@@ -2,9 +2,8 @@
 import math
 import rospy
 from geometry_msgs.msg import Vector3
-from std_msgs.msg import Int16MultiArray
+from std_msgs.msg import Int16MultiArray, Bool
 from std_srvs.srv import SetBool, SetBoolResponse
-
 from foma.msg import FomaLocation
 
 class GoHomeNode:
@@ -16,28 +15,32 @@ class GoHomeNode:
         self.blocked_angles = set()
 
         # Tunables
-        self.goal_x = 0.5
-        self.goal_y = 0.5
-        self.arrival_tol = rospy.get_param("~arrival_tol", 0.03)   # normalized units (~15cm if room=5m)
-        self.max_cmd = rospy.get_param("~max_cmd", 0.8)            # 0..1 scaling
+        self.goal_x = rospy.get_param("~goal_x", 0.5)
+        self.goal_y = rospy.get_param("~goal_y", 0.5)
+        self.arrival_tol = rospy.get_param("~arrival_tol", 0.03)
+        self.max_cmd = rospy.get_param("~max_cmd", 0.8)
         self.publish_hz = rospy.get_param("~publish_hz", 20)
 
         # Pub/sub
-        self.pub_vec = rospy.Publisher("motor_control/vector", Vector3, queue_size=10)
+        self.pub_vec = rospy.Publisher("go_home/vector", Vector3, queue_size=10)
+        self.pub_enabled = rospy.Publisher("go_home/enabled", Bool, queue_size=1, latch=True)
+
         rospy.Subscriber("localization/location", FomaLocation, self.on_location)
         rospy.Subscriber("motor_control/blocked", Int16MultiArray, self.on_blocked)
 
-        # Enable/disable service (so you don't need GUI edits)
         self.srv = rospy.Service("go_home/enable", SetBool, self.on_enable)
-
         self.timer = rospy.Timer(rospy.Duration(1.0 / self.publish_hz), self.on_timer)
 
+        self.pub_enabled.publish(Bool(self.enabled))
         rospy.loginfo("GoHomeNode ready. Call service /go_home/enable (SetBool) to start/stop.")
 
     def on_enable(self, req):
         self.enabled = bool(req.data)
+        self.pub_enabled.publish(Bool(self.enabled))
+
         if not self.enabled:
             self.pub_vec.publish(Vector3(0.0, 0.0, 0.0))
+
         return SetBoolResponse(success=True, message=f"go_home enabled={self.enabled}")
 
     def on_location(self, msg: FomaLocation):
@@ -46,21 +49,19 @@ class GoHomeNode:
     def on_blocked(self, msg: Int16MultiArray):
         self.blocked_angles = set(int(a) for a in msg.data)
 
-    def desired_angle_deg_from_vector(self, vx: float, vy: float) -> float:
+    def desired_angle_deg_from_components(self, h: float, v: float) -> float:
         """
-        Match your GUI convention:
-        GUI builds vector from angle as:
-          x = -sin(rad)
-          y =  cos(rad)
-        Invert it:
-          angle = atan2(-x, y)  in degrees, mapped to [0,360)
+        Match motor_control convention:
+          angle 0 -> (h=0, v=1) forward
+          angle 90 -> (h=1, v=0) left
+        motor_control uses split_components: (sin(angle), cos(angle)) = (h, v)
+        => angle = atan2(h, v)
         """
-        ang = math.degrees(math.atan2(-vx, vy))
-        ang = (ang + 360.0) % 360.0
-        return ang
+        ang = math.degrees(math.atan2(h, v))
+        return (ang + 360.0) % 360.0
 
     def is_blocked(self, ang_deg: float) -> bool:
-        tol = 2  #degrees
+        tol = 2  # degrees
         for a in self.blocked_angles:
             if abs(((ang_deg - a + 180) % 360) - 180) <= tol:
                 return True
@@ -77,27 +78,24 @@ class GoHomeNode:
         dy = self.goal_y - y
         dist = math.hypot(dx, dy)
 
-        #arrived
         if dist < self.arrival_tol:
             self.pub_vec.publish(Vector3(0.0, 0.0, 0.0))
             return
 
-        #normalize
         ux = dx / dist
         uy = dy / dist
 
-        #(dist normalized: 0..~0.7 max from corner to center)
-        speed = min(self.max_cmd, 1.5 * dist)  # tune 1.0..2.0 multiplier if needed
-        vx = ux * speed
-        vy = uy * speed
+        speed = min(self.max_cmd, 1.5 * dist)
+        h = ux * speed   # h component
+        v = uy * speed   # v component
 
-        #if blocked, stop 
-        ang = self.desired_angle_deg_from_vector(vx, vy)
+        ang = self.desired_angle_deg_from_components(h, v)
         if self.is_blocked(ang):
+            # base behavior: stop when blocked
             self.pub_vec.publish(Vector3(0.0, 0.0, 0.0))
             return
 
-        self.pub_vec.publish(Vector3(vx, vy, 0.0))
+        self.pub_vec.publish(Vector3(h, v, 0.0))
 
 if __name__ == "__main__":
     GoHomeNode()
