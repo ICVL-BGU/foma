@@ -5,6 +5,7 @@ from abstract_node import AbstractNode
 from std_srvs.srv import Trigger, TriggerRequest, TriggerResponse
 import PololuStepper as PS
 from etc.settings import FEEDER_DIR_PIN, FEEDER_STEP_PIN, FEEDER_ENABLE_PIN, FEEDER_STEPS_PER_REVOLUTION, FEEDER_MICROSTEPS, FEEDER_RPM, FEEDER_HOLE_OFFSET_ANGLE
+import threading
 
 class FeederNode(AbstractNode):
     def __init__(self):
@@ -25,10 +26,13 @@ class FeederNode(AbstractNode):
         return TriggerResponse(success = True, message = "Fish feeder fed.")
     
     def empty(self, data: TriggerRequest):
+        threading.Thread(target=self.__empty).start()
+        return TriggerResponse(success = True, message = "Fish feeder emptied.")
+    
+    def __empty(self):
         for _ in range(360 // FEEDER_HOLE_OFFSET_ANGLE):
             self.feeder.rotate(FEEDER_HOLE_OFFSET_ANGLE)
             rospy.sleep(0.1)
-        return TriggerResponse(success = True, message = "Fish feeder emptied.")
     
 if __name__ == "__main__":
     rospy.init_node('feeder_node')
