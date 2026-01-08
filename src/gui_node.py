@@ -90,14 +90,8 @@ class MainWindow(QMainWindow):
         self.__manual_control_window = None
         self.__feeding_load_window = None
 
-        # Timers
-        self.__image_timer = None
-        self.__services_timer = None
-        # self.__writers_timer = None
-
         # Motor Control
-        self.__linear_velocity = Twist()
-        self.__angular_velocity = Float32()
+        self.__velocity = Twist()
         self.__foma_speed = Twist()
         self.__direction_epsilon = 45
         self.__blocked_directions = None
@@ -106,16 +100,15 @@ class MainWindow(QMainWindow):
         self.__motor_control_system_check = None
         self.__dim_lights = None
         self.__feed = None
+        self.__empty_feeder = None
         self.__bypass_lidar = None
 
         # Trial Control
         self.__ongoing_trial = False
         self.__session_folder = None
-        self.__subject_id = None
         self.__current_trial = 0
         self.__event_log_file = None
         self.__event_log_writer = None
-        self.__trial_folder = None 
 
     def __init_layouts(self):
         # Top-Left (Fish Camera)
@@ -146,7 +139,6 @@ class MainWindow(QMainWindow):
         self.__BL_layout.addWidget(self.__lights_slider, 1, 0, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__feed_label, 0, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__feed_button, 1, 1, alignment=Qt.AlignCenter)
-        # self.__BL_layout.addWidget(self.__manual_control_label, 0, 2, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__manual_control_button, 0, 2, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__feed_loading_button, 1, 2, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__fish_direction_group, 0, 3, 2, 1, alignment=Qt.AlignCenter)
@@ -346,7 +338,6 @@ class MainWindow(QMainWindow):
         self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=10)
         self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=10)
-        self.__motor_control_rotate = rospy.Publisher('motor_control/rotate', Float32, queue_size=10)
         self.__motor_set_speed = rospy.Publisher('motor_control/set_speed', Float32, queue_size=10)
         
         # Writer services - one for each writer node
@@ -358,8 +349,7 @@ class MainWindow(QMainWindow):
             rospy.ServiceProxy('video_writer_foma/write', Write),
             rospy.ServiceProxy('video_writer_room_map/write', Write),
         ]
-        # self.__motor_control_system_check = rospy.ServiceProxy('motor_control/system_check', Check)
-
+        
     def __init_manual_control_window(self):
         self.__motor_set_speed.publish(Float32(1.0))
         self.__bypass_lidar(False)
@@ -403,10 +393,10 @@ class MainWindow(QMainWindow):
             if key in key_to_angle:
                 if event.type() == QEvent.KeyPress:
                     angle = key_to_angle[key]
-                    self.__update_velocity(angle, True)
+                    self.__update_velocity(True, angle)
                     event.accept()
                 elif event.type() == QEvent.KeyRelease:
-                    self.__update_velocity(0, False)
+                    self.__update_velocity(False)
                     event.accept()
             else:
                 event.ignore()
@@ -461,36 +451,35 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(speed_control_textbox, 4, 2)
         control_layout.addWidget(speed_control_button, 4, 3)
 
-        forward_button.pressed.connect(lambda: self.__update_velocity(0, True))
-        forward_button.released.connect(lambda: self.__update_velocity(0, False))
-        backward_button.pressed.connect(lambda: self.__update_velocity(180, True))
-        backward_button.released.connect(lambda: self.__update_velocity(180, False))
-        left_button.pressed.connect(lambda: self.__update_velocity(90, True))
-        left_button.released.connect(lambda: self.__update_velocity(90, False))
-        right_button.pressed.connect(lambda: self.__update_velocity(270, True))
-        right_button.released.connect(lambda: self.__update_velocity(270, False))
-        forward_left_button.pressed.connect(lambda: self.__update_velocity(45, True))
-        forward_left_button.released.connect(lambda: self.__update_velocity(45, False))
-        forward_right_button.pressed.connect(lambda: self.__update_velocity(315, True))
-        forward_right_button.released.connect(lambda: self.__update_velocity(315, False))
-        backward_left_button.pressed.connect(lambda: self.__update_velocity(135, True))
-        backward_left_button.released.connect(lambda: self.__update_velocity(135, False))
-        backward_right_button.pressed.connect(lambda: self.__update_velocity(225, True))
-        backward_right_button.released.connect(lambda: self.__update_velocity(225, False))
-        cw_button.pressed.connect(lambda: self.__update_velocity(-1, True))
-        cw_button.released.connect(lambda: self.__update_velocity(-1, False))
-        ccw_button.pressed.connect(lambda: self.__update_velocity(-2, True))
-        ccw_button.released.connect(lambda: self.__update_velocity(-2, False))
+        forward_button.pressed.connect(lambda: self.__update_velocity(True,0))
+        forward_button.released.connect(lambda: self.__update_velocity(False))
+        backward_button.pressed.connect(lambda: self.__update_velocity(True, 180))
+        backward_button.released.connect(lambda: self.__update_velocity(False))
+        left_button.pressed.connect(lambda: self.__update_velocity(True, 90))
+        left_button.released.connect(lambda: self.__update_velocity(False))
+        right_button.pressed.connect(lambda: self.__update_velocity(True, 270))
+        right_button.released.connect(lambda: self.__update_velocity(False))
+        forward_left_button.pressed.connect(lambda: self.__update_velocity(True, 45))
+        forward_left_button.released.connect(lambda: self.__update_velocity(False))
+        forward_right_button.pressed.connect(lambda: self.__update_velocity(True, 315))
+        forward_right_button.released.connect(lambda: self.__update_velocity(False))
+        backward_left_button.pressed.connect(lambda: self.__update_velocity(True, 135))
+        backward_left_button.released.connect(lambda: self.__update_velocity(False))
+        backward_right_button.pressed.connect(lambda: self.__update_velocity(True, 225))
+        backward_right_button.released.connect(lambda: self.__update_velocity(False))
+        cw_button.pressed.connect(lambda: self.__update_velocity(True, -1))
+        cw_button.released.connect(lambda: self.__update_velocity(False))
+        ccw_button.pressed.connect(lambda: self.__update_velocity(True, -2))
+        ccw_button.released.connect(lambda: self.__update_velocity(False))
         speed_control_button.clicked.connect(set_speed)
 
         bypass_lidar_checkbox.stateChanged.connect(lambda state: self.__bypass_lidar(state == Qt.Checked))
-
-        self.__manual_control_window.setLayout(control_layout)
         
         self.__velocity_timer = QTimer(self)
         self.__velocity_timer.timeout.connect(self.__publish_velocity)
         self.__velocity_timer.start(50)  # Call every 100ms
 
+        self.__manual_control_window.setLayout(control_layout)
         self.__manual_control_window.show()
 
     def __init_feeding_load_window(self):
@@ -502,9 +491,8 @@ class MainWindow(QMainWindow):
         step = -1
 
         def empty_feeder():
-            for _ in range(30):
-                self.__feed()
-                rospy.sleep(0.1)
+            if self.__empty_feeder is not None:
+                self.__empty_feeder()
 
         def on_key_press(event):
             """
@@ -568,6 +556,7 @@ class MainWindow(QMainWindow):
             # list of tuples: (attr_name, ros_service_name, srv_type)
             services = [
                 ('__feed',                    'fish_feeder/feed',        Trigger),
+                ('__empty_feeder',            'fish_feeder/empty',       Trigger),
                 ('__dim_lights',              'light_dimmer/change',     Light),
                 ('__motor_control_system_check','motor_control/system_check', Check),
                 ('__bypass_lidar',            'motor_control/bypass_lidar', SetBool),
@@ -590,7 +579,6 @@ class MainWindow(QMainWindow):
 
     def __init_event_log(self, trial_folder):
         """Initialize event log CSV file for the trial"""
-        self.__trial_folder = trial_folder
         event_log_path = os.path.join(trial_folder, "trial_events.csv")
         self.__event_log_file = open(event_log_path, 'w', newline='')
         self.__event_log_writer = csv.writer(self.__event_log_file)
@@ -615,32 +603,32 @@ class MainWindow(QMainWindow):
             self.__event_log_file = None
             self.__event_log_writer = None
 
-    def __update_velocity(self, direction: int, is_pressed: bool):
+    def __update_velocity(self, is_pressed: bool, direction: int = 0):
         """
         Update robot velocity based on button presses.
         """
-        if direction >= 0:
-            # self.__linear_velocity = Twist()
-            # Convert direction (degrees) to radians for vector calculation
-            radians = math.radians(direction)
-            if is_pressed:
-                self.__linear_velocity.linear.x = -math.sin(radians)
-                self.__linear_velocity.linear.y = math.cos(radians)
+        if is_pressed:
+            if direction >= 0:
+                # Convert direction (degrees) to radians for vector calculation
+                radians = math.radians(direction)
+                self.__velocity.linear.x = -math.sin(radians)
+                self.__velocity.linear.y = math.cos(radians)
+                self.__velocity.angular.z = 0
+    
             else:
-                self.__linear_velocity.linear.x = 0
-                self.__linear_velocity.linear.y = 0
-  
+                self.__velocity.linear.x = 0
+                self.__velocity.linear.y = 0
+                if direction == -1: # "cw"
+                    self.__velocity.angular.z = 1
+                elif direction == -2: # "ccw":
+                    self.__velocity.angular.z = -1
         else:
-            # self.__angular_velocity = Float32()
-            if direction == -1: # "cw"
-                self.__angular_velocity.data = 1 if is_pressed else 0
-            elif direction == -2: # "ccw":
-                self.__angular_velocity.data = -1 if is_pressed else 0
-            # Publish the velocity to the robot
-            self.__motor_control_rotate.publish(self.__angular_velocity)
+            self.__velocity.linear.x = 0
+            self.__velocity.linear.y = 0
+            self.__velocity.angular.z = 0
 
     def __publish_velocity(self):
-        self.__motor_control_twist.publish(self.__linear_velocity)
+        self.__motor_control_twist.publish(self.__velocity)
 
     def __update_fish_image(self, img_msg: CompressedImage):
         try:
@@ -945,6 +933,15 @@ class MainWindow(QMainWindow):
             self.__feed_button.setDisabled(True)
             self.__feed_loading_button.setDisabled(True)
             self.__feed = None
+
+        # 1b) fish_feeder/empty
+        empty_proxy = status.get('__empty_feeder')
+        if self.__empty_feeder is None and empty_proxy is not None:
+            self.loginfo("Empty feeder service available")
+            self.__empty_feeder = empty_proxy
+        elif self.__empty_feeder is not None and empty_proxy is None:
+            self.logerr("Empty feeder service unavailable")
+            self.__empty_feeder = None
 
         # 2) light_dimmer/change
         lights_proxy = status.get('__dim_lights')
