@@ -44,7 +44,6 @@ class MotorControlNode(AbstractNode):
 
         
         self.__scans = None
-        self.__go_home_enabled = False
 
 
         try:
@@ -192,7 +191,7 @@ class MotorControlNode(AbstractNode):
         self.__last_cmd_time = rospy.Time.now()
 
     def __handle_twist(self, msg: Twist):
-        if not self.__go_home_enabled:
+        if self.__go_home_enabled:
             return
 
         self.__desired_h = msg.linear.y
