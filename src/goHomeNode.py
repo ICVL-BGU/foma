@@ -22,7 +22,7 @@ class GoHomeNode:
         
         rospy.Subscriber("lidar/scans", LaserScan, self.on_lidar)
 
-        self.srv = rospy.Service("go_home/enable", SetBool, self.on_enable)
+        self.srv = rospy.Service("/go_home/enable", SetBool, self.on_enable)
         
         self.pub_enabled.publish(Bool(False))
         rospy.loginfo(f"GoHomeNode active. Goal Offset: {self.goal_x}m")
