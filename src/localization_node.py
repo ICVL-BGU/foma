@@ -15,7 +15,6 @@ from ultralytics import YOLO
 import joblib
 import json
 import numpy as np
-import torch
 from etc.settings import *
 
 LIDAR_TAG = 1
@@ -77,55 +76,46 @@ class LocalizationNode(AbstractNode):
 
     def _map(self, x, y):
         """Complete transformation: image coordinates -> undistort -> world coordinates."""
-        # Use torch tensors so we correctly handle CUDA tensors from detection
-        # and avoid implicit numpy conversions. Returns Python floats for ROS messages.
-        # Determine device from inputs (if tensors) or default to CPU.
-        if isinstance(x, torch.Tensor):
-            device = x.device
-        elif isinstance(y, torch.Tensor):
-            device = y.device
-        else:
-            device = torch.device('cpu')
-
-        dtype = torch.float32
-
-        # Convert inputs and mapper params to tensors on the chosen device
-        x_t = torch.as_tensor(x, device=device, dtype=dtype)
-        y_t = torch.as_tensor(y, device=device, dtype=dtype)
-        cx = torch.as_tensor(self.mapper_params['cx'], device=device, dtype=dtype)
-        cy = torch.as_tensor(self.mapper_params['cy'], device=device, dtype=dtype)
-        f = torch.as_tensor(self.mapper_params['f'], device=device, dtype=dtype)
-
+        # Extract parameters
+        cx = self.mapper_params['cx']
+        cy = self.mapper_params['cy']
+        f = self.mapper_params['f']
+        
         # Step 1: Undistort fisheye point
-        x_d = (x_t - cx) / f
-        y_d = (y_t - cy) / f
-        r_d = torch.sqrt(x_d * x_d + y_d * y_d)
-
+        # Normalize by focal length and center
+        x_d = (x - cx) / f
+        y_d = (y - cy) / f
+        r_d = np.sqrt(x_d**2 + y_d**2)
+        
         # Apply distortion model (equisolid)
-        arg = torch.clamp(r_d / 2.0, -1.0, 1.0)
-        theta = 2.0 * torch.asin(arg)
-
-        # Compute scale safely (avoid division by zero)
-        eps = 1e-9
-        scale = torch.where(r_d > eps, torch.tan(theta) / r_d, torch.tensor(1.0, device=device, dtype=dtype))
+        arg = np.clip(r_d / 2, -1.0, 1.0)
+        theta = 2 * np.arcsin(arg)
+        
+        # Convert to undistorted coordinates
+        if r_d > 1e-9:
+            scale = np.tan(theta) / r_d
+        else:
+            scale = 1.0
         x_u = x_d * scale
         y_u = y_d * scale
-
+        
         # Convert back to pixel coordinates
         undistorted_x = x_u * f + cx
         undistorted_y = y_u * f + cy
-
+        
         # Step 2: Apply homography
-        H = torch.as_tensor(self.mapper_params['homography'], device=device, dtype=dtype)
-        point_h = torch.stack([undistorted_x, undistorted_y, torch.tensor(1.0, device=device, dtype=dtype)])
+        # Convert to homogeneous coordinates
+        H = np.array(self.mapper_params['homography'])
+        point_h = np.array([undistorted_x, undistorted_y, 1.0])
+        
+        # Apply homography
         world_h = H @ point_h
-
+        
         # Convert back from homogeneous coordinates
         x_w = world_h[0] / world_h[2]
         y_w = world_h[1] / world_h[2]
-
-        # Return plain Python floats (safe for ROS message fields)
-        return float(x_w.cpu().item()), float(y_w.cpu().item())
+        
+        return x_w, y_w
 
 if __name__ == "__main__":
     rospy.init_node('localization_node')
