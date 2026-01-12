@@ -12,9 +12,6 @@
     <!-- Node 4 -->
     <node pkg="foma" type="feeder_node.py" name="feeder_node" output="screen"/>
 
-    <!-- Localization (required for go-home) -->
-    <node pkg="foma" type="localization_node.py" name="localization_node" output="screen"/>
-
     <!-- Go Home -->
     <node pkg="foma" type="goHomeNode.py" name="go_home_node" output="screen">
         <param name="goal_x" value="0.5"/>
