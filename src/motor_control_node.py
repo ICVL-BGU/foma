@@ -14,8 +14,6 @@ from std_srvs.srv import SetBool, SetBoolRequest, SetBoolResponse
 import faulthandler, sys
 faulthandler.enable(sys.stderr, all_threads=True)
 import signal, traceback
-from std_msgs.msg import Bool
-
 
 def on_sigill(signum, frame):
     traceback.print_stack(frame)
@@ -39,12 +37,8 @@ class MotorControlNode(AbstractNode):
 
         rospy.Service('motor_control/bypass_lidar', SetBool, self.__bypass_lidar)
         rospy.Subscriber('motor_control/set_speed', Float32, self.__set_speed)
-        rospy.Subscriber('go_home/enabled', Bool, self.__on_go_home_enabled)
-        rospy.Subscriber('go_home/vector',  Vector3, self.__handle_go_home_vector)
-
         
         self.__scans = None
-
 
         try:
             self.__motor_control = MotorControl(resetPins = (MOTOR_TOP_BOTTOM_RESET, MOTOR_RIGHT_LEFT_RESET)
@@ -79,8 +73,6 @@ class MotorControlNode(AbstractNode):
         self.__last_cmd_time = rospy.Time(0)
 
         self.__fresh_threshold = 1.0  # seconds, how long to keep the last command fresh
-        
-
 
         rospy.on_shutdown(self.__on_shutdown)
 
@@ -163,8 +155,6 @@ class MotorControlNode(AbstractNode):
         return h_component, v_component
 
     def __handle_angle(self, msg: Float32):
-        if self.__go_home_enabled:
-            return
         angle = msg.data % 360
         h, v = self.__split_components(angle_deg=angle)
 
@@ -175,8 +165,6 @@ class MotorControlNode(AbstractNode):
         self.__last_cmd_time = rospy.Time.now()
 
     def __handle_vector(self, msg: Vector3):
-        if self.__go_home_enabled:
-            return
         x, y = msg.x, msg.y
         mag = np.hypot(x, y)
         if mag < 1e-6:
@@ -191,12 +179,9 @@ class MotorControlNode(AbstractNode):
         self.__last_cmd_time = rospy.Time.now()
 
     def __handle_twist(self, msg: Twist):
-        if self.__go_home_enabled:
-            return
-
         self.__desired_h = msg.linear.y
         self.__desired_v = msg.linear.x
-        self.__desired_rotate = 0.0
+        self.__desired_rotate = msg.angular.z
         self.__last_cmd_time = rospy.Time.now()
 
     def __handle_rotate(self, msg: Float32):
@@ -329,35 +314,6 @@ class MotorControlNode(AbstractNode):
         if self.__motor_control:
             self.loginfo("Stopping motors.")
             self.__motor_control.shutdown()
-
-    def __on_go_home_enabled(self, msg: Bool):
-        self.__go_home_enabled = bool(msg.data)
-
-        # Optional: if enabling go-home, clear any stale auto command
-        # (manual still can override via twist/rotate)
-        if self.__go_home_enabled:
-            self.__desired_h = 0.0
-            self.__desired_v = 0.0
-            self.__desired_rotate = 0.0
-            self.__last_cmd_time = rospy.Time.now()
-
-    def __handle_go_home_vector(self, msg: Vector3):
-        # Only accept go-home commands when enabled
-        if not self.__go_home_enabled:
-            return
-
-        x, y = msg.x, msg.y
-        mag = np.hypot(x, y)
-        if mag < 1e-6:
-            self.__desired_h = 0.0
-            self.__desired_v = 0.0
-        else:
-            self.__desired_h = x / mag
-            self.__desired_v = y / mag
-
-        self.__desired_rotate = 0.0
-        self.__last_cmd_time = rospy.Time.now()
-
 
 if __name__ == "__main__":
     rospy.init_node("motor_control_node")
