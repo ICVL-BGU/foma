@@ -44,6 +44,8 @@ class MotorControlNode(AbstractNode):
 
         
         self.__scans = None
+        self.__go_home_enabled = False
+
 
         try:
             self.__motor_control = MotorControl(resetPins = (MOTOR_TOP_BOTTOM_RESET, MOTOR_RIGHT_LEFT_RESET)

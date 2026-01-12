@@ -14,14 +14,12 @@ class GoHomeNode:
         self.last_loc = None
         self.blocked_angles = set()
 
-        # Tunables
         self.goal_x = rospy.get_param("~goal_x", 0.5)
         self.goal_y = rospy.get_param("~goal_y", 0.5)
         self.arrival_tol = rospy.get_param("~arrival_tol", 0.03)
         self.max_cmd = rospy.get_param("~max_cmd", 0.8)
         self.publish_hz = rospy.get_param("~publish_hz", 20)
 
-        # Pub/sub
         self.pub_vec = rospy.Publisher("go_home/vector", Vector3, queue_size=10)
         self.pub_enabled = rospy.Publisher("go_home/enabled", Bool, queue_size=1, latch=True)
 
@@ -49,24 +47,6 @@ class GoHomeNode:
     def on_blocked(self, msg: Int16MultiArray):
         self.blocked_angles = set(int(a) for a in msg.data)
 
-    def desired_angle_deg_from_components(self, h: float, v: float) -> float:
-        """
-        Match motor_control convention:
-          angle 0 -> (h=0, v=1) forward
-          angle 90 -> (h=1, v=0) left
-        motor_control uses split_components: (sin(angle), cos(angle)) = (h, v)
-        => angle = atan2(h, v)
-        """
-        ang = math.degrees(math.atan2(h, v))
-        return (ang + 360.0) % 360.0
-
-    def is_blocked(self, ang_deg: float) -> bool:
-        tol = 2  # degrees
-        for a in self.blocked_angles:
-            if abs(((ang_deg - a + 180) % 360) - 180) <= tol:
-                return True
-        return False
-
     def on_timer(self, _):
         if not self.enabled or self.last_loc is None:
             return
@@ -80,20 +60,16 @@ class GoHomeNode:
 
         if dist < self.arrival_tol:
             self.pub_vec.publish(Vector3(0.0, 0.0, 0.0))
+            self.enabled = False
+            self.pub_enabled.publish(Bool(self.enabled))
             return
 
         ux = dx / dist
         uy = dy / dist
 
         speed = min(self.max_cmd, 1.5 * dist)
-        h = ux * speed   # h component
-        v = uy * speed   # v component
-
-        ang = self.desired_angle_deg_from_components(h, v)
-        if self.is_blocked(ang):
-            # base behavior: stop when blocked
-            self.pub_vec.publish(Vector3(0.0, 0.0, 0.0))
-            return
+        h = ux * speed
+        v = uy * speed
 
         self.pub_vec.publish(Vector3(h, v, 0.0))
 
