@@ -8,38 +8,38 @@ from std_msgs.msg import Bool
 from std_srvs.srv import SetBool, SetBoolResponse
 
 class GoHomeNode:
-    def _init_(self):
-        self.goal_x = rospy.get_param("~goal_x", 2.5) 
-        self.goal_y = rospy.get_param("~goal_y", 2.5)
+    def __init__(self): 
         self.arrival_tol = rospy.get_param("~arrival_tol", 0.05)
-        
         self.enabled = False
         self.max_speed = 0.3
         self.kp = 0.4 
 
-        self.pub_vel = rospy.Publisher("cmd_vel", Twist, queue_size=10)
+        # Publishers 
+        self.cmd_pub = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
         self.pub_enabled = rospy.Publisher("go_home/enabled", Bool, queue_size=1, latch=True)
         
+        # Subscribers
         rospy.Subscriber("lidar/scans", LaserScan, self.on_lidar)
 
+        # Services
         self.srv = rospy.Service("/go_home/enable", SetBool, self.on_enable)
         
         self.pub_enabled.publish(Bool(False))
-        rospy.loginfo(f"GoHomeNode active. Goal Offset: {self.goal_x}m")
+        rospy.loginfo("GoHomeNode active and ready.")
 
     def on_enable(self, req):
         self.enabled = bool(req.data)
         self.pub_enabled.publish(Bool(self.enabled))
         if not self.enabled:
             self.stop_robot()
-        return SetBoolResponse(success=True, message=f"Centering active: {self.enabled}")
+        return SetBoolResponse(success=True, message=f"GoHome active: {self.enabled}")
 
     def on_lidar(self, msg):
         if not self.enabled:
             return
 
         ranges = np.array(msg.ranges)
-        
+
         f = self._get_avg(ranges, 0)
         b = self._get_avg(ranges, 180)
         l = self._get_avg(ranges, 90)
@@ -48,7 +48,6 @@ class GoHomeNode:
         if None in [f, b, l, r]:
             return
 
-        # Calculate how far we are from the relative center
         error_x = (f - b) / 2.0
         error_y = (l - r) / 2.0
 
@@ -57,11 +56,11 @@ class GoHomeNode:
             self._finish()
             return
 
-        # Drive Command
         cmd = Twist()
         cmd.linear.x = max(min(error_x * self.kp, self.max_speed), -self.max_speed)
         cmd.linear.y = max(min(error_y * self.kp, self.max_speed), -self.max_speed)
-        self.pub_vel.publish(cmd)
+        
+        self.cmd_pub.publish(cmd) 
 
     def _get_avg(self, ranges, angle):
         indices = [(angle + i) % 360 for i in range(-5, 5)]
@@ -70,17 +69,15 @@ class GoHomeNode:
         return np.mean(valid) if len(valid) > 0 else None
 
     def stop_robot(self):
-        self.pub_vel.publish(Twist())
+        self.cmd_pub.publish(Twist())
 
     def _finish(self):
         self.enabled = False
         self.pub_enabled.publish(Bool(False))
         self.stop_robot()
 
-if __name__ == "_main_":
-
+if __name__ == "__main__": 
     rospy.init_node("go_home_node")
-    
     try:
         node = GoHomeNode()
         rospy.spin()

@@ -4,28 +4,43 @@ import sys
 import rospy
 import cv2
 import numpy as np
+import csv
+import os
+import datetime
 import math
 import threading, time
 
 from PyQt5.QtCore import Qt, QTimer, QEvent, pyqtSignal
 from PyQt5.QtGui import QPixmap, QImage, QDoubleValidator
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QGridLayout, QFrame, QSizePolicy, QLabel,
-    QPushButton, QSlider, QVBoxLayout, QDialog, QCheckBox, QLineEdit, QGroupBox,
-    QRadioButton, QInputDialog
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QGridLayout,
+    QFrame,
+    QSizePolicy,
+    QLabel,
+    QPushButton,
+    QSlider,
+    QVBoxLayout,
+    QDialog,
+    QCheckBox,
+    QLineEdit,
+    QGroupBox,
+    QRadioButton,
+    QInputDialog,
 )
 
 from geometry_msgs.msg import Twist, Vector3, TwistStamped
 from sensor_msgs.msg import Image, CompressedImage
-from std_msgs.msg import Float32, Int16MultiArray, Bool
+from std_msgs.msg import Float32, Int16MultiArray
 from std_srvs.srv import Trigger, SetBool
 from cv_bridge import CvBridge, CvBridgeError
-from std_srvs.srv import SetBoolRequest
+from std_srvs.srv import SetBool, SetBoolRequest
 
 from foma.srv import Light, Check, Write
 from foma.msg import FomaLocation
 from etc.settings import *
-
 
 class MainWindow(QMainWindow):
     fish_frame_ready = pyqtSignal(np.ndarray)
@@ -67,6 +82,9 @@ class MainWindow(QMainWindow):
         self.__manual_control_window = None
         self.__feeding_load_window = None
 
+        self.__image_timer = None
+        self.__services_timer = None
+
         self.__linear_velocity = Twist()
         self.__angular_velocity = Float32()
         self.__foma_speed = Twist()
@@ -77,117 +95,12 @@ class MainWindow(QMainWindow):
         self.__dim_lights = None
         self.__feed = None
         self.__bypass_lidar = None
-        self.__go_home_enable = None
 
-        self.__go_home_enabled = False
         self.__ongoing_trial = False
 
-    def __init_widgets(self):
-        self.__start_button = QPushButton("Start")
-        self.__start_button.setDisabled(False)
-        self.__start_button.setMaximumHeight(50)
-        self.__start_button.clicked.connect(self.__on_start_click)
+        self.__go_home_enable = None
 
-        self.__pause_button = QPushButton("Pause")
-        self.__pause_button.setDisabled(True)
-        self.__pause_button.setMaximumHeight(50)
-        self.__pause_button.clicked.connect(self.__on_pause_click)
-
-        self.__reset_button = QPushButton("Reset")
-        self.__reset_button.setDisabled(True)
-        self.__reset_button.setMaximumHeight(50)
-        self.__reset_button.clicked.connect(self.__on_reset_click)
-
-        self.__close_button = QPushButton("Close")
-        self.__close_button.setDisabled(False)
-        self.__close_button.setMaximumHeight(50)
-        self.__close_button.clicked.connect(self.__on_close_click)
-
-        self.__feed_button = QPushButton("Feed")
-        self.__feed_button.clicked.connect(lambda: self.__feed())
-        self.__feed_button.setDisabled(True)
-
-        self.__feed_label = QLabel("Manual Feed")
-        font = self.__feed_label.font()
-        font.setPointSize(13)
-        self.__feed_label.setFont(font)
-        self.__feed_label.setAlignment(Qt.AlignHCenter)
-
-        self.__lights_slider = QSlider(Qt.Horizontal)
-        self.__lights_slider.setMinimum(0)
-        self.__lights_slider.setMaximum(1)
-        self.__lights_slider.setTickPosition(QSlider.TicksAbove | QSlider.TicksBelow)
-        self.__lights_slider.setPageStep(1)
-        self.__lights_slider.setMaximumHeight(50)
-        self.__lights_slider.setDisabled(True)
-        self.__lights_slider.setValue(1)
-
-        self.__lights_label = QLabel("Lights dimming")
-        font = self.__lights_label.font()
-        font.setPointSize(13)
-        self.__lights_label.setFont(font)
-        self.__lights_label.setAlignment(Qt.AlignHCenter)
-
-        self.__manual_control_button = QPushButton("Manual Control")
-        self.__manual_control_button.setMaximumHeight(50)
-        self.__manual_control_button.clicked.connect(self.__init_manual_control_window)
-        self.__manual_control_button.setDisabled(True)
-
-        self.__feed_loading_button = QPushButton("Load Feeder")
-        self.__feed_loading_button.setMaximumHeight(50)
-        self.__feed_loading_button.clicked.connect(self.__init_feeding_load_window)
-        self.__feed_loading_button.setDisabled(True)
-
-        self.__left_image_frame = QLabel()
-        self.__left_image_frame.setScaledContents(True)
-        self.__left_image_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        self.__fish_image_label = QLabel("Fish Camera")
-        font = self.__fish_image_label.font()
-        font.setPointSize(15)
-        self.__fish_image_label.setFont(font)
-        self.__fish_image_label.setAlignment(Qt.AlignHCenter)
-
-        self.__top_right_image = QLabel()
-        self.__top_right_image.setScaledContents(True)
-        self.__top_right_image.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        self.__room_image_label = QLabel("Room Camera")
-        font = self.__room_image_label.font()
-        font.setPointSize(15)
-        self.__room_image_label.setFont(font)
-        self.__room_image_label.setAlignment(Qt.AlignHCenter)
-        self.__room_image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        self.__show_fish_direction_rb = QRadioButton("Yes")
-        self.__hide_fish_direction_rb = QRadioButton("No")
-        self.__show_fish_direction_rb.setChecked(True)
-
-        fish_direction_layout = QGridLayout()
-        fish_direction_layout.addWidget(self.__show_fish_direction_rb, 0, 0, alignment=Qt.AlignCenter)
-        fish_direction_layout.addWidget(self.__hide_fish_direction_rb, 1, 0, alignment=Qt.AlignCenter)
-        self.__fish_direction_group = QGroupBox("Display Fish Direction")
-        self.__fish_direction_group.setLayout(fish_direction_layout)
-
-        self.__show_foma_direction_rb = QRadioButton("Yes")
-        self.__hide_foma_direction_rb = QRadioButton("No")
-        self.__show_foma_direction_rb.setChecked(True)
-
-        foma_direction_layout = QGridLayout()
-        foma_direction_layout.addWidget(self.__show_foma_direction_rb, 0, 0, alignment=Qt.AlignCenter)
-        foma_direction_layout.addWidget(self.__hide_foma_direction_rb, 1, 0, alignment=Qt.AlignCenter)
-        self.__foma_direction_group = QGroupBox("Display FOMA Direction")
-        self.__foma_direction_group.setLayout(foma_direction_layout)
-
-        self.__room_camera_display_rb = QRadioButton("Camera")
-        self.__map_display_rb = QRadioButton("Map")
-        self.__room_camera_display_rb.setChecked(True)
-
-        room_display_layout = QGridLayout()
-        room_display_layout.addWidget(self.__room_camera_display_rb, 0, 0, alignment=Qt.AlignCenter)
-        room_display_layout.addWidget(self.__map_display_rb, 1, 0, alignment=Qt.AlignCenter)
-        self.__room_display_group = QGroupBox("Top-Right Display")
-        self.__room_display_group.setLayout(room_display_layout)
+        self.__manual_angle = None
 
     def __init_layouts(self):
         self.__TL_layout = QVBoxLayout()
@@ -253,6 +166,130 @@ class MainWindow(QMainWindow):
         widget.setLayout(main_layout)
         self.setCentralWidget(widget)
 
+    def __init_widgets(self):
+        self.__start_button = QPushButton()
+        self.__start_button.setText("Start")
+        self.__start_button.setDisabled(False)
+        self.__start_button.setMaximumHeight(50)
+        self.__start_button.clicked.connect(self.__on_start_click)
+
+        self.__pause_button = QPushButton()
+        self.__pause_button.setText("Pause")
+        self.__pause_button.setDisabled(True)
+        self.__pause_button.setMaximumHeight(50)
+        self.__pause_button.clicked.connect(self.__on_pause_click)
+
+        self.__reset_button = QPushButton()
+        self.__reset_button.setText("Reset")
+        self.__reset_button.setDisabled(True)
+        self.__reset_button.setMaximumHeight(50)
+        self.__reset_button.clicked.connect(self.__on_reset_click)
+
+        self.__close_button = QPushButton()
+        self.__close_button.setText("Close")
+        self.__close_button.setDisabled(False)
+        self.__close_button.setMaximumHeight(50)
+        self.__close_button.clicked.connect(self.__on_close_click)
+
+        self.__feed_button = QPushButton()
+        self.__feed_button.setText("Feed")
+        self.__feed_button.clicked.connect(lambda: self.__feed())
+        self.__feed_button.setDisabled(True)
+
+        self.__feed_label = QLabel("Manual Feed")
+        font = self.__feed_label.font()
+        font.setPointSize(13)
+        self.__feed_label.setFont(font)
+        self.__feed_label.setAlignment(Qt.AlignHCenter)
+
+        self.__lights_slider = QSlider(Qt.Horizontal)
+        self.__lights_slider.setMinimum(0)
+        self.__lights_slider.setMaximum(1)
+        self.__lights_slider.setTickPosition(QSlider.TicksAbove | QSlider.TicksBelow)
+        self.__lights_slider.setPageStep(1)
+        self.__lights_slider.setMaximumHeight(50)
+        self.__lights_slider.setDisabled(True)
+        self.__lights_slider.setValue(1)
+
+        self.__lights_label = QLabel("Lights dimming")
+        font = self.__lights_label.font()
+        font.setPointSize(13)
+        self.__lights_label.setFont(font)
+        self.__lights_label.setAlignment(Qt.AlignHCenter)
+
+        self.__manual_control_button = QPushButton()
+        self.__manual_control_button.setText("Manual Control")
+        self.__manual_control_button.setMaximumHeight(50)
+        self.__manual_control_button.clicked.connect(self.__init_manual_control_window)
+        self.__manual_control_button.setDisabled(True)
+
+        self.__manual_control_label = QLabel("Manual Control")
+        font = self.__manual_control_label.font()
+        font.setPointSize(13)
+        self.__manual_control_label.setFont(font)
+        self.__manual_control_label.setAlignment(Qt.AlignHCenter)
+
+        self.__feed_loading_button = QPushButton()
+        self.__feed_loading_button.setText("Load Feeder")
+        self.__feed_loading_button.setMaximumHeight(50)
+        self.__feed_loading_button.clicked.connect(self.__init_feeding_load_window)
+        self.__feed_loading_button.setDisabled(True)
+
+        self.__left_image_frame = QLabel()
+        self.__left_image_frame.setScaledContents(True)
+        self.__left_image_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        self.__fish_image_label = QLabel("Fish Camera")
+        font = self.__fish_image_label.font()
+        font.setPointSize(15)
+        self.__fish_image_label.setFont(font)
+        self.__fish_image_label.setAlignment(Qt.AlignHCenter)
+        self.__left_image_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        self.__top_right_image = QLabel()
+        self.__top_right_image.setScaledContents(True)
+        self.__top_right_image.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        self.__room_image_label = QLabel("Room Camera")
+        font = self.__room_image_label.font()
+        font.setPointSize(15)
+        self.__room_image_label.setFont(font)
+        self.__room_image_label.setAlignment(Qt.AlignHCenter)
+        self.__room_image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        self.__show_fish_direction_rb = QRadioButton("Yes")
+        self.__hide_fish_direction_rb = QRadioButton("No")
+        self.__show_fish_direction_rb.setChecked(True)
+
+        fish_direction_layout = QGridLayout()
+        fish_direction_layout.addWidget(self.__show_fish_direction_rb, 0, 0, alignment=Qt.AlignCenter)
+        fish_direction_layout.addWidget(self.__hide_fish_direction_rb, 1, 0, alignment=Qt.AlignCenter)
+
+        self.__fish_direction_group = QGroupBox("Display Fish Direction")
+        self.__fish_direction_group.setLayout(fish_direction_layout)
+
+        self.__show_foma_direction_rb = QRadioButton("Yes")
+        self.__hide_foma_direction_rb = QRadioButton("No")
+        self.__show_foma_direction_rb.setChecked(True)
+
+        foma_direction_layout = QGridLayout()
+        foma_direction_layout.addWidget(self.__show_foma_direction_rb, 0, 0, alignment=Qt.AlignCenter)
+        foma_direction_layout.addWidget(self.__hide_foma_direction_rb, 1, 0, alignment=Qt.AlignCenter)
+
+        self.__foma_direction_group = QGroupBox("Display FOMA Direction")
+        self.__foma_direction_group.setLayout(foma_direction_layout)
+
+        self.__room_camera_display_rb = QRadioButton("Camera")
+        self.__map_display_rb = QRadioButton("Map")
+        self.__room_camera_display_rb.setChecked(True)
+
+        room_display_layout = QGridLayout()
+        room_display_layout.addWidget(self.__room_camera_display_rb, 0, 0, alignment=Qt.AlignCenter)
+        room_display_layout.addWidget(self.__map_display_rb, 1, 0, alignment=Qt.AlignCenter)
+
+        self.__room_display_group = QGroupBox("Top-Right Display")
+        self.__room_display_group.setLayout(room_display_layout)
+
     def __init_subscriptions_and_services(self):
         rospy.Subscriber('fish_camera/image', CompressedImage, self.__update_fish_image)
         rospy.Subscriber('fish_detection/state', TwistStamped, self.__update_fish_state)
@@ -260,7 +297,6 @@ class MainWindow(QMainWindow):
         rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
         rospy.Subscriber('motor_control/blocked', Int16MultiArray, self.__update_blocked_directions)
         rospy.Subscriber('motor_control/speed', TwistStamped, self.__update_foma_speed)
-        rospy.Subscriber('go_home/enabled', Bool, self.__on_go_home_enabled)
 
         self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=10)
@@ -269,14 +305,26 @@ class MainWindow(QMainWindow):
         self.__motor_set_speed = rospy.Publisher('motor_control/set_speed', Float32, queue_size=10)
 
         self.__writer_control = rospy.ServiceProxy('writer_node/write', Write)
-
-    def __on_go_home_enabled(self, msg: Bool):
-        self.__go_home_enabled = bool(msg.data)
+        try:
+            from std_srvs.srv import SetBool
+            
+            self.__go_home_enable = rospy.ServiceProxy('/go_home/enable', SetBool)
+        except Exception as e:
+            rospy.logwarn(f"Could not initialize GoHome service client: {e}")
+            self.__go_home_enable = None
 
     def __init_manual_control_window(self):
         self.__motor_set_speed.publish(Float32(1.0))
-        if self.__bypass_lidar is not None:
-            self.__bypass_lidar(False)
+        self.__bypass_lidar(False)
+
+        if self.__go_home_enable is not None:
+            try:
+                self.__go_home_enable(False)
+            except Exception as e:
+                self.logwarn(f"Failed disabling go_home: {e}")
+
+        self.__manual_angle = None
+        self.__angular_velocity.data = 0.0
 
         self.__manual_control_window = QDialog(self)
         self.__manual_control_window.setWindowTitle("Manual Robot Control")
@@ -284,15 +332,29 @@ class MainWindow(QMainWindow):
         self.__manual_control_window.setWindowModality(Qt.ApplicationModal)
 
         def on_close(event):
-            self.__motor_control_twist.publish(Twist())
+            self.__manual_angle = None
+            self.__motor_control_vector.publish(Vector3(0, 0, 0))
             self.__motor_control_rotate.publish(Float32(0.0))
             self.__motor_set_speed.publish(Float32(1.0))
-            if self.__bypass_lidar is not None:
-                self.__bypass_lidar(False)
+            self.__bypass_lidar(False)
+
             self.__manual_control_window = None
             event.accept()
 
+        def stop_autonomy():
+            if self.__go_home_enable is not None:
+                try:
+                    self.__go_home_enable(False)
+                except Exception:
+                    pass
+
+        def handle_manual_drive(angle, is_pressed):
+            if is_pressed:
+                stop_autonomy()
+            self.__update_velocity(angle, is_pressed)
+
         def on_key_press(event):
+            stop_autonomy()
             key = event.key()
             key_to_angle = {
                 Qt.Key_8: 0,
@@ -312,7 +374,7 @@ class MainWindow(QMainWindow):
                     self.__update_velocity(angle, True)
                     event.accept()
                 elif event.type() == QEvent.KeyRelease:
-                    self.__update_velocity(0, False)
+                    self.__update_velocity(key_to_angle[key], False)
                     event.accept()
             else:
                 event.ignore()
@@ -333,16 +395,12 @@ class MainWindow(QMainWindow):
         forward_right_button = QPushButton("↗")
         backward_left_button = QPushButton("↙")
         backward_right_button = QPushButton("↘")
-
         bypass_lidar_label = QLabel("Bypass LIDAR")
         bypass_lidar_checkbox = QCheckBox()
-
         speed_control_label = QLabel("Speed Control")
         speed_control_textbox = QLineEdit()
         speed_control_button = QPushButton("Set")
-
         go_home_button = QPushButton("Go Home")
-        go_home_button.setMaximumHeight(40)
 
         speed_control_textbox.setPlaceholderText("1.0")
         speed_control_textbox.setValidator(QDoubleValidator(0.0, 1.0, 2))
@@ -350,6 +408,7 @@ class MainWindow(QMainWindow):
         def set_speed():
             try:
                 speed = float(speed_control_textbox.text())
+                self.loginfo(f"Speed set to: {speed}")
                 self.__motor_set_speed.publish(Float32(speed))
             except ValueError:
                 self.logwarn("Invalid speed value")
@@ -358,12 +417,15 @@ class MainWindow(QMainWindow):
             if self.__go_home_enable is None:
                 self.logwarn("GoHome service not available")
                 return
-            self.__motor_control_twist.publish(Twist())
+            self.__manual_angle = None
+            self.__motor_control_vector.publish(Vector3(0, 0, 0))
             self.__motor_control_rotate.publish(Float32(0.0))
             try:
                 self.__go_home_enable(True)
             except Exception as e:
                 self.logwarn(f"Failed enabling go_home: {e}")
+                return
+            self.__manual_control_window.close()
 
         control_layout.addWidget(forward_left_button, 0, 0)
         control_layout.addWidget(forward_button, 0, 1, 1, 2)
@@ -382,31 +444,31 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(speed_control_button, 4, 3)
         control_layout.addWidget(go_home_button, 5, 0, 1, 4)
 
-        forward_button.pressed.connect(lambda: self.__update_velocity(0, True))
-        forward_button.released.connect(lambda: self.__update_velocity(0, False))
-        backward_button.pressed.connect(lambda: self.__update_velocity(180, True))
-        backward_button.released.connect(lambda: self.__update_velocity(180, False))
-        left_button.pressed.connect(lambda: self.__update_velocity(90, True))
-        left_button.released.connect(lambda: self.__update_velocity(90, False))
-        right_button.pressed.connect(lambda: self.__update_velocity(270, True))
-        right_button.released.connect(lambda: self.__update_velocity(270, False))
-        forward_left_button.pressed.connect(lambda: self.__update_velocity(45, True))
-        forward_left_button.released.connect(lambda: self.__update_velocity(45, False))
-        forward_right_button.pressed.connect(lambda: self.__update_velocity(315, True))
-        forward_right_button.released.connect(lambda: self.__update_velocity(315, False))
-        backward_left_button.pressed.connect(lambda: self.__update_velocity(135, True))
-        backward_left_button.released.connect(lambda: self.__update_velocity(135, False))
-        backward_right_button.pressed.connect(lambda: self.__update_velocity(225, True))
-        backward_right_button.released.connect(lambda: self.__update_velocity(225, False))
-        cw_button.pressed.connect(lambda: self.__update_velocity(-1, True))
-        cw_button.released.connect(lambda: self.__update_velocity(-1, False))
-        ccw_button.pressed.connect(lambda: self.__update_velocity(-2, True))
-        ccw_button.released.connect(lambda: self.__update_velocity(-2, False))
+        forward_button.pressed.connect(lambda: handle_manual_drive(0, True))
+        forward_button.released.connect(lambda: handle_manual_drive(0, False))
+        backward_button.pressed.connect(lambda: handle_manual_drive(180, True))
+        backward_button.released.connect(lambda: handle_manual_drive(180, False))
+        left_button.pressed.connect(lambda: handle_manual_drive(90, True))
+        left_button.released.connect(lambda: handle_manual_drive(90, False))
+        right_button.pressed.connect(lambda: handle_manual_drive(270, True))
+        right_button.released.connect(lambda: handle_manual_drive(270, False))
+        forward_left_button.pressed.connect(lambda: handle_manual_drive(45, True))
+        forward_left_button.released.connect(lambda: handle_manual_drive(45, False))
+        forward_right_button.pressed.connect(lambda: handle_manual_drive(315, True))
+        forward_right_button.released.connect(lambda: handle_manual_drive(315, False))
+        backward_left_button.pressed.connect(lambda: handle_manual_drive(135, True))
+        backward_left_button.released.connect(lambda: handle_manual_drive(135, False))
+        backward_right_button.pressed.connect(lambda: handle_manual_drive(225, True))
+        backward_right_button.released.connect(lambda: handle_manual_drive(225, False))
+        cw_button.pressed.connect(lambda: handle_manual_drive(-1, True))
+        cw_button.released.connect(lambda: handle_manual_drive(-1, False))
+        ccw_button.pressed.connect(lambda: handle_manual_drive(-2, True))
+        ccw_button.released.connect(lambda: handle_manual_drive(-2, False))
 
         speed_control_button.clicked.connect(set_speed)
         go_home_button.clicked.connect(start_go_home)
 
-        bypass_lidar_checkbox.stateChanged.connect(lambda state: self.__bypass_lidar(state == Qt.Checked) if self.__bypass_lidar is not None else None)
+        bypass_lidar_checkbox.stateChanged.connect(lambda state: self.__bypass_lidar(state == Qt.Checked))
 
         self.__manual_control_window.setLayout(control_layout)
 
@@ -508,13 +570,10 @@ class MainWindow(QMainWindow):
 
     def __update_velocity(self, direction: int, is_pressed: bool):
         if direction >= 0:
-            radians = math.radians(direction)
             if is_pressed:
-                self.__linear_velocity.linear.x = -math.sin(radians)
-                self.__linear_velocity.linear.y = math.cos(radians)
+                self.__manual_angle = direction % 360
             else:
-                self.__linear_velocity.linear.x = 0
-                self.__linear_velocity.linear.y = 0
+                self.__manual_angle = None
         else:
             if direction == -1:
                 self.__angular_velocity.data = 1 if is_pressed else 0
@@ -523,9 +582,13 @@ class MainWindow(QMainWindow):
             self.__motor_control_rotate.publish(self.__angular_velocity)
 
     def __publish_velocity(self):
-        if self.__go_home_enabled:
+        if self.__manual_control_window is None:
             return
-        self.__motor_control_twist.publish(self.__linear_velocity)
+
+        if self.__manual_angle is None:
+            self.__motor_control_vector.publish(Vector3(0, 0, 0))
+        else:
+            self.__motor_control_dir.publish(Float32(self.__manual_angle))
 
     def __update_fish_image(self, img_msg: CompressedImage):
         try:
@@ -547,6 +610,7 @@ class MainWindow(QMainWindow):
             height, width, _ = self.__fish_image.shape
             center_x = width // 2
             center_y = height // 2
+
             vector_x = fish_x - center_x
             vector_y = center_y - fish_y
 
@@ -616,23 +680,29 @@ class MainWindow(QMainWindow):
                 delta_deg = 0.5
                 angles = (angle - delta_deg, angle + delta_deg)
                 pts = []
+
                 for ang in angles:
                     math_ang = math.radians(ang + 90)
                     dx = math.cos(math_ang)
                     dy = -math.sin(math_ang)
+
                     ts = []
+
                     if abs(dx) > 1e-6:
                         t1 = (0 - cx) / dx
                         t2 = (w - cx) / dx
                         if t1 > 0: ts.append(t1)
                         if t2 > 0: ts.append(t2)
+
                     if abs(dy) > 1e-6:
                         t3 = (0 - cy) / dy
                         t4 = (h - cy) / dy
                         if t3 > 0: ts.append(t3)
                         if t4 > 0: ts.append(t4)
+
                     if not ts:
                         continue
+
                     t_min = min(ts)
                     x_edge = int(cx + t_min * dx)
                     y_edge = int(cy + t_min * dy)
@@ -646,21 +716,39 @@ class MainWindow(QMainWindow):
         if self.__show_fish_direction_rb.isChecked() and self.__fish_state is not None:
             px = int(self.__fish_state.linear.x)
             py = int(self.__fish_state.linear.y)
+
             dx = self.__fish_state.angular.x
             dy = self.__fish_state.angular.y
+
             angle = math.degrees(math.atan2(dy, dx))
 
             cv2.circle(frame, (px, py), 5, (0, 0, 255), -1)
-            cv2.putText(frame, f"Dir: {angle:.1f}", (px + 10, py - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+
+            cv2.putText(frame,
+                        f"Dir: {angle:.1f}",
+                        (px + 10, py - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (255, 255, 255),
+                        1,
+                        cv2.LINE_AA)
+
             length = 30
             ex = px + int(length * math.cos(math.radians(angle)))
             ey = py - int(length * math.sin(math.radians(angle)))
-            cv2.arrowedLine(frame, (px, py), (ex, ey), (0, 255, 0), 2, tipLength=0.3)
+            cv2.arrowedLine(frame,
+                            (px, py),
+                            (ex, ey),
+                            (0, 255, 0),
+                            2,
+                            tipLength=0.3)
 
         if self.__show_foma_direction_rb.isChecked() and self.__foma_speed is not None:
-            linear_speed = math.sqrt(self.__foma_speed.linear.x**2 + self.__foma_speed.linear.y**2)
+            linear_speed = math.sqrt(
+                self.__foma_speed.linear.x**2 + self.__foma_speed.linear.y**2
+            )
             angular_speed = self.__foma_speed.angular.z
+
             center_x, center_y = w // 2, h // 2
 
             if linear_speed > 0:
@@ -668,21 +756,38 @@ class MainWindow(QMainWindow):
                 arrow_length = 30
                 end_x = int(center_x + arrow_length * math.cos(math.radians(angle)))
                 end_y = int(center_y - arrow_length * math.sin(math.radians(angle)))
+
                 cv2.arrowedLine(frame, (center_x, center_y), (end_x, end_y), (0, 255, 255), 2, tipLength=0.3)
-                cv2.putText(frame, f"{linear_speed:.2f}", (end_x + 10, end_y - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+
+                cv2.putText(frame,
+                            f"{linear_speed:.2f}",
+                            (end_x + 10, end_y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            (255, 255, 255),
+                            1,
+                            cv2.LINE_AA)
 
             if angular_speed != 0:
                 radius = 30
                 start_angle = 0
                 end_angle = 270 if angular_speed > 0 else -270
                 color = (255, 255, 0)
+
                 cv2.ellipse(frame, (center_x, center_y), (radius, radius), 0, start_angle, end_angle, color, 2)
-                cv2.putText(frame, f"{angular_speed:.2f}", (center_x + radius + 10, center_y),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+
+                cv2.putText(frame,
+                            f"{angular_speed:.2f}",
+                            (center_x + radius + 10, center_y),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            (255, 255, 255),
+                            1,
+                            cv2.LINE_AA)
 
         bytes_per_line = ch * w
         qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+
         pix = QPixmap.fromImage(qimg).scaled(
             self.__left_image_frame.width(),
             self.__left_image_frame.height(),
@@ -696,6 +801,7 @@ class MainWindow(QMainWindow):
             height, width, channel = frame.shape
             bytes_per_line = 3 * width
             frame = frame.data
+
         elif self.__map_display_rb.isChecked() and self.__room_map is not None:
             height, width, channel = self.__room_map.shape
             bytes_per_line = 3 * width
@@ -705,62 +811,75 @@ class MainWindow(QMainWindow):
                 y = np.clip(self.__foma_world_location.y, 0, self.__room_frame_shape[0] - 1).astype(int)
                 cv2.circle(map_frame, (x, y), 2, (0, 0, 255), -1)
             frame = map_frame.data
-        else:
-            return
 
-        q_image = QImage(frame, width, height, bytes_per_line, QImage.Format_RGB888)
-        pixmap = QPixmap.fromImage(q_image)
-        scaled_pixmap = pixmap.scaled(
-            self.__top_right_image.size(),
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation
-        )
-        self.__top_right_image.setPixmap(scaled_pixmap)
+        if frame is not None:
+            q_image = QImage(frame, width, height, bytes_per_line, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(q_image)
+            scaled_pixmap = pixmap.scaled(
+                self.__top_right_image.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            self.__top_right_image.setPixmap(scaled_pixmap)
 
     def __update_services(self, status: dict):
         feed_proxy = status.get('__feed')
         if self.__feed is None and feed_proxy is not None:
+            self.loginfo("Feeder service available - enabling buttons")
             self.__feed_button.setDisabled(False)
             self.__feed_loading_button.setDisabled(False)
             self.__feed = feed_proxy
         elif self.__feed is not None and feed_proxy is None:
+            self.logerr("Feeder service unavailable - disabling buttons")
             self.__feed_button.setDisabled(True)
             self.__feed_loading_button.setDisabled(True)
             self.__feed = None
 
         lights_proxy = status.get('__dim_lights')
         if self.__dim_lights is None and lights_proxy is not None:
+            self.loginfo("Light dimming service available - enabling slider")
             self.__lights_slider.setDisabled(False)
             self.__dim_lights = lights_proxy
             self.__lights_slider.valueChanged.connect(lambda val: self.__dim_lights(int(255 * val / self.__lights_slider.maximum())))
         elif self.__dim_lights is not None and lights_proxy is None:
+            self.logerr("Light dimming service unavailable - disabling slider")
             self.__lights_slider.setDisabled(True)
             self.__dim_lights = None
 
         motor_check_proxy = status.get('__motor_control_system_check')
         if self.__motor_control_system_check is None and motor_check_proxy is not None:
+            self.loginfo("Manual control service available - enabling button")
             self.__manual_control_button.setDisabled(False)
             self.__motor_control_system_check = motor_check_proxy
         elif self.__motor_control_system_check is not None and motor_check_proxy is None:
+            self.logerr("Manual control service unavailable - disabling button")
             self.__manual_control_button.setDisabled(True)
             self.__motor_control_system_check = None
 
         bypass_proxy = status.get('__bypass_lidar')
         if self.__bypass_lidar is None and bypass_proxy is not None:
+            self.loginfo("Bypass-LIDAR service available - enabling button")
             self.__manual_control_button.setDisabled(False)
             self.__bypass_lidar = bypass_proxy
         elif self.__bypass_lidar is not None and bypass_proxy is None:
+            self.logerr("Bypass-LIDAR service unavailable - disabling button")
             self.__manual_control_button.setDisabled(True)
             self.__bypass_lidar = None
 
         go_home_proxy = status.get('__go_home_enable')
         if self.__go_home_enable is None and go_home_proxy is not None:
+            self.loginfo("GoHome enable service available")
             self.__go_home_enable = go_home_proxy
         elif self.__go_home_enable is not None and go_home_proxy is None:
+            self.logerr("GoHome enable service unavailable")
             self.__go_home_enable = None
 
     def __on_start_click(self):
-        subject_id, ok = QInputDialog.getText(self, "Subject ID", "Please enter subject ID:")
+        subject_id, ok = QInputDialog.getText(
+            self,
+            "Subject ID",
+            "Please enter subject ID:"
+        )
         if not ok or not subject_id:
             return
 
@@ -774,8 +893,8 @@ class MainWindow(QMainWindow):
         if self.__go_home_enable is not None:
             try:
                 self.__go_home_enable(False)
-            except Exception:
-                pass
+            except Exception as e:
+                self.logwarn(f"Failed disabling go_home: {e}")
 
         self.__ongoing_trial = True
         self.__writer_control("start", subject_id, rospy.Time.now())
@@ -785,6 +904,7 @@ class MainWindow(QMainWindow):
         self.__pause_button.setDisabled(False)
         self.__reset_button.setDisabled(False)
         self.__close_button.setDisabled(True)
+
         self.__ongoing_trial = True
 
     def __on_pause_click(self):
@@ -816,10 +936,10 @@ class MainWindow(QMainWindow):
         if self.__go_home_enable is not None:
             try:
                 self.__go_home_enable(False)
-            except Exception:
-                pass
+            except Exception as e:
+                self.logwarn(f"Failed disabling go_home: {e}")
 
-    def __on_close_click(self, event=None):
+    def __on_close_click(self, event):
         self.__writer_control("stop", None, rospy.Time.now())
         QApplication.quit()
         rospy.signal_shutdown("Closing GUI")
@@ -862,7 +982,6 @@ class MainWindow(QMainWindow):
 
     def loginfo(self, msg):
         rospy.loginfo(f"GUI Node: {msg}")
-
 
 if __name__ == "__main__":
     rospy.init_node('gui_node')
