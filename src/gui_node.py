@@ -40,6 +40,8 @@ from sensor_msgs.msg import Image, CompressedImage
 from std_msgs.msg import Float32, Int16MultiArray
 from std_srvs.srv import Trigger, SetBool
 from cv_bridge import CvBridge, CvBridgeError
+from std_srvs.srv import SetBool, SetBoolRequest
+
 
 # Custom ROS messages
 from foma.srv import Light, Check, Write
@@ -116,6 +118,9 @@ class MainWindow(QMainWindow):
         self.__event_log_file = None
         self.__event_log_writer = None
         self.__trial_folder = None 
+
+        self.__go_home_enable = None
+
 
     def __init_layouts(self):
         # Top-Left (Fish Camera)
@@ -571,6 +576,8 @@ class MainWindow(QMainWindow):
                 ('__dim_lights',              'light_dimmer/change',     Light),
                 ('__motor_control_system_check','motor_control/system_check', Check),
                 ('__bypass_lidar',            'motor_control/bypass_lidar', SetBool),
+                ('__go_home_enable', 'go_home/enable', SetBool),
+
             ]
             while not rospy.is_shutdown():
                 status = {}
@@ -993,6 +1000,7 @@ class MainWindow(QMainWindow):
             self.__dim_lights(brightness)
             self.__log_event("light_control", f"Brightness set to {brightness}/255")
 
+
     def __on_start_click(self):
         # Ask if New Session or New Trial        
         msg_box = QMessageBox(self)
@@ -1051,6 +1059,13 @@ class MainWindow(QMainWindow):
         self.__reset_button.setDisabled(False)
         self.__close_button.setDisabled(True)
 
+        if self.__go_home_enable is not None:
+            try:
+                self.__go_home_enable(False)
+            except Exception as e:
+                self.logwarn(f"Failed disabling go_home: {e}")
+
+
         self.__ongoing_trial = True
         
         # Call all writer services with trial folder path
@@ -1082,6 +1097,14 @@ class MainWindow(QMainWindow):
         self.__start_button.clicked.connect(self.__on_continue_click)
 
         self.__ongoing_trial = False
+
+        if self.__go_home_enable is not None:
+            try:
+                self.__go_home_enable(True)
+            except Exception as e:
+                self.logwarn(f"Failed enabling go_home: {e}")
+
+
         self.__motor_control_vector.publish(Vector3(0, 0, 0))
         
         # Log pause event
@@ -1111,6 +1134,13 @@ class MainWindow(QMainWindow):
                 writer_service("stop", "", rospy.Time.now())
             except rospy.ServiceException as e:
                 rospy.logerr(f"Writer service call failed: {e}")
+
+        if self.__go_home_enable is not None:
+            try:
+                self.__go_home_enable(False)
+            except Exception as e:
+                self.logwarn(f"Failed disabling go_home: {e}")
+
 
     def __on_close_click(self, event):
         # Log stop event if trial is ongoing

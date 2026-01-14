@@ -181,7 +181,7 @@ class MotorControlNode(AbstractNode):
     def __handle_twist(self, msg: Twist):
         self.__desired_h = msg.linear.y
         self.__desired_v = msg.linear.x
-        self.__desired_rotate = 0.0
+        self.__desired_rotate = msg.angular.z
         self.__last_cmd_time = rospy.Time.now()
 
     def __handle_rotate(self, msg: Float32):
