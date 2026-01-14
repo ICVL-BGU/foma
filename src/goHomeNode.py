@@ -11,8 +11,8 @@ class GoHomeNode:
     def __init__(self): 
         self.arrival_tol = rospy.get_param("~arrival_tol", 0.05)
         self.enabled = False
-        self.max_speed = 0.3
-        self.kp = 0.4 
+        self.max_speed = 0.8
+        self.kp = 2.0 
 
         # Publishers 
         self.cmd_pub = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
@@ -38,29 +38,43 @@ class GoHomeNode:
         if not self.enabled:
             return
 
-        ranges = np.array(msg.ranges)
+        ranges = np.array(msg.ranges) / 1000.0 
+        
+        def get_dist(angle):
+            idx = [(angle + i) % 360 for i in range(-15, 15)]
+            vals = ranges[idx]
+            valid = vals[(vals > 0.1) & (vals < 15.0)]
+            return np.median(valid) if len(valid) > 0 else None
 
-        f = self._get_avg(ranges, 0)
-        b = self._get_avg(ranges, 180)
-        l = self._get_avg(ranges, 90)
-        r = self._get_avg(ranges, 270)
+        l = get_dist(0)
+        r = get_dist(180)
+        b = get_dist(90)
+        f = get_dist(270)
 
         if None in [f, b, l, r]:
             return
 
         error_x = (f - b) / 2.0
         error_y = (l - r) / 2.0
-
-        if math.hypot(error_x, error_y) < self.arrival_tol:
-            rospy.loginfo("Arrived at Center!")
+        
+        dist_to_center = math.hypot(error_x, error_y)
+        
+        if dist_to_center < self.arrival_tol:
             self._finish()
             return
 
         cmd = Twist()
-        cmd.linear.x = max(min(error_x * self.kp, self.max_speed), -self.max_speed)
-        cmd.linear.y = max(min(error_y * self.kp, self.max_speed), -self.max_speed)
-        
-        self.cmd_pub.publish(cmd) 
+        cmd.linear.x = error_x * 1.5
+        cmd.linear.y = error_y * 1.5
+
+        speed = math.hypot(cmd.linear.x, cmd.linear.y)
+        if speed > self.max_speed:
+            scale = self.max_speed / speed
+            cmd.linear.x *= scale
+            cmd.linear.y *= scale
+
+        self.cmd_pub.publish(cmd)
+
 
     def _get_avg(self, ranges, angle):
         indices = [(angle + i) % 360 for i in range(-5, 5)]
