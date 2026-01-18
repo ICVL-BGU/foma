@@ -15,7 +15,7 @@ class GoHomeNode:
         self.kp = 0.4 
 
         # Publishers 
-        self.cmd_pub = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
+        self.cmd_pub = rospy.Publisher('go_home/twist', Twist, queue_size=10)
         self.pub_enabled = rospy.Publisher("go_home/enabled", Bool, queue_size=1, latch=True)
         
         # Subscribers

@@ -110,6 +110,10 @@ class MainWindow(QMainWindow):
         # Trial Control
         self.__ongoing_trial = False 
 
+        # Go Home
+        self.__go_home_enable = None
+        self.__go_home_active = False
+
     def __init_layouts(self):
         # Top-Left (Fish Camera)
         self.__TL_layout = QVBoxLayout()
@@ -336,13 +340,14 @@ class MainWindow(QMainWindow):
         rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
         rospy.Subscriber('motor_control/blocked', Int16MultiArray, self.__update_blocked_directions)
         rospy.Subscriber('motor_control/speed', TwistStamped, self.__update_foma_speed)
-        self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
+        self.__motor_control_twist = rospy.Publisher('manual_control/twist', Twist, queue_size=10)
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=10)
         self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=10)
         self.__motor_control_rotate = rospy.Publisher('motor_control/rotate', Float32, queue_size=10)
         self.__motor_set_speed = rospy.Publisher('motor_control/set_speed', Float32, queue_size=10)
         self.__writer_control = rospy.ServiceProxy('writer_node/write', Write)
         # self.__motor_control_system_check = rospy.ServiceProxy('motor_control/system_check', Check)
+
 
     def __init_manual_control_window(self):
         self.__motor_set_speed.publish(Float32(1.0))
@@ -378,12 +383,13 @@ class MainWindow(QMainWindow):
                 Qt.Key_Minus: -1  # cw
             }
             if key in key_to_angle:
+                stop_go_home_if_needed()
                 if event.type() == QEvent.KeyPress:
                     angle = key_to_angle[key]
                     self.__update_velocity(angle, True)
                     event.accept()
                 elif event.type() == QEvent.KeyRelease:
-                    self.__update_velocity(0, False)
+                    self.__update_velocity(key_to_angle[key], False)
                     event.accept()
             else:
                 event.ignore()
@@ -392,7 +398,49 @@ class MainWindow(QMainWindow):
         self.__manual_control_window.keyPressEvent = on_key_press
         self.__manual_control_window.keyReleaseEvent = on_key_press
 
+        def start_go_home():
+            if self.__go_home_enable is None:
+                self.logwarn("GoHome service not available")
+                return
+
+            self.__linear_velocity = Twist()
+            self.__motor_control_twist.publish(Twist())
+            self.__motor_control_rotate.publish(Float32(0.0))
+
+            try:
+                self.__go_home_enable(True)
+                self.__go_home_active = True
+            except Exception as e:
+                self.logwarn(f"Failed enabling go_home: {e}")
+                self.__go_home_active = False
+                return
+
+
+
+
+        def stop_go_home_if_needed():
+            if not self.__go_home_active:
+                return
+
+            if self.__go_home_enable is not None:
+                try:
+                    self.__go_home_enable(False)
+                except Exception:
+                    pass
+
+            self.__go_home_active = False
+            self.__linear_velocity = Twist()
+            self.__motor_control_twist.publish(Twist())
+            self.__motor_control_rotate.publish(Float32(0.0))
+
+
+
         control_layout = QGridLayout()
+
+        go_home_button = QPushButton("Go Home")
+        control_layout.addWidget(go_home_button, 5, 0, 1, 4)
+        go_home_button.clicked.connect(start_go_home)
+
 
         # Direction buttons
         forward_button = QPushButton("↑")
@@ -438,25 +486,25 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(speed_control_textbox, 4, 2)
         control_layout.addWidget(speed_control_button, 4, 3)
 
-        forward_button.pressed.connect(lambda: self.__update_velocity(0, True))
+        forward_button.pressed.connect(lambda: (stop_go_home_if_needed(), self.__update_velocity(0, True)))
         forward_button.released.connect(lambda: self.__update_velocity(0, False))
-        backward_button.pressed.connect(lambda: self.__update_velocity(180, True))
+        backward_button.pressed.connect(lambda: (stop_go_home_if_needed(), self.__update_velocity(180, True)))
         backward_button.released.connect(lambda: self.__update_velocity(180, False))
-        left_button.pressed.connect(lambda: self.__update_velocity(90, True))
+        left_button.pressed.connect(lambda: (stop_go_home_if_needed(), self.__update_velocity(90, True)))
         left_button.released.connect(lambda: self.__update_velocity(90, False))
-        right_button.pressed.connect(lambda: self.__update_velocity(270, True))
+        right_button.pressed.connect(lambda: (stop_go_home_if_needed(), self.__update_velocity(270, True)))
         right_button.released.connect(lambda: self.__update_velocity(270, False))
-        forward_left_button.pressed.connect(lambda: self.__update_velocity(45, True))
+        forward_left_button.pressed.connect(lambda: (stop_go_home_if_needed(), self.__update_velocity(45, True)))
         forward_left_button.released.connect(lambda: self.__update_velocity(45, False))
-        forward_right_button.pressed.connect(lambda: self.__update_velocity(315, True))
+        forward_right_button.pressed.connect(lambda: (stop_go_home_if_needed(), self.__update_velocity(315, True)))
         forward_right_button.released.connect(lambda: self.__update_velocity(315, False))
-        backward_left_button.pressed.connect(lambda: self.__update_velocity(135, True))
+        backward_left_button.pressed.connect(lambda: (stop_go_home_if_needed(), self.__update_velocity(135, True)))
         backward_left_button.released.connect(lambda: self.__update_velocity(135, False))
-        backward_right_button.pressed.connect(lambda: self.__update_velocity(225, True))
+        backward_right_button.pressed.connect(lambda: (stop_go_home_if_needed(), self.__update_velocity(225, True)))
         backward_right_button.released.connect(lambda: self.__update_velocity(225, False))
-        cw_button.pressed.connect(lambda: self.__update_velocity(-1, True))
+        cw_button.pressed.connect(lambda: (stop_go_home_if_needed(), self.__update_velocity(-1, True)))
         cw_button.released.connect(lambda: self.__update_velocity(-1, False))
-        ccw_button.pressed.connect(lambda: self.__update_velocity(-2, True))
+        ccw_button.pressed.connect(lambda: (stop_go_home_if_needed(), self.__update_velocity(-2, True)))
         ccw_button.released.connect(lambda: self.__update_velocity(-2, False))
         speed_control_button.clicked.connect(set_speed)
 
@@ -548,6 +596,8 @@ class MainWindow(QMainWindow):
                 ('__dim_lights',              'light_dimmer/change',     Light),
                 ('__motor_control_system_check','motor_control/system_check', Check),
                 ('__bypass_lidar',            'motor_control/bypass_lidar', SetBool),
+                ('__go_home_enable', '/go_home/enable', SetBool),
+
             ]
             while not rospy.is_shutdown():
                 status = {}
@@ -879,6 +929,7 @@ class MainWindow(QMainWindow):
             '__dim_lights':      <Light proxy>   or None,
             '__motor_control_system_check': <Check proxy> or None,
             '__bypass_lidar':    <SetBool proxy> or None,
+            
           }
         """
         # 1) fish_feeder/feed
@@ -929,6 +980,17 @@ class MainWindow(QMainWindow):
             self.logerr("Bypass‐LIDAR service unavailable - disabling button")
             self.__manual_control_button.setDisabled(True)
             self.__bypass_lidar = None
+
+        # 5) go_home/enable
+        go_home_proxy = status.get('__go_home_enable')
+        if self.__go_home_enable is None and go_home_proxy is not None:
+            self.loginfo("GoHome service available")
+            self.__go_home_enable = go_home_proxy
+        elif self.__go_home_enable is not None and go_home_proxy is None:
+            self.logerr("GoHome service unavailable")
+            self.__go_home_enable = None
+            self.__go_home_active = False
+
 
     def __on_start_click(self):
         subject_id, ok = QInputDialog.getText(
