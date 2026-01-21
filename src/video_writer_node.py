@@ -191,8 +191,8 @@ class VideoWriterNode(AbstractNode):
             msg_time = img_msg.header.stamp.to_sec()
             current_time = rospy.Time.now().to_sec()
             lag = current_time - msg_time
-            if lag > 0.1:  # Log if lag > 100ms
-                rospy.logwarn_throttle(2.0, f"[{self.node_name}] Buffer: {pending} frames queued, lag: {lag:.3f}s ({int(lag * self.__fps)} frames behind)")
+            if lag > 0.1 or pending > 10:  # Log if lag > 100ms or queue building up
+                rospy.logwarn_throttle(2.0, f"[{self._node_name}] Buffer: {pending} frames queued | msg_time: {msg_time:.3f}, current: {current_time:.3f}, lag: {lag:.3f}s ({int(lag * self.__fps)} frames calc)")
         
         img = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="rgb8")
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
@@ -217,8 +217,8 @@ class VideoWriterNode(AbstractNode):
             msg_time = img_msg.header.stamp.to_sec()
             current_time = rospy.Time.now().to_sec()
             lag = current_time - msg_time
-            if lag > 0.1:  # Log if lag > 100ms
-                rospy.logwarn_throttle(2.0, f"[{self.node_name}] Buffer: {pending} frames queued, lag: {lag:.3f}s ({int(lag * self.__fps)} frames behind)")
+            if lag > 0.1 or pending > 10:  # Log if lag > 100ms or queue building up
+                rospy.logwarn_throttle(2.0, f"[{self._node_name}] Buffer: {pending} frames queued | msg_time: {msg_time:.3f}, current: {current_time:.3f}, lag: {lag:.3f}s ({int(lag * self.__fps)} frames calc)")
         
         img = self.bridge.compressed_imgmsg_to_cv2(img_msg)
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
