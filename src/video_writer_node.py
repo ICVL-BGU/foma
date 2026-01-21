@@ -13,6 +13,7 @@ from foma.msg import FomaLocation
 from etc.settings import *
 import sys
 import subprocess
+import threading
 
 class VideoWriterNode(AbstractNode):
     def __init__(self):
@@ -54,6 +55,9 @@ class VideoWriterNode(AbstractNode):
         self.__folder = ""
         self.__start_time = None
         self.__stop_time = None
+        # Queue depth tracking
+        self.__pending_frames = 0
+        self.__frame_lock = threading.Lock()
 
     def __setup_subscriber(self):
         """Setup subscriber for the configured topic"""
@@ -62,6 +66,7 @@ class VideoWriterNode(AbstractNode):
             return
         
         # Create callback based on message type
+        # Video writer needs large queue to capture ALL frames without dropping
         if self.__msg_type == 'Image':
             rospy.Subscriber(self.__topic, Image, self.__image_callback)
         elif self.__msg_type == 'CompressedImage':
@@ -172,21 +177,53 @@ class VideoWriterNode(AbstractNode):
 
     def __image_callback(self, img_msg: Image):
         """Write Image message to video"""
+        with self.__frame_lock:
+            self.__pending_frames += 1
+            pending = self.__pending_frames
+        
         if not self.__write or self.__video_writer is None:
+            with self.__frame_lock:
+                self.__pending_frames -= 1
             return
+        
+        # Buffer lag diagnostic
+        msg_time = img_msg.header.stamp.to_sec()
+        current_time = rospy.Time.now().to_sec()
+        lag = current_time - msg_time
+        if lag > 0.1:  # Log if lag > 100ms
+            self.logwarn_throttle(2.0, f"Buffer: {pending} frames queued, lag: {lag:.3f}s ({int(lag * self.__fps)} frames behind)")
         
         img = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="rgb8")
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         self.__video_writer.write(img)
+        
+        with self.__frame_lock:
+            self.__pending_frames -= 1
 
     def __compressed_image_callback(self, img_msg: CompressedImage):
         """Write CompressedImage message to video"""
+        with self.__frame_lock:
+            self.__pending_frames += 1
+            pending = self.__pending_frames
+        
         if not self.__write or self.__video_writer is None:
+            with self.__frame_lock:
+                self.__pending_frames -= 1
             return
+        
+        # Buffer lag diagnostic
+        msg_time = img_msg.header.stamp.to_sec()
+        current_time = rospy.Time.now().to_sec()
+        lag = current_time - msg_time
+        if lag > 0.1:  # Log if lag > 100ms
+            self.logwarn_throttle(2.0, f"Buffer: {pending} frames queued, lag: {lag:.3f}s ({int(lag * self.__fps)} frames behind)")
         
         img = self.bridge.compressed_imgmsg_to_cv2(img_msg)
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         self.__video_writer.write(img)
+        
+        with self.__frame_lock:
+            self.__pending_frames -= 1
 
     def __foma_location_callback(self, location: FomaLocation):
         """Write FOMA location as trajectory map to video"""

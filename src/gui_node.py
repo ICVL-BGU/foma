@@ -113,6 +113,10 @@ class MainWindow(QMainWindow):
         self.__event_log_writer = None
 
         self.__go_home_enable = None
+        
+        # Queue depth tracking
+        self.__room_pending_frames = 0
+        self.__room_frame_lock = threading.Lock()
 
 
     def __init_layouts(self):
@@ -686,6 +690,17 @@ class MainWindow(QMainWindow):
 
     def __update_room_image(self, img_msg: Image):
         try:
+            with self.__room_frame_lock:
+                self.__room_pending_frames += 1
+                pending = self.__room_pending_frames
+            
+            # Buffer lag diagnostic
+            msg_time = img_msg.header.stamp.to_sec()
+            current_time = rospy.Time.now().to_sec()
+            lag = current_time - msg_time
+            if lag > 0.05:  # Log if lag > 50ms
+                rospy.logwarn_throttle(2.0, f"[GUI] Buffer: {pending} frames queued, lag: {lag:.3f}s")
+            
             self.__room_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="rgb8") # was passthrough
             frame = self.__room_image.copy() # might not be correct
             if self.__foma_img_location:
@@ -693,6 +708,9 @@ class MainWindow(QMainWindow):
                 center_y = self.__foma_img_location.y
                 cv2.circle(frame, (int(center_x), int(center_y)), 5, (0, 255, 0), -1)
             self.room_frame_ready.emit(frame)
+            
+            with self.__room_frame_lock:
+                self.__room_pending_frames -= 1
         except CvBridgeError as e:
             self.logwarn(f"Error converting image message: {e}")
         except Exception as e:
