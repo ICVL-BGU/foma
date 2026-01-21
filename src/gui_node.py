@@ -650,13 +650,13 @@ class MainWindow(QMainWindow):
             self.__fish_state = None
         else:
             self.__fish_state = state
-        if self.__ongoing_trial and self.__fish_image is not None:
+        if self.__ongoing_trial and self.__manual_control_window is None:
             # Get fish location
             fish_x = int(state.linear.x)
             fish_y = int(state.linear.y)
 
             # Calculate the vector from the image center to the fish location
-            height, width, _ = self.__fish_image.shape
+            height, width = FOMA_CAMERA_FRAME_SHAPE
             center_x = width // 2
             center_y = height // 2
             # 1. compute the pixel‐offset with y inverted
