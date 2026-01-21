@@ -695,11 +695,12 @@ class MainWindow(QMainWindow):
                 pending = self.__room_pending_frames
             
             # Buffer lag diagnostic
-            msg_time = img_msg.header.stamp.to_sec()
-            current_time = rospy.Time.now().to_sec()
-            lag = current_time - msg_time
-            if lag > 0.05:  # Log if lag > 50ms
-                rospy.logwarn_throttle(2.0, f"[GUI] Buffer: {pending} frames queued, lag: {lag:.3f}s")
+            if img_msg.header.stamp.to_sec() > 0:
+                msg_time = img_msg.header.stamp.to_sec()
+                current_time = rospy.Time.now().to_sec()
+                lag = current_time - msg_time
+                if lag > 0.05:  # Log if lag > 50ms
+                    rospy.logwarn_throttle(2.0, f"[GUI] Buffer: {pending} frames queued, lag: {lag:.3f}s")
             
             self.__room_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="rgb8") # was passthrough
             frame = self.__room_image.copy() # might not be correct

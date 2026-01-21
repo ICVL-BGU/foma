@@ -45,11 +45,12 @@ class LocalizationNode(AbstractNode):
                 pending = self.pending_frames
             
             # Buffer lag diagnostic
-            msg_time = img_msg.header.stamp.to_sec()
-            current_time = rospy.Time.now().to_sec()
-            lag = current_time - msg_time
-            if lag > 0.1:  # Log if lag > 100ms
-                self.logwarn_throttle(2.0, f"Localization buffer: {pending} frames queued, lag: {lag:.3f}s")
+            if img_msg.header.stamp.to_sec() > 0:
+                msg_time = img_msg.header.stamp.to_sec()
+                current_time = rospy.Time.now().to_sec()
+                lag = current_time - msg_time
+                if lag > 0.1:  # Log if lag > 100ms
+                    rospy.logwarn_throttle(2.0, f"[Localization] Buffer: {pending} frames queued, lag: {lag:.3f}s")
             
             self.img = self.bridge.imgmsg_to_cv2(img_msg)
             self.process_image()
