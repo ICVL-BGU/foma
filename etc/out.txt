@@ -1,0 +1,38 @@
+icvl@vnl-station:~/ros_ws$ '/home/icvl/ros_ws/src/foma/etc/check_opencv_h264.py'
+============================================================
+OpenCV H.264 Support Checker
+============================================================
+✓ OpenCV installed: 4.2.0
+
+Codec Support:
+------------------------------------------------------------
+  ✓ X264   - H.264 (software)
+  ✓ H264   - H.264 (may use hardware)
+  ✓ avc1   - H.264 (Apple variant)
+  ✓ mp4v   - MPEG-4 Part 2 (fallback)
+  ✓ MJPG   - Motion JPEG (fast, large)
+  ✓ XVID   - Xvid (alternative)
+
+Testing Video Writer:
+------------------------------------------------------------
+OpenCV: FFMPEG: tag 0x34363258/'X264' is not supported with codec id 27 and format 'mp4 / MP4 (MPEG-4 Part 14)'
+OpenCV: FFMPEG: fallback to use tag 0x31637661/'avc1'
+  ✓ X264: SUCCESS - wrote 1420.5 KB
+OpenCV: FFMPEG: tag 0x34363248/'H264' is not supported with codec id 27 and format 'mp4 / MP4 (MPEG-4 Part 14)'
+OpenCV: FFMPEG: fallback to use tag 0x31637661/'avc1'
+  ✓ H264: SUCCESS - wrote 1421.1 KB
+  ✓ mp4v: SUCCESS - wrote 2179.8 KB
+
+OpenCV Build Information:
+------------------------------------------------------------
+  To be built:                 aruco bgsegm bioinspired calib3d ccalib core datasets dnn dnn_objdetect dnn_superres dpm face features2d flann freetype fuzzy hdf hfs highgui img_hash imgcodecs imgproc java line_descriptor ml objdetect optflow phase_unwrapping photo plot python3 quality reg rgbd saliency shape stereo stitching structured_light superres surface_matching text tracking video videoio videostab viz ximgproc xobjdetect xphoto
+  Unavailable:                 cnn_3dobj cudaarithm cudabgsegm cudacodec cudafeatures2d cudafilters cudaimgproc cudalegacy cudaobjdetect cudaoptflow cudastereo cudawarping cudev cvv gapi js matlab ovis python2 ts
+  Video I/O:
+  FFMPEG:                      YES
+  avcodec:                   YES (58.54.100)
+  GStreamer:                   YES (1.16.2)
+
+============================================================
+✓ H.264 ENCODING IS AVAILABLE
+
+Recommended codec for your system: X264
