@@ -56,9 +56,6 @@ class VideoWriterNode(AbstractNode):
         self.__folder = ""
         self.__start_time = None
         self.__stop_time = None
-        # Queue depth tracking
-        self.__pending_frames = 0
-        self.__frame_lock = threading.Lock()
         # Multi-threaded writing
         self.__frame_queue = None
         self.__writer_thread = None
@@ -88,8 +85,6 @@ class VideoWriterNode(AbstractNode):
                 frame = self.__frame_queue.get(timeout=0.1)
                 if frame is not None and self.__video_writer is not None:
                     self.__video_writer.write(frame)
-                    with self.__frame_lock:
-                        self.__pending_frames -= 1
             except queue.Empty:
                 continue
             except Exception as e:
@@ -221,8 +216,10 @@ class VideoWriterNode(AbstractNode):
         elif write.msg == "stop" and self.__write:
             self.__stop_time = write.stamp
             self.__write = False
-            self.__stop_trial()
-            self.loginfo("Stopped video writing")
+            # Stop trial in separate thread to avoid blocking GUI
+            stop_thread = threading.Thread(target=self.__stop_trial, daemon=True)
+            stop_thread.start()
+            self.loginfo("Stopping video writing (non-blocking)")
 
         return WriteResponse(success=True)
 
@@ -230,19 +227,6 @@ class VideoWriterNode(AbstractNode):
         """Write Image message to video"""
         if not self.__write or self.__video_writer is None or self.__frame_queue is None:
             return
-        
-        with self.__frame_lock:
-            self.__pending_frames += 1
-            pending = self.__pending_frames
-        
-        # Buffer lag diagnostic
-        if img_msg.header.stamp.to_sec() > 0:
-            msg_time = img_msg.header.stamp.to_sec()
-            current_time = rospy.Time.now().to_sec()
-            lag = current_time - msg_time
-            queue_size = self.__frame_queue.qsize()
-            if lag > 0.1 or pending > 10:  # Log if lag > 100ms or queue building up
-                rospy.logwarn_throttle(2.0, f"[{self._node_name}] Buffer: {pending} processing, {queue_size} queued for writing | lag: {lag:.3f}s")
         
         # Convert and queue frame (fast operation)
         img = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="rgb8")
@@ -252,26 +236,11 @@ class VideoWriterNode(AbstractNode):
             self.__frame_queue.put(img, block=True, timeout=0.5)
         except queue.Full:
             self.logwarn("Frame queue full, dropping frame!")
-            with self.__frame_lock:
-                self.__pending_frames -= 1
 
     def __compressed_image_callback(self, img_msg: CompressedImage):
         """Write CompressedImage message to video"""
         if not self.__write or self.__video_writer is None or self.__frame_queue is None:
             return
-        
-        with self.__frame_lock:
-            self.__pending_frames += 1
-            pending = self.__pending_frames
-        
-        # Buffer lag diagnostic
-        if img_msg.header.stamp.to_sec() > 0:
-            msg_time = img_msg.header.stamp.to_sec()
-            current_time = rospy.Time.now().to_sec()
-            lag = current_time - msg_time
-            queue_size = self.__frame_queue.qsize()
-            if lag > 0.1 or pending > 10:  # Log if lag > 100ms or queue building up
-                rospy.logwarn_throttle(2.0, f"[{self._node_name}] Buffer: {pending} processing, {queue_size} queued for writing | lag: {lag:.3f}s")
         
         # Convert and queue frame (fast operation)
         img = self.bridge.compressed_imgmsg_to_cv2(img_msg)
@@ -281,8 +250,6 @@ class VideoWriterNode(AbstractNode):
             self.__frame_queue.put(img, block=True, timeout=0.5)
         except queue.Full:
             self.logwarn("Frame queue full, dropping frame!")
-            with self.__frame_lock:
-                self.__pending_frames -= 1
 
     def __foma_location_callback(self, location: FomaLocation):
         """Write FOMA location as trajectory map to video"""
