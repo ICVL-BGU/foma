@@ -512,14 +512,16 @@ class MainWindow(QMainWindow):
         def next_step():
             nonlocal step
             if step in range(4):
+                # Feed 6 times for steps 0-3 (24 total)
                 for _ in range(6):
                     self.__feed()
                 step += 1
                 step_label.setText(f"Step: {step}/5")
             elif step == 4:
-                for _ in range(4):
+                # Feed 2 times for step 4 (26 total = 32 holes - 6 visible slots)
+                for _ in range(2):
                     self.__feed()
-                step =-1
+                step = -1
                 empty_button.setDisabled(False)
                 step_label.setText("Finished Loading")
                 enter_label.setVisible(False)
