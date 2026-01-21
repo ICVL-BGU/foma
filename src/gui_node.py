@@ -338,12 +338,12 @@ class MainWindow(QMainWindow):
         self.__room_display_group.setLayout(room_display_layout)
 
     def __init_subscriptions_and_services(self):
-        rospy.Subscriber('fish_camera/image', CompressedImage, self.__update_fish_image)
-        rospy.Subscriber('fish_detection/state', TwistStamped, self.__update_fish_state)
-        rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image)
-        rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location)
-        rospy.Subscriber('motor_control/blocked', Int16MultiArray, self.__update_blocked_directions)
-        rospy.Subscriber('motor_control/speed', TwistStamped, self.__update_foma_speed)
+        rospy.Subscriber('fish_camera/image', CompressedImage, self.__update_fish_image, queue_size=1)
+        rospy.Subscriber('fish_detection/state', TwistStamped, self.__update_fish_state, queue_size=1)
+        rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image, queue_size=1)
+        rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location, queue_size=1)
+        rospy.Subscriber('motor_control/blocked', Int16MultiArray, self.__update_blocked_directions, queue_size=1)
+        rospy.Subscriber('motor_control/speed', TwistStamped, self.__update_foma_speed, queue_size=1)
         self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=10)
         self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=10)

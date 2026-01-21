@@ -30,7 +30,8 @@ class LocalizationNode(AbstractNode):
         with open(mapper_path, 'r') as f:
             self.mapper_params = json.load(f)
         self.img = None
-        self.image_sub = rospy.Subscriber('ceiling_camera/image', Image, self.read_image)
+        # Large queue to process all frames - output is recorded by csv_writer
+        self.image_sub = rospy.Subscriber('ceiling_camera/image', Image, self.read_image, queue_size=200, buff_size=2**28)
         self.location_pub = rospy.Publisher('localization/location', FomaLocation, queue_size=10)
         self.location = FomaLocation()
         self.bridge = CvBridge()

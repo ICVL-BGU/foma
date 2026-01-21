@@ -27,7 +27,8 @@ class FishDetectionNode(AbstractNode):
         self.prediction = None
         self.point_b, self.point_a = 0, 3
 
-        self.image_sub = rospy.Subscriber('fish_camera/image', CompressedImage, self.read_image, queue_size=1)
+        # Larger queue to process all frames - output is recorded by csv_writer
+        self.image_sub = rospy.Subscriber('fish_camera/image', CompressedImage, self.read_image, queue_size=100, buff_size=2**26)
         self.fish_state_pub = rospy.Publisher('fish_detection/state', TwistStamped, queue_size=10)
 
     def read_image(self, img_msg: CompressedImage):

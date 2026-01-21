@@ -41,7 +41,7 @@
         <param name="topic" value="ceiling_camera/image" />
         <param name="msg_type" value="Image" />
         <param name="filename" value="room_video.mp4" />
-        <param name="fourcc" value="mp4v" />
+        <param name="fourcc" value="X264" />
         <param name="fps" value="25" />
         <rosparam param="frame_shape">[2560, 2560]</rosparam>
         <param name="video_type" value="standard" />
@@ -54,7 +54,7 @@
         <param name="topic" value="fish_camera/image" />
         <param name="msg_type" value="CompressedImage" />
         <param name="filename" value="foma_video.mp4" />
-        <param name="fourcc" value="mp4v" />
+        <param name="fourcc" value="X264" />
         <param name="fps" value="20" />
         <rosparam param="frame_shape">[640, 640]</rosparam>
         <param name="video_type" value="standard" />
@@ -67,7 +67,7 @@
         <param name="topic" value="localization/location" />
         <param name="msg_type" value="FomaLocation" />
         <param name="filename" value="room_map.mp4" />
-        <param name="fourcc" value="mp4v" />
+        <param name="fourcc" value="X264" />
         <param name="fps" value="25" />
         <rosparam param="frame_shape">[1000, 1000]</rosparam>
         <param name="video_type" value="trajectory_map" />

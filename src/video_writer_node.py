@@ -14,6 +14,7 @@ from etc.settings import *
 import sys
 import subprocess
 import threading
+import queue
 
 class VideoWriterNode(AbstractNode):
     def __init__(self):
@@ -58,6 +59,10 @@ class VideoWriterNode(AbstractNode):
         # Queue depth tracking
         self.__pending_frames = 0
         self.__frame_lock = threading.Lock()
+        # Multi-threaded writing
+        self.__frame_queue = None
+        self.__writer_thread = None
+        self.__writer_running = False
 
     def __setup_subscriber(self):
         """Setup subscriber for the configured topic"""
@@ -68,13 +73,27 @@ class VideoWriterNode(AbstractNode):
         # Create callback based on message type
         # Video writer needs large queue to capture ALL frames without dropping
         if self.__msg_type == 'Image':
-            rospy.Subscriber(self.__topic, Image, self.__image_callback)
+            rospy.Subscriber(self.__topic, Image, self.__image_callback, queue_size=500, buff_size=2**28)
         elif self.__msg_type == 'CompressedImage':
-            rospy.Subscriber(self.__topic, CompressedImage, self.__compressed_image_callback)
+            rospy.Subscriber(self.__topic, CompressedImage, self.__compressed_image_callback, queue_size=500, buff_size=2**27)
         elif self.__msg_type == 'FomaLocation':
-            rospy.Subscriber(self.__topic, FomaLocation, self.__foma_location_callback)
+            rospy.Subscriber(self.__topic, FomaLocation, self.__foma_location_callback, queue_size=1000)
         else:
             self.logerr(f"Unsupported message type for video: {self.__msg_type}")
+    
+    def __writer_thread_loop(self):
+        """Background thread that writes frames to disk"""
+        while self.__writer_running:
+            try:
+                frame = self.__frame_queue.get(timeout=0.1)
+                if frame is not None and self.__video_writer is not None:
+                    self.__video_writer.write(frame)
+                    with self.__frame_lock:
+                        self.__pending_frames -= 1
+            except queue.Empty:
+                continue
+            except Exception as e:
+                self.logerr(f"Error in writer thread: {e}")
 
     def __start_trial(self):
         # Use the folder path provided by GUI (subject_id parameter now contains folder path)
@@ -96,8 +115,39 @@ class VideoWriterNode(AbstractNode):
             self.__map_image = np.ones((self.__frame_shape[1], self.__frame_shape[0], 3), 
                                       dtype=np.uint8) * 255
             self.loginfo("Initialized trajectory map")
+        
+        # Start writer thread
+        self.__frame_queue = queue.Queue(maxsize=500)
+        self.__writer_running = True
+        self.__writer_thread = threading.Thread(target=self.__writer_thread_loop, daemon=True)
+        self.__writer_thread.start()
+        self.loginfo("Started writer thread")
 
     def __stop_trial(self):
+        # Stop writer thread first
+        if self.__writer_running:
+            self.loginfo("Stopping writer thread...")
+            self.__writer_running = False
+            if self.__writer_thread is not None:
+                self.__writer_thread.join(timeout=5.0)
+                if self.__writer_thread.is_alive():
+                    self.logwarn("Writer thread did not stop cleanly")
+                else:
+                    self.loginfo("Writer thread stopped")
+        
+        # Flush any remaining frames
+        if self.__frame_queue is not None:
+            remaining = self.__frame_queue.qsize()
+            if remaining > 0:
+                self.loginfo(f"Flushing {remaining} remaining frames...")
+                while not self.__frame_queue.empty():
+                    try:
+                        frame = self.__frame_queue.get_nowait()
+                        if frame is not None and self.__video_writer is not None:
+                            self.__video_writer.write(frame)
+                    except queue.Empty:
+                        break
+        
         rospy.sleep(0.1)  # Ensure all frames are processed
         self.loginfo("Releasing video writer.")
         
@@ -107,6 +157,7 @@ class VideoWriterNode(AbstractNode):
             self.loginfo("Released video writer")
         
         self.__map_image = None
+        self.__frame_queue = None
         
         # Run reframe worker if enabled
         if self.__enable_reframe_worker:
@@ -177,59 +228,65 @@ class VideoWriterNode(AbstractNode):
 
     def __image_callback(self, img_msg: Image):
         """Write Image message to video"""
+        if not self.__write or self.__video_writer is None or self.__frame_queue is None:
+            return
+        
         with self.__frame_lock:
             self.__pending_frames += 1
             pending = self.__pending_frames
-        
-        if not self.__write or self.__video_writer is None:
-            with self.__frame_lock:
-                self.__pending_frames -= 1
-            return
         
         # Buffer lag diagnostic
         if img_msg.header.stamp.to_sec() > 0:
             msg_time = img_msg.header.stamp.to_sec()
             current_time = rospy.Time.now().to_sec()
             lag = current_time - msg_time
+            queue_size = self.__frame_queue.qsize()
             if lag > 0.1 or pending > 10:  # Log if lag > 100ms or queue building up
-                rospy.logwarn_throttle(2.0, f"[{self._node_name}] Buffer: {pending} frames queued | msg_time: {msg_time:.3f}, current: {current_time:.3f}, lag: {lag:.3f}s ({int(lag * self.__fps)} frames calc)")
+                rospy.logwarn_throttle(2.0, f"[{self._node_name}] Buffer: {pending} processing, {queue_size} queued for writing | lag: {lag:.3f}s")
         
+        # Convert and queue frame (fast operation)
         img = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="rgb8")
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        self.__video_writer.write(img)
         
-        with self.__frame_lock:
-            self.__pending_frames -= 1
+        try:
+            self.__frame_queue.put(img, block=True, timeout=0.5)
+        except queue.Full:
+            self.logwarn("Frame queue full, dropping frame!")
+            with self.__frame_lock:
+                self.__pending_frames -= 1
 
     def __compressed_image_callback(self, img_msg: CompressedImage):
         """Write CompressedImage message to video"""
+        if not self.__write or self.__video_writer is None or self.__frame_queue is None:
+            return
+        
         with self.__frame_lock:
             self.__pending_frames += 1
             pending = self.__pending_frames
-        
-        if not self.__write or self.__video_writer is None:
-            with self.__frame_lock:
-                self.__pending_frames -= 1
-            return
         
         # Buffer lag diagnostic
         if img_msg.header.stamp.to_sec() > 0:
             msg_time = img_msg.header.stamp.to_sec()
             current_time = rospy.Time.now().to_sec()
             lag = current_time - msg_time
+            queue_size = self.__frame_queue.qsize()
             if lag > 0.1 or pending > 10:  # Log if lag > 100ms or queue building up
-                rospy.logwarn_throttle(2.0, f"[{self._node_name}] Buffer: {pending} frames queued | msg_time: {msg_time:.3f}, current: {current_time:.3f}, lag: {lag:.3f}s ({int(lag * self.__fps)} frames calc)")
+                rospy.logwarn_throttle(2.0, f"[{self._node_name}] Buffer: {pending} processing, {queue_size} queued for writing | lag: {lag:.3f}s")
         
+        # Convert and queue frame (fast operation)
         img = self.bridge.compressed_imgmsg_to_cv2(img_msg)
         img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        self.__video_writer.write(img)
         
-        with self.__frame_lock:
-            self.__pending_frames -= 1
+        try:
+            self.__frame_queue.put(img, block=True, timeout=0.5)
+        except queue.Full:
+            self.logwarn("Frame queue full, dropping frame!")
+            with self.__frame_lock:
+                self.__pending_frames -= 1
 
     def __foma_location_callback(self, location: FomaLocation):
         """Write FOMA location as trajectory map to video"""
-        if not self.__write or self.__video_writer is None:
+        if not self.__write or self.__video_writer is None or self.__frame_queue is None:
             return
         if self.__map_image is None:
             self.logwarn("No map image initialized")
@@ -251,7 +308,12 @@ class VideoWriterNode(AbstractNode):
         # Create frame for video
         frame = cv2.cvtColor(self.__map_image, cv2.COLOR_RGB2BGR)
         cv2.circle(frame, (x, y), 5, (0, 0, 255), -1)
-        self.__video_writer.write(frame)
+        
+        # Queue frame for writing
+        try:
+            self.__frame_queue.put(frame, block=False)
+        except queue.Full:
+            self.logwarn("Frame queue full, dropping trajectory frame!")
 
     def __on_shutdown(self):
         self.loginfo("Shutting down VideoWriterNode...")
