@@ -76,12 +76,6 @@ class GoHomeNode:
         self.cmd_pub.publish(cmd)
 
 
-    def _get_avg(self, ranges, angle):
-        indices = [(angle + i) % 360 for i in range(-5, 5)]
-        vals = ranges[indices]
-        valid = vals[(vals > 0.1) & (vals < 10.0)] 
-        return np.mean(valid) if len(valid) > 0 else None
-
     def stop_robot(self):
         self.cmd_pub.publish(Twist())
 
