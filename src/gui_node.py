@@ -150,6 +150,15 @@ class MainWindow(QMainWindow):
         self.__BL_widget.setLineWidth(2)
         self.__BL_widget.setLayout(self.__BL_layout)
 
+        # Bottom-Center (Display)
+        self.__BC_layout = QGridLayout()
+
+
+        self.__BC_widget = QFrame()
+        self.__BC_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
+        self.__BC_widget.setLineWidth(2)
+        self.__BC_widget.setLayout(self.__BC_layout)
+
         # Bottom-Right (Control Buttons)
         self.__BR_layout = QGridLayout()
         self.__BR_layout.addWidget(self.__start_button, 0, 0, alignment=Qt.AlignCenter)
@@ -167,7 +176,8 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.__TL_widget, 0, 0)
         main_layout.addWidget(self.__TR_widget, 0, 1)
         main_layout.addWidget(self.__BL_widget, 1, 0)
-        main_layout.addWidget(self.__BR_widget, 1, 1)
+        main_layout.addWidget(self.__BC_widget, 1, 1)
+        main_layout.addWidget(self.__BR_widget, 1, 2)
 
         main_layout.setSpacing(10)
         main_layout.setContentsMargins(10, 10, 10, 10)
@@ -181,35 +191,12 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(widget)
 
     def __init_widgets(self):
-        # Start button init
-        self.__start_button = QPushButton()
-        self.__start_button.setText("Start")
-        self.__start_button.setDisabled(False)
-        self.__start_button.setMaximumHeight(50)
-        self.__start_button.clicked.connect(self.__on_start_click)
+        self.__init_settings_widgets()
+        self.__init_data_widgets
+        self.__init_control_widgets()
 
-        # Stop button init
-        self.__pause_button = QPushButton()
-        self.__pause_button.setText("Pause")
-        self.__pause_button.setDisabled(True)
-        self.__pause_button.setMaximumHeight(50)
-        self.__pause_button.clicked.connect(self.__on_pause_click)
-
-        # Reset button init
-        self.__reset_button = QPushButton()
-        self.__reset_button.setText("Reset")
-        self.__reset_button.setDisabled(True)
-        self.__reset_button.setMaximumHeight(50)
-        self.__reset_button.clicked.connect(self.__on_reset_click)
-
-        # Close button init
-        self.__close_button = QPushButton()
-        self.__close_button.setText("Close")
-        self.__close_button.setDisabled(False)
-        self.__close_button.setMaximumHeight(50)
-        self.__close_button.clicked.connect(self.__on_close_click)
-
-        # Feed button init
+    def __init_settings_widgets(self):
+                # Feed button init
         self.__feed_button = QPushButton()
         self.__feed_button.setText("Feed")
         self.__feed_button.clicked.connect(lambda: self.__on_feed_click())
@@ -327,6 +314,89 @@ class MainWindow(QMainWindow):
         # Create a group box for the radio buttons and set the layout
         self.__room_display_group = QGroupBox("Top-Right Display")
         self.__room_display_group.setLayout(room_display_layout)
+
+    def __init_data_widgets(self):
+        # Subject ID label init
+        self.__subject_id_text_label = QLabel("Subject ID:")
+        font = self.__subject_id_text_label.font()
+        font.setPointSize(13)
+        self.__subject_id_text_label.setFont(font)
+        self.__subject_id_text_label.setAlignment(Qt.AlignHCenter)
+
+        self.__subject_id_value_label = QLabel("N/A")
+        font = self.__subject_id_value_label.font()
+        font.setPointSize(13)
+        self.__subject_id_value_label.setFont(font)
+        self.__subject_id_value_label.setAlignment(Qt.AlignHCenter)
+
+        # Trial number label init
+        self.__trial_num_text_label = QLabel("Trial #:")
+        font = self.__trial_num_text_label.font()
+        font.setPointSize(13)
+        self.__trial_num_text_label.setFont(font)
+        self.__trial_num_text_label.setAlignment(Qt.AlignHCenter)
+
+        self.__trial_num_value_label = QLabel("N/A")
+        font = self.__trial_num_value_label.font()
+        font.setPointSize(13)
+        self.__trial_num_value_label.setFont(font)
+        self.__trial_num_value_label.setAlignment(Qt.AlignHCenter)
+
+        # Times fed label init
+        self.__times_fed_text_label = QLabel("Times Fed:")
+        font = self.__times_fed_text_label.font()
+        font.setPointSize(13)
+        self.__times_fed_text_label.setFont(font)
+        self.__times_fed_text_label.setAlignment(Qt.AlignHCenter)
+
+        self.__times_fed_value_label = QLabel("N/A")
+        font = self.__times_fed_value_label.font()
+        font.setPointSize(13)
+        self.__times_fed_value_label.setFont(font)
+        self.__times_fed_value_label.setAlignment(Qt.AlignHCenter)
+
+        # FOMA position label init
+        self.__foma_position_text_label = QLabel("FOMA Position(X,Y):")
+        font = self.__foma_position_text_label.font()
+        font.setPointSize(13)
+        self.__foma_position_text_label.setFont(font)
+        self.__foma_position_text_label.setAlignment(Qt.AlignHCenter)
+
+        # FOMA position value label init
+        self.__foma_position_value_label = QLabel("N/A")
+        font = self.__foma_position_value_label.font()
+        font.setPointSize(13)
+        self.__foma_position_value_label.setFont(font)
+        self.__foma_position_value_label.setAlignment(Qt.AlignHCenter)
+
+    def __init_control_widgets(self):
+        # Start button init
+        self.__start_button = QPushButton()
+        self.__start_button.setText("Start")
+        self.__start_button.setDisabled(False)
+        self.__start_button.setMaximumHeight(50)
+        self.__start_button.clicked.connect(self.__on_start_click)
+
+        # Stop button init
+        self.__pause_button = QPushButton()
+        self.__pause_button.setText("Pause")
+        self.__pause_button.setDisabled(True)
+        self.__pause_button.setMaximumHeight(50)
+        self.__pause_button.clicked.connect(self.__on_pause_click)
+
+        # Reset button init
+        self.__reset_button = QPushButton()
+        self.__reset_button.setText("Reset")
+        self.__reset_button.setDisabled(True)
+        self.__reset_button.setMaximumHeight(50)
+        self.__reset_button.clicked.connect(self.__on_reset_click)
+
+        # Close button init
+        self.__close_button = QPushButton()
+        self.__close_button.setText("Close")
+        self.__close_button.setDisabled(False)
+        self.__close_button.setMaximumHeight(50)
+        self.__close_button.clicked.connect(self.__on_close_click)
 
     def __init_subscriptions_and_services(self):
         rospy.Subscriber('fish_camera/image', CompressedImage, self.__update_fish_image)
@@ -1049,6 +1119,9 @@ class MainWindow(QMainWindow):
         self.__close_button.setDisabled(True)
 
         self.__ongoing_trial = True
+
+        self.__dim_lights(255)
+        self.__log_event("light_control", f"Brightness set to 255/255")
         
         # Call all writer services with trial folder path
         for writer_service in self.__writer_services:
@@ -1095,6 +1168,9 @@ class MainWindow(QMainWindow):
         self.__start_button.clicked.connect(self.__on_start_click)
 
         self.__ongoing_trial = False
+
+        self.__dim_lights(0)
+        self.__log_event("light_control", f"Brightness set to 0/255")
         
         # Log stop event
         self.__log_event("trial_stop", f"Trial {self.__current_trial} stopped")
