@@ -104,6 +104,7 @@ class MainWindow(QMainWindow):
         self.__feed = None
         self.__empty_feeder = None
         self.__bypass_lidar = None
+        self.__go_home_enable = None
 
         # Trial Control
         self.__ongoing_trial = False
@@ -111,16 +112,6 @@ class MainWindow(QMainWindow):
         self.__current_trial = 0
         self.__event_log_file = None
         self.__event_log_writer = None
-
-        self.__go_home_enable = None
-
-    # [ADDED] Stops GoHome immediately (manual override). Safe to call even if GoHome not running.
-    def __stop_go_home(self):
-        if self.__go_home_enable is not None:
-            try:
-                self.__go_home_enable(False)
-            except Exception:
-                pass
 
     def __init_layouts(self):
         # Top-Left (Fish Camera)
@@ -403,7 +394,8 @@ class MainWindow(QMainWindow):
         self.__log_event("manual_control", "Manual control window opened")
 
         # [ADDED] Manual override always stops GoHome.
-        self.__stop_go_home()
+        if self.__go_home_enable is not None:
+            self.__go_home_enable(False)
 
         # Log manual control start
         self.__log_event("manual_control", "Manual control window opened")
@@ -428,8 +420,8 @@ class MainWindow(QMainWindow):
 
         def on_key_press(event):
             # [ADDED] Any manual keypress stops GoHome.
-            if event.type() == QEvent.KeyPress:
-                self.__stop_go_home()
+            if self.__go_home_enable is not None:
+                self.__go_home_enable(False)
 
             key = event.key()
             # Map numpad keys and +/-
@@ -685,7 +677,8 @@ class MainWindow(QMainWindow):
         Update robot velocity based on button presses.
         """
         if is_pressed:
-            self.__stop_go_home()
+            if self.__go_home_enable is not None:
+                self.__go_home_enable(False)
             if direction >= 0:
                 # Convert direction (degrees) to radians for vector calculation
                 radians = math.radians(direction)
