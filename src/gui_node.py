@@ -419,9 +419,6 @@ class MainWindow(QMainWindow):
             event.accept()
 
         def on_key_press(event):
-            # [ADDED] Any manual keypress stops GoHome.
-            if self.__go_home_enable is not None:
-                self.__go_home_enable(False)
 
             key = event.key()
             # Map numpad keys and +/-
@@ -677,8 +674,6 @@ class MainWindow(QMainWindow):
         Update robot velocity based on button presses.
         """
         if is_pressed:
-            if self.__go_home_enable is not None:
-                self.__go_home_enable(False)
             if direction >= 0:
                 # Convert direction (degrees) to radians for vector calculation
                 radians = math.radians(direction)
