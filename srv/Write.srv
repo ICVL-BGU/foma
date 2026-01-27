@@ -1,6 +1,6 @@
 # Request
 string msg
-string subject_id
+string folder
 time stamp
 ---
 # Response

@@ -364,6 +364,9 @@ class MainWindow(QMainWindow):
     def __init_manual_control_window(self):
         self.__motor_set_speed.publish(Float32(1.0))
         self.__bypass_lidar(False)
+        
+        # Log manual control start
+        self.__log_event("manual_control", "Manual control window opened")
 
         # [ADDED] Manual override always stops GoHome.
         self.__stop_go_home()
@@ -484,32 +487,26 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(speed_control_label, 4, 0, 1, 2)
         control_layout.addWidget(speed_control_textbox, 4, 2)
         control_layout.addWidget(speed_control_button, 4, 3)
-        control_layout.addWidget(go_home_button, 5, 0, 1, 4)
 
-        # [ADDED] Button press = manual override stops GoHome.
-        def pressed_with_override(angle):
-            self.__stop_go_home()
-            self.__update_velocity(True, angle)
-
-        forward_button.pressed.connect(lambda: pressed_with_override(0))
+        forward_button.pressed.connect(lambda: self.__update_velocity(True,0))
         forward_button.released.connect(lambda: self.__update_velocity(False))
-        backward_button.pressed.connect(lambda: pressed_with_override(180))
+        backward_button.pressed.connect(lambda: self.__update_velocity(True, 180))
         backward_button.released.connect(lambda: self.__update_velocity(False))
-        left_button.pressed.connect(lambda: pressed_with_override(90))
+        left_button.pressed.connect(lambda: self.__update_velocity(True, 90))
         left_button.released.connect(lambda: self.__update_velocity(False))
-        right_button.pressed.connect(lambda: pressed_with_override(270))
+        right_button.pressed.connect(lambda: self.__update_velocity(True, 270))
         right_button.released.connect(lambda: self.__update_velocity(False))
-        forward_left_button.pressed.connect(lambda: pressed_with_override(45))
+        forward_left_button.pressed.connect(lambda: self.__update_velocity(True, 45))
         forward_left_button.released.connect(lambda: self.__update_velocity(False))
-        forward_right_button.pressed.connect(lambda: pressed_with_override(315))
+        forward_right_button.pressed.connect(lambda: self.__update_velocity(True, 315))
         forward_right_button.released.connect(lambda: self.__update_velocity(False))
-        backward_left_button.pressed.connect(lambda: pressed_with_override(135))
+        backward_left_button.pressed.connect(lambda: self.__update_velocity(True, 135))
         backward_left_button.released.connect(lambda: self.__update_velocity(False))
-        backward_right_button.pressed.connect(lambda: pressed_with_override(225))
+        backward_right_button.pressed.connect(lambda: self.__update_velocity(True, 225))
         backward_right_button.released.connect(lambda: self.__update_velocity(False))
-        cw_button.pressed.connect(lambda: pressed_with_override(-1))
+        cw_button.pressed.connect(lambda: self.__update_velocity(True, -1))
         cw_button.released.connect(lambda: self.__update_velocity(False))
-        ccw_button.pressed.connect(lambda: pressed_with_override(-2))
+        ccw_button.pressed.connect(lambda: self.__update_velocity(True, -2))
         ccw_button.released.connect(lambda: self.__update_velocity(False))
         speed_control_button.clicked.connect(set_speed)
         go_home_button.clicked.connect(start_go_home)
@@ -604,6 +601,7 @@ class MainWindow(QMainWindow):
                 ('__motor_control_system_check','motor_control/system_check', Check),
                 ('__bypass_lidar',            'motor_control/bypass_lidar', SetBool),
                 ('__go_home_enable', 'go_home/enable', SetBool),
+
             ]
             while not rospy.is_shutdown():
                 status = {}
@@ -651,11 +649,8 @@ class MainWindow(QMainWindow):
         """
         Update robot velocity based on button presses.
         """
-        # [ADDED] Any manual press overrides and stops GoHome.
         if is_pressed:
             self.__stop_go_home()
-
-        if is_pressed:
             if direction >= 0:
                 # Convert direction (degrees) to radians for vector calculation
                 radians = math.radians(direction)
@@ -1089,7 +1084,7 @@ class MainWindow(QMainWindow):
         
         # Increment trial number
         self.__current_trial += 1
-        trial_folder = os.path.join(self.__session_folder, f"trial{self.__current_trial}")
+        trial_folder = os.path.join(self.__session_folder, f"trial_{self.__current_trial}")
         
         if not os.path.exists(trial_folder):
             os.makedirs(trial_folder)
@@ -1097,7 +1092,7 @@ class MainWindow(QMainWindow):
         
         # Initialize event log
         self.__init_event_log(trial_folder)
-        self.__log_event("trial_start", f"Trial {self._current_trial} started")
+        self.__log_event("trial_start", f"Trial {self.__current_trial} started")
         
         self.__room_map = np.ones((ROOM_MAP_FRAME_SHAPE[1], ROOM_MAP_FRAME_SHAPE[0], 3), dtype=np.uint8) * 255
         
@@ -1111,6 +1106,7 @@ class MainWindow(QMainWindow):
                 self.__go_home_enable(False)
             except Exception as e:
                 self.logwarn(f"Failed disabling go_home: {e}")
+
 
         self.__ongoing_trial = True
         
@@ -1145,11 +1141,12 @@ class MainWindow(QMainWindow):
         self.__ongoing_trial = False
 
         # [CHANGED] Do NOT enable GoHome on pause (GoHome should run only at end of trial).
-        if self.__go_home_enable is not None:
-            try:
-                self.__go_home_enable(True)
-            except Exception as e:
-                self.logwarn(f"Failed enabling go_home: {e}")
+#         if self.__go_home_enable is not None:
+#             try:
+#                 self.__go_home_enable(True)
+#             except Exception as e:
+#                 self.logwarn(f"Failed enabling go_home: {e}")
+
         self.__motor_control_vector.publish(Vector3(0, 0, 0))
         
         # Log pause event
@@ -1180,12 +1177,12 @@ class MainWindow(QMainWindow):
             except rospy.ServiceException as e:
                 rospy.logerr(f"Writer service call failed: {e}")
 
-        # [ADDED] Start GoHome automatically at end of trial.
         if self.__go_home_enable is not None:
             try:
-                self.__go_home_enable(True)
+                self.__go_home_enable(False)
             except Exception as e:
-                self.logwarn(f"Failed enabling go_home: {e}")
+                self.logwarn(f"Failed disabling go_home: {e}")
+
 
     def __on_close_click(self, event):
         # Log stop event if trial is ongoing
