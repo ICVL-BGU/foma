@@ -487,6 +487,7 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(speed_control_label, 4, 0, 1, 2)
         control_layout.addWidget(speed_control_textbox, 4, 2)
         control_layout.addWidget(speed_control_button, 4, 3)
+        control_layout.addWidget(go_home_button, 5, 1, 1, 2)
 
         forward_button.pressed.connect(lambda: self.__update_velocity(True,0))
         forward_button.released.connect(lambda: self.__update_velocity(False))
