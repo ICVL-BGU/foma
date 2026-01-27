@@ -29,7 +29,8 @@ class LocalizationNode(AbstractNode):
         with open(mapper_path, 'r') as f:
             self.mapper_params = json.load(f)
         self.img = None
-        self.image_sub = rospy.Subscriber('ceiling_camera/image', Image, self.read_image)
+        # Large queue to process all frames - output is recorded by csv_writer
+        self.image_sub = rospy.Subscriber('ceiling_camera/image', Image, self.read_image, queue_size=200, buff_size=2**28)
         self.location_pub = rospy.Publisher('localization/location', FomaLocation, queue_size=10)
         self.location = FomaLocation()
         self.bridge = CvBridge()
@@ -68,8 +69,23 @@ class LocalizationNode(AbstractNode):
             
             # Find the detection with the highest confidence
             max_conf_idx = lidar_conf.argmax()
-            x, y, _, _ = lidar_boxes[max_conf_idx]
-            
+            # Index may return tensor/np array on CUDA; normalize to host Python floats
+            box = lidar_boxes[max_conf_idx]
+
+            # If box is a torch tensor on device (has cpu()), bring to CPU then to numpy
+            try:
+                # torch.Tensor -> numpy
+                if hasattr(box, 'cpu'):
+                    box_vals = box.cpu().numpy()
+                else:
+                    box_vals = box
+            except Exception:
+                # Fallback: try to convert elements individually
+                box_vals = [getattr(box[i], 'cpu', lambda: box[i])() if hasattr(box[i], 'cpu') else box[i] for i in range(len(box))]
+
+            x = float(box_vals[0])
+            y = float(box_vals[1])
+
             return x, y
         
         return None

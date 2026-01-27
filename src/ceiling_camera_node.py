@@ -33,7 +33,9 @@ class CeilingCameraNode(AbstractNode):
         while not rospy.is_shutdown():
             ret, frame = self.cap.read()
             if ret:
-                self.pub.publish(self.bridge.cv2_to_imgmsg(frame, "bgr8"))
+                msg = self.bridge.cv2_to_imgmsg(frame, "bgr8")
+                msg.header.stamp = rospy.Time.now()
+                self.pub.publish(msg)
             else:
                 rospy.logwarn_throttle(5, "Frame drop")
             rate.sleep()

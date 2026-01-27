@@ -48,15 +48,16 @@ class CSVWriterNode(AbstractNode):
             return
         
         # Create callback based on message type and data type
+        # CSV writer needs large queue to capture ALL data without dropping
         if self.__msg_type == 'FomaLocation':
-            rospy.Subscriber(self.__topic, FomaLocation, self.__foma_location_callback)
+            rospy.Subscriber(self.__topic, FomaLocation, self.__foma_location_callback, queue_size=1000)
         elif self.__msg_type == 'TwistStamped':
             if self.__data_type == 'fish_state':
-                rospy.Subscriber(self.__topic, TwistStamped, self.__fish_state_callback)
+                rospy.Subscriber(self.__topic, TwistStamped, self.__fish_state_callback, queue_size=1000)
             elif self.__data_type == 'foma_speed':
-                rospy.Subscriber(self.__topic, TwistStamped, self.__foma_speed_callback)
+                rospy.Subscriber(self.__topic, TwistStamped, self.__foma_speed_callback, queue_size=1000)
             else:
-                rospy.Subscriber(self.__topic, TwistStamped, self.__generic_twist_callback)
+                rospy.Subscriber(self.__topic, TwistStamped, self.__generic_twist_callback, queue_size=1000)
         else:
             self.logerr(f"Unsupported message type: {self.__msg_type}")
 
