@@ -149,18 +149,36 @@ class MainWindow(QMainWindow):
         self.__BL_layout = QGridLayout()
         self.__BL_layout.addWidget(self.__lights_label, 0, 0, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__lights_slider, 1, 0, alignment=Qt.AlignCenter)
-        self.__BL_layout.addWidget(self.__feed_label, 0, 1, alignment=Qt.AlignCenter)
-        self.__BL_layout.addWidget(self.__feed_button, 1, 1, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__feed_button, 0, 1, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__feed_loading_button, 1, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__manual_control_button, 0, 2, alignment=Qt.AlignCenter)
-        self.__BL_layout.addWidget(self.__feed_loading_button, 1, 2, alignment=Qt.AlignCenter)
-        self.__BL_layout.addWidget(self.__fish_direction_group, 0, 3, 2, 1, alignment=Qt.AlignCenter)
-        self.__BL_layout.addWidget(self.__foma_direction_group, 0, 4, 2, 1, alignment=Qt.AlignCenter)
-        self.__BL_layout.addWidget(self.__room_display_group, 0, 5, 2, 1, alignment=Qt.AlignCenter)
-
+        self.__BL_layout.addWidget(self.__show_fish_direction_cb, 0, 3, 1, 1, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__show_foma_direction_cb, 1, 3, 1, 1, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__room_display_group, 0, 4, 2, 1, alignment=Qt.AlignCenter)
+        
         self.__BL_widget = QFrame()
         self.__BL_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
         self.__BL_widget.setLineWidth(2)
         self.__BL_widget.setLayout(self.__BL_layout)
+
+        # Bottom-Center (Display)
+        self.__BC_layout = QGridLayout()
+        self.__BC_layout.addWidget(self.__subject_id_text_label, 0, 0, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__subject_id_value_label, 0, 1, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__trial_num_text_label, 1, 0, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__trial_num_value_label, 1, 1, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__times_fed_text_label, 2, 0, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__times_fed_value_label, 2, 1, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__foma_img_position_text_label, 3, 0, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__foma_img_position_value_label, 3, 1, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__foma_room_position_text_label, 4, 0, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__foma_room_position_value_label, 4, 1, alignment=Qt.AlignCenter)
+        
+        self.__BC_widget = QFrame()
+        self.__BC_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
+        self.__BC_widget.setLineWidth(2)
+        self.__BC_widget.setLayout(self.__BC_layout)
+
         # Bottom-Right (Control Buttons)
         self.__BR_layout = QGridLayout()
         self.__BR_layout.addWidget(self.__start_button, 0, 0, alignment=Qt.AlignCenter)
@@ -175,23 +193,158 @@ class MainWindow(QMainWindow):
 
         # Main Layout
         main_layout = QGridLayout()
-        main_layout.addWidget(self.__TL_widget, 0, 0)
-        main_layout.addWidget(self.__TR_widget, 0, 1)
-        main_layout.addWidget(self.__BL_widget, 1, 0)
-        main_layout.addWidget(self.__BR_widget, 1, 1)
+        main_layout.addWidget(self.__TL_widget, 0, 0, 1, 2)
+        main_layout.addWidget(self.__TR_widget, 0, 2, 1, 2)
+        main_layout.addWidget(self.__BL_widget, 1, 0, 1, 2)
+        main_layout.addWidget(self.__BC_widget, 1, 2, 1, 1)
+        main_layout.addWidget(self.__BR_widget, 1, 3, 1, 1)
+
+        # ensure all 4 columns participate in sizing
+        for i in range(4):
+            main_layout.setColumnStretch(i, 1)
+            main_layout.setColumnStretch(i, 1)
 
         main_layout.setSpacing(10)
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setRowStretch(0, 5)
         main_layout.setRowStretch(1, 1)
-        main_layout.setColumnStretch(0, 1)
-        main_layout.setColumnStretch(1, 1)
 
         widget = QWidget()
         widget.setLayout(main_layout)
         self.setCentralWidget(widget)
 
     def __init_widgets(self):
+        self.__init_settings_widgets()
+        self.__init_data_widgets()
+        self.__init_control_widgets()
+
+    def __init_settings_widgets(self):
+        # Feed button init
+        self.__feed_button = QPushButton()
+        self.__feed_button.setText("Feed")
+        self.__feed_button.clicked.connect(lambda: self.__on_feed_click())
+        self.__feed_button.setDisabled(True)
+
+        # Lights slider init
+        self.__lights_slider = QSlider(Qt.Horizontal)
+        self.__lights_slider.setMinimum(0)
+        self.__lights_slider.setMaximum(1)
+        self.__lights_slider.setTickPosition(QSlider.TicksAbove|QSlider.TicksBelow)
+        self.__lights_slider.setPageStep(1)
+        self.__lights_slider.setMaximumHeight(50)
+        self.__lights_slider.setDisabled(True)
+        self.__lights_slider.setValue(1)
+
+        # Lights slider label init
+        self.__lights_label = QLabel("Lights dimming")
+        font = self.__lights_label.font()
+        self.__lights_label.setAlignment(Qt.AlignHCenter)
+
+        # Manual Control button init
+        self.__manual_control_button = QPushButton()
+        self.__manual_control_button.setText("Manual Control")
+        self.__manual_control_button.setMaximumHeight(50)
+        self.__manual_control_button.clicked.connect(self.__init_manual_control_window)
+        self.__manual_control_button.setDisabled(True)
+
+        # Manual Control label init
+        self.__manual_control_label = QLabel("Manual Control")
+        font = self.__manual_control_label.font()
+        self.__manual_control_label.setAlignment(Qt.AlignHCenter)
+
+        self.__feed_loading_button = QPushButton()
+        self.__feed_loading_button.setText("Load Feeder")
+        self.__feed_loading_button.setMaximumHeight(50)
+        self.__feed_loading_button.clicked.connect(self.__init_feeding_load_window)
+        self.__feed_loading_button.setDisabled(True)
+
+        # Fish image init
+        self.__left_image_frame = QLabel()
+        self.__left_image_frame.setScaledContents(True)
+        self.__left_image_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        # Fish image label init
+        self.__fish_image_label = QLabel("Fish Camera")
+        font = self.__fish_image_label.font()
+        font.setPointSize(15)
+        self.__fish_image_label.setFont(font)
+        self.__fish_image_label.setAlignment(Qt.AlignHCenter)
+        self.__left_image_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        # Room image init
+        self.__top_right_image = QLabel() #TODO : add resize+update
+        self.__top_right_image.setScaledContents(True)
+        self.__top_right_image.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        # Room image label init
+        self.__room_image_label = QLabel("Room Camera")
+        font = self.__room_image_label.font()
+        font.setPointSize(15)
+        self.__room_image_label.setFont(font)
+        self.__room_image_label.setAlignment(Qt.AlignHCenter)
+        self.__room_image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        # Add radio buttons for toggling direction display
+        self.__show_fish_direction_cb = QCheckBox("Show Fish Direction")
+        self.__show_fish_direction_cb.setChecked(True)
+
+        # Add radio buttons for toggling direction display
+        self.__show_foma_direction_cb = QCheckBox("Show FOMA Direction")
+        self.__show_foma_direction_cb.setChecked(True)
+
+        # Add radio buttons for toggling direction display
+        self.__room_camera_display_rb = QRadioButton("Camera")
+        self.__map_display_rb = QRadioButton("Map")
+        self.__room_camera_display_rb.setChecked(True)
+
+        # Create and add radio buttons to layout
+        room_display_layout = QGridLayout()
+        room_display_layout.addWidget(self.__room_camera_display_rb, 0, 0, alignment=Qt.AlignCenter)
+        room_display_layout.addWidget(self.__map_display_rb, 0, 1, alignment=Qt.AlignCenter)
+        
+        # Create a group box for the radio buttons and set the layout
+        self.__room_display_group = QGroupBox("Top-Right Display")
+        self.__room_display_group.setLayout(room_display_layout)
+
+    def __init_data_widgets(self):
+        # Subject ID label init
+        self.__subject_id_text_label = QLabel("Subject ID:")
+        self.__subject_id_text_label.setAlignment(Qt.AlignHCenter)
+
+        self.__subject_id_value_label = QLabel("N/A")
+        self.__subject_id_value_label.setAlignment(Qt.AlignHCenter)
+
+        # Trial number label init
+        self.__trial_num_text_label = QLabel("Trial #:")
+        self.__trial_num_text_label.setAlignment(Qt.AlignHCenter)
+
+        self.__trial_num_value_label = QLabel("N/A")
+        self.__trial_num_value_label.setAlignment(Qt.AlignHCenter)
+
+        # Times fed label init
+        self.__times_fed_text_label = QLabel("Times Fed:")
+        self.__times_fed_text_label.setAlignment(Qt.AlignHCenter)
+
+        self.__times_fed_value_label = QLabel("N/A")
+        self.__times_fed_value_label.setAlignment(Qt.AlignHCenter)
+
+        # FOMA image position label init
+        self.__foma_img_position_text_label = QLabel("FOMA Image Position(X,Y):")
+        self.__foma_img_position_text_label.setAlignment(Qt.AlignHCenter)
+
+        # FOMA position value label init
+        self.__foma_img_position_value_label = QLabel("N/A")
+        self.__foma_img_position_value_label.setAlignment(Qt.AlignHCenter)
+
+        # FOMA room position label init
+        self.__foma_room_position_text_label = QLabel("FOMA Room Position(X,Y):")
+        self.__foma_room_position_text_label.setAlignment(Qt.AlignHCenter)
+
+        # FOMA position value label init
+        self.__foma_room_position_value_label = QLabel("N/A")
+        self.__foma_room_position_value_label.setAlignment(Qt.AlignHCenter)
+
+    def __init_control_widgets(self):
         # Start button init
         self.__start_button = QPushButton()
         self.__start_button.setText("Start")
@@ -219,125 +372,6 @@ class MainWindow(QMainWindow):
         self.__close_button.setDisabled(False)
         self.__close_button.setMaximumHeight(50)
         self.__close_button.clicked.connect(self.__on_close_click)
-
-        # Feed button init
-        self.__feed_button = QPushButton()
-        self.__feed_button.setText("Feed")
-        self.__feed_button.clicked.connect(lambda: self.__on_feed_click())
-        self.__feed_button.setDisabled(True)
-
-        # Feed button label init
-        self.__feed_label = QLabel("Manual Feed")
-        font = self.__feed_label.font()
-        font.setPointSize(13)
-        self.__feed_label.setFont(font)
-        self.__feed_label.setAlignment(Qt.AlignHCenter)
-
-        # Lights slider init
-        self.__lights_slider = QSlider(Qt.Horizontal)
-        self.__lights_slider.setMinimum(0)
-        self.__lights_slider.setMaximum(1)
-        self.__lights_slider.setTickPosition(QSlider.TicksAbove|QSlider.TicksBelow)
-        self.__lights_slider.setPageStep(1)
-        self.__lights_slider.setMaximumHeight(50)
-        self.__lights_slider.setDisabled(True)
-        self.__lights_slider.setValue(1)
-
-        # Lights slider label init
-        self.__lights_label = QLabel("Lights dimming")
-        font = self.__lights_label.font()
-        font.setPointSize(13)
-        self.__lights_label.setFont(font)
-        self.__lights_label.setAlignment(Qt.AlignHCenter)
-
-        # Manual Control button init
-        self.__manual_control_button = QPushButton()
-        self.__manual_control_button.setText("Manual Control")
-        self.__manual_control_button.setMaximumHeight(50)
-        self.__manual_control_button.clicked.connect(self.__init_manual_control_window)
-        self.__manual_control_button.setDisabled(True)
-
-        # Manual Control label init
-        self.__manual_control_label = QLabel("Manual Control")
-        font = self.__manual_control_label.font()
-        font.setPointSize(13)
-        self.__manual_control_label.setFont(font)
-        self.__manual_control_label.setAlignment(Qt.AlignHCenter)
-
-        self.__feed_loading_button = QPushButton()
-        self.__feed_loading_button.setText("Load Feeder")
-        self.__feed_loading_button.setMaximumHeight(50)
-        self.__feed_loading_button.clicked.connect(self.__init_feeding_load_window)
-        self.__feed_loading_button.setDisabled(True)
-
-        # Fish image init
-        self.__left_image_frame = QLabel() #TODO : add resize+update
-        self.__left_image_frame.setScaledContents(True)
-        self.__left_image_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        
-
-        # Fish image label init
-        self.__fish_image_label = QLabel("Fish Camera")
-        font = self.__fish_image_label.font()
-        font.setPointSize(15)
-        self.__fish_image_label.setFont(font)
-        self.__fish_image_label.setAlignment(Qt.AlignHCenter)
-        self.__left_image_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        # Room image init
-        self.__top_right_image = QLabel() #TODO : add resize+update
-        self.__top_right_image.setScaledContents(True)
-        self.__top_right_image.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        
-        # Room image label init
-        self.__room_image_label = QLabel("Room Camera")
-        font = self.__room_image_label.font()
-        font.setPointSize(15)
-        self.__room_image_label.setFont(font)
-        self.__room_image_label.setAlignment(Qt.AlignHCenter)
-        self.__room_image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        # Add radio buttons for toggling direction display
-        self.__show_fish_direction_rb = QRadioButton("Yes")
-        self.__hide_fish_direction_rb = QRadioButton("No")
-        self.__show_fish_direction_rb.setChecked(True)
-
-        # Create and add radio buttons to layout
-        fish_direction_layout = QGridLayout()
-        fish_direction_layout.addWidget(self.__show_fish_direction_rb, 0, 0, alignment=Qt.AlignCenter)
-        fish_direction_layout.addWidget(self.__hide_fish_direction_rb, 1, 0, alignment=Qt.AlignCenter)
-        
-        # Create a group box for the radio buttons and set the layout
-        self.__fish_direction_group = QGroupBox("Display Fish Direction")
-        self.__fish_direction_group.setLayout(fish_direction_layout)
-
-        # Add radio buttons for toggling direction display
-        self.__show_foma_direction_rb = QRadioButton("Yes")
-        self.__hide_foma_direction_rb = QRadioButton("No")
-        self.__show_foma_direction_rb.setChecked(True)
-
-        # Create and add radio buttons to layout
-        foma_direction_layout = QGridLayout()
-        foma_direction_layout.addWidget(self.__show_foma_direction_rb, 0, 0, alignment=Qt.AlignCenter)
-        foma_direction_layout.addWidget(self.__hide_foma_direction_rb, 1, 0, alignment=Qt.AlignCenter)
-        
-        # Create a group box for the radio buttons and set the layout
-        self.__foma_direction_group = QGroupBox("Display FOMA Direction")
-        self.__foma_direction_group.setLayout(foma_direction_layout)
-
-        # Add radio buttons for toggling direction display
-        self.__room_camera_display_rb = QRadioButton("Camera")
-        self.__map_display_rb = QRadioButton("Map")
-        self.__room_camera_display_rb.setChecked(True)
-
-        # Create and add radio buttons to layout
-        room_display_layout = QGridLayout()
-        room_display_layout.addWidget(self.__room_camera_display_rb, 0, 0, alignment=Qt.AlignCenter)
-        room_display_layout.addWidget(self.__map_display_rb, 1, 0, alignment=Qt.AlignCenter)
-        
-        # Create a group box for the radio buttons and set the layout
-        self.__room_display_group = QGroupBox("Top-Right Display")
-        self.__room_display_group.setLayout(room_display_layout)
 
     def __init_subscriptions_and_services(self):
         rospy.Subscriber('fish_camera/image', CompressedImage, self.__update_fish_image, queue_size=1)
@@ -754,6 +788,10 @@ class MainWindow(QMainWindow):
             y = np.clip(self.__foma_world_location.y, 0, self.__room_frame_shape[0] - 1).astype(int)
             cv2.circle(self.__room_map, (x, y), 2, (0, 255, 0), -1)
 
+        # Update the FOMA room position label
+        self.__foma_room_position_value_label.setText(f"({round(location.world.x * ROOM_FLOOR_MAP_SHAPE[0])}, {round(location.world.y * ROOM_FLOOR_MAP_SHAPE[1])})")
+        self.__foma_img_position_value_label.setText(f"({round(self.__foma_img_location.x)}, {round(self.__foma_img_location.y)})")
+
     def __update_foma_speed(self, speed: TwistStamped):
         self.__foma_speed = speed.twist
 
@@ -818,7 +856,7 @@ class MainWindow(QMainWindow):
                     cv2.circle(frame, pts[0], 3, (255, 0, 0), -1)
 
         # 3) draw direction overlay if requested and we have a Twist state
-        if self.__show_fish_direction_rb.isChecked() and self.__fish_state is not None:
+        if self.__show_fish_direction_cb.isChecked() and self.__fish_state is not None:
             # extract position
             px = int(self.__fish_state.linear.x)
             py = int(self.__fish_state.linear.y)
@@ -855,7 +893,7 @@ class MainWindow(QMainWindow):
                             tipLength=0.3)
 
         # Draw FOMA direction overlay if requested and we have a Twist state
-        if self.__show_foma_direction_rb.isChecked() and self.__foma_speed is not None:
+        if self.__show_foma_direction_cb.isChecked() and self.__foma_speed is not None:
             # Extract linear and angular speeds
             linear_speed = math.sqrt(
                 self.__foma_speed.linear.x**2 + self.__foma_speed.linear.y**2
@@ -1035,6 +1073,7 @@ class MainWindow(QMainWindow):
         if self.__feed is not None:
             self.__feed()
             self.__log_event("feeding", "Manual feed triggered")
+            self.__times_fed_value_label.setText(str(int(self.__times_fed_value_label.text()) + 1))
 
     def __on_lights_change(self, val):
         """Wrapper for lights change to log event"""
@@ -1073,6 +1112,11 @@ class MainWindow(QMainWindow):
             if not os.path.exists(self.__session_folder):
                 os.makedirs(self.__session_folder)
                 rospy.loginfo(f"Created session folder: {self.__session_folder}")
+
+            # Update GUI labels
+            self.__subject_id_value_label.setText(subject_id)
+            self.__trial_num_value_label.setText(str(self.__current_trial))
+            self.__times_fed_value_label.setText("0")
         
         elif msg_box.clickedButton() == new_trial_btn:
             # New Trial: check if session exists
@@ -1110,6 +1154,9 @@ class MainWindow(QMainWindow):
 
 
         self.__ongoing_trial = True
+
+        self.__dim_lights(255)
+        self.__log_event("light_control", f"Brightness set to 255/255")
         
         # Call all writer services with trial folder path
         for writer_service in self.__writer_services:
@@ -1117,6 +1164,10 @@ class MainWindow(QMainWindow):
                 writer_service("start", trial_folder, rospy.Time.now())
             except rospy.ServiceException as e:
                 rospy.logerr(f"Writer service call failed: {e}")
+
+        # Update GUI labels
+        self.__trial_num_value_label.setText(str(self.__current_trial))
+        self.__times_fed_value_label.setText("0")
 
     def __on_continue_click(self):
         self.__start_button.setDisabled(True)
@@ -1164,6 +1215,9 @@ class MainWindow(QMainWindow):
         self.__start_button.clicked.connect(self.__on_start_click)
 
         self.__ongoing_trial = False
+
+        self.__dim_lights(0)
+        self.__log_event("light_control", f"Brightness set to 0/255")
         
         # Log stop event
         self.__log_event("trial_stop", f"Trial {self.__current_trial} stopped")
