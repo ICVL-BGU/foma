@@ -12,4 +12,10 @@
     <!-- Node 4 -->
     <node pkg="foma" type="feeder_node.py" name="feeder_node" output="screen"/>
 
+    <!-- Go Home -->
+    <node pkg="foma" type="goHomeNode.py" name="go_home_node" output="screen">
+        <param name="goal_x" value="0.5"/>
+        <param name="goal_y" value="0.5"/>
+        <param name="arrival_tol" value="0.03"/>
+    </node>
 </launch>

@@ -114,13 +114,20 @@ class MainWindow(QMainWindow):
 
         self.__go_home_enable = None
 
+    # [ADDED] Stops GoHome immediately (manual override). Safe to call even if GoHome not running.
+    def __stop_go_home(self):
+        if self.__go_home_enable is not None:
+            try:
+                self.__go_home_enable(False)
+            except Exception:
+                pass
 
     def __init_layouts(self):
         # Top-Left (Fish Camera)
         self.__TL_layout = QVBoxLayout()
         self.__TL_layout.addWidget(self.__fish_image_label, alignment=Qt.AlignCenter)
         self.__TL_layout.addWidget(self.__left_image_frame)#, alignment=Qt.AlignCenter)
-        
+
         self.__TL_widget = QFrame()
         self.__TL_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
         self.__TL_widget.setLineWidth(2)
@@ -149,12 +156,11 @@ class MainWindow(QMainWindow):
         self.__BL_layout.addWidget(self.__fish_direction_group, 0, 3, 2, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__foma_direction_group, 0, 4, 2, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__room_display_group, 0, 5, 2, 1, alignment=Qt.AlignCenter)
-        
+
         self.__BL_widget = QFrame()
         self.__BL_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
         self.__BL_widget.setLineWidth(2)
         self.__BL_widget.setLayout(self.__BL_layout)
-
         # Bottom-Right (Control Buttons)
         self.__BR_layout = QGridLayout()
         self.__BR_layout.addWidget(self.__start_button, 0, 0, alignment=Qt.AlignCenter)
@@ -362,6 +368,12 @@ class MainWindow(QMainWindow):
         # Log manual control start
         self.__log_event("manual_control", "Manual control window opened")
 
+        # [ADDED] Manual override always stops GoHome.
+        self.__stop_go_home()
+
+        # Log manual control start
+        self.__log_event("manual_control", "Manual control window opened")
+
         self.__manual_control_window = QDialog(self)
         self.__manual_control_window.setWindowTitle("Manual Robot Control")
         self.__manual_control_window.setFixedSize(300, 300)
@@ -381,6 +393,10 @@ class MainWindow(QMainWindow):
             event.accept()
 
         def on_key_press(event):
+            # [ADDED] Any manual keypress stops GoHome.
+            if event.type() == QEvent.KeyPress:
+                self.__stop_go_home()
+
             key = event.key()
             # Map numpad keys and +/-
             key_to_angle = {
@@ -428,6 +444,7 @@ class MainWindow(QMainWindow):
         speed_control_label = QLabel("Speed Control")
         speed_control_textbox = QLineEdit()
         speed_control_button = QPushButton("Set")
+        go_home_button = QPushButton("Go Home")
         
         speed_control_textbox.setPlaceholderText("1.0")
         speed_control_textbox.setValidator(QDoubleValidator(0.0, 1.0, 2))
@@ -439,6 +456,21 @@ class MainWindow(QMainWindow):
                 # self.__speed = speed
             except ValueError:
                 self.logwarn("Invalid speed value")
+
+        def start_go_home():
+            self.__motor_control_twist.publish(Twist())
+            if self.__velocity_timer is not None:
+                self.__velocity_timer.stop()
+            if self.__go_home_enable is None:
+                self.logwarn("GoHome service not available")
+                return
+            try:
+                self.__go_home_enable(True)
+            except Exception as e:
+                self.logwarn(f"Failed to start GoHome: {e}")
+                return
+            self.__manual_control_window.close()
+
         
         control_layout.addWidget(forward_left_button, 0, 0)
         control_layout.addWidget(forward_button, 0, 1, 1, 2)
@@ -477,6 +509,7 @@ class MainWindow(QMainWindow):
         ccw_button.pressed.connect(lambda: self.__update_velocity(True, -2))
         ccw_button.released.connect(lambda: self.__update_velocity(False))
         speed_control_button.clicked.connect(set_speed)
+        go_home_button.clicked.connect(start_go_home)
 
         bypass_lidar_checkbox.stateChanged.connect(lambda state: self.__bypass_lidar(state == Qt.Checked))
         
@@ -617,6 +650,7 @@ class MainWindow(QMainWindow):
         Update robot velocity based on button presses.
         """
         if is_pressed:
+            self.__stop_go_home()
             if direction >= 0:
                 # Convert direction (degrees) to radians for vector calculation
                 radians = math.radians(direction)
@@ -986,6 +1020,15 @@ class MainWindow(QMainWindow):
             self.__manual_control_button.setDisabled(True)
             self.__bypass_lidar = None
 
+        # [ADDED] Store GoHome enable service proxy when available.
+        go_home_proxy = status.get('__go_home_enable')
+        if self.__go_home_enable is None and go_home_proxy is not None:
+            self.loginfo("GoHome enable service available")
+            self.__go_home_enable = go_home_proxy
+        elif self.__go_home_enable is not None and go_home_proxy is None:
+            self.logerr("GoHome enable service unavailable")
+            self.__go_home_enable = None
+
     def __on_feed_click(self):
         """Wrapper for feed action to log event"""
         if self.__feed is not None:
@@ -1097,12 +1140,12 @@ class MainWindow(QMainWindow):
 
         self.__ongoing_trial = False
 
-        if self.__go_home_enable is not None:
-            try:
-                self.__go_home_enable(True)
-            except Exception as e:
-                self.logwarn(f"Failed enabling go_home: {e}")
-
+        # [CHANGED] Do NOT enable GoHome on pause (GoHome should run only at end of trial).
+#         if self.__go_home_enable is not None:
+#             try:
+#                 self.__go_home_enable(True)
+#             except Exception as e:
+#                 self.logwarn(f"Failed enabling go_home: {e}")
 
         self.__motor_control_vector.publish(Vector3(0, 0, 0))
         
