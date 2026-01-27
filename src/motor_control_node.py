@@ -143,13 +143,13 @@ class MotorControlNode(AbstractNode):
             Right = 270
         '''
         if not self.__lidar_bypassed and self.__scans is not None:
-            if h_component > 0 and self.__is_sector_blocked(range(-36, 36)):
+            if h_component > 0 and self.__is_sector_blocked(range(-43, 43)):
                 h_component = 0
-            elif h_component < 0 and self.__is_sector_blocked(range(144, 216)):
+            elif h_component < 0 and self.__is_sector_blocked(range(137, 223)):
                 h_component = 0
-            if v_component > 0 and self.__is_sector_blocked(range(234, 306)):
+            if v_component > 0 and self.__is_sector_blocked(range(227, 313)):
                 v_component = 0
-            elif v_component < 0 and self.__is_sector_blocked(range(54, 126)):
+            elif v_component < 0 and self.__is_sector_blocked(range(47, 133)):
                 v_component = 0
 
         return h_component, v_component
