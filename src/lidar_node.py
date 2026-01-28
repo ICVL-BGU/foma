@@ -14,6 +14,8 @@ class LIDARNode(AbstractNode):
         super().__init__('lidar', 'LIDAR')
         self.__lidar_pub = rospy.Publisher('lidar/scans', LaserScan, queue_size=10)
         self.__blocked_pub = rospy.Publisher('lidar/blocked', Int16MultiArray, queue_size=10)
+
+        self.__stop_event = threading.Event()
         try:
             self.lidar = RPLidar(None, LIDAR_PORT, baudrate = LIDAR_PORT_SPEED, timeout = 3)
             self.lidar.stop()
@@ -35,7 +37,8 @@ class LIDARNode(AbstractNode):
 
     def _scan_loop(self):
         """Background thread: continuously reads from the lidar and updates scan_msg.ranges."""
-        while not rospy.is_shutdown():
+        # Exit the loop if ROS is shutting down or if the stop event is set
+        while not rospy.is_shutdown() and not self.__stop_event.is_set():
             try:
                 for _, quality, angle, distance in self.lidar.iter_measurements():
                     # _, angles, distances = zip(*scan)
@@ -83,6 +86,11 @@ class LIDARNode(AbstractNode):
         self.__blocked_pub.publish(blocked_array)
 
     def __on_shutdown(self):
+        self.__stop_event.set()
+        if self._scan_thread.is_alive():
+            # join with timeout to avoid blocking shutdown indefinitely
+            self._scan_thread.join(timeout=1.0)
+
         if self.lidar:
             self.logwarn("LIDARNode: Stopping sensor.")
             self.lidar.stop()

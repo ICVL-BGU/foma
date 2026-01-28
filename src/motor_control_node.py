@@ -84,12 +84,11 @@ class MotorControlNode(AbstractNode):
             self.__current_v      = self.__ramp(self.__current_v,      self.__desired_v)
             self.__current_rotate = self.__ramp(self.__current_rotate, self.__desired_rotate)
 
-            if self._mode != 'idle':
-                if abs(self.__current_rotate) > 1e-6:
-                    self.__rotate_motor(self.__current_rotate)
-                else:
-                    self.__current_h, self.__current_v = self.__check_blocking(self.__current_h, self.__current_v)
-                    self.__move_by_components(self.__current_h, self.__current_v)
+            if abs(self.__current_rotate) > 1e-6:
+                self.__rotate_motor(self.__current_rotate)
+            else:
+                self.__current_h, self.__current_v = self.__check_blocking(self.__current_h, self.__current_v)
+                self.__move_by_components(self.__current_h, self.__current_v)
 
                 self.__speed_publisher.publish(
                     TwistStamped(
@@ -175,7 +174,7 @@ class MotorControlNode(AbstractNode):
         diff = (direction_angle - center_to_fish_angle + 180) % 360 - 180
 
         if abs(diff) <= DIRECTION_EPSILON:
-            self.__handle_angle(direction_angle)
+            self.__handle_angle(Float32(direction_angle))
         else:
             self.__handle_vector(Vector3(0, 0, 0))
 

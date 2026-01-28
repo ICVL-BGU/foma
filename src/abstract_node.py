@@ -10,7 +10,7 @@ class AbstractNode:
         rospy.Service(f'{node_name}/set_mode', String, self.set_mode)
     
     def set_mode(self, msg:StringRequest):
-        self._mode = msg.data
+        self._mode = msg.msg
         self.loginfo(f"Mode set to: {self._mode}")
         return StringResponse(result=True)
 
