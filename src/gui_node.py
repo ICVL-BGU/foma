@@ -100,6 +100,8 @@ class MainWindow(QMainWindow):
         self.__empty_feeder = None
         self.__bypass_lidar = None
         self.__go_home_enable = None
+        self.__motor_set_speed = None
+        self.__motor_set_mode = None
 
         # Trial Control
         self.__ongoing_trial = False
@@ -492,9 +494,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.logwarn(f"Failed to start GoHome: {e}")
                 return
-            self.__manual_control_window.close()
-
-        
+            
         control_layout.addWidget(forward_left_button, 0, 0)
         control_layout.addWidget(forward_button, 0, 1, 1, 2)
         control_layout.addWidget(forward_right_button, 0, 3)
@@ -1135,6 +1135,7 @@ class MainWindow(QMainWindow):
 
         self.__dim_lights(255)
         self.__log_event("light_control", f"Brightness set to 255/255")
+        self.__lights_slider.setValue(self.__lights_slider.maximum())
         self.__motor_set_mode("trial")
         self.__motor_set_speed(1.0)
 
@@ -1183,6 +1184,7 @@ class MainWindow(QMainWindow):
 
         self.__dim_lights(0)
         self.__log_event("light_control", f"Brightness set to 0/255")
+        self.__lights_slider.setValue(0)
 
         self.__motor_set_mode("idle")
         self.__motor_set_speed(0.0)
