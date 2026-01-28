@@ -32,6 +32,7 @@ from PyQt5.QtWidgets import (
     QGroupBox,
     QRadioButton,
     QInputDialog,
+    QProgressBar,
     )
 
 # ROS imports
@@ -83,6 +84,7 @@ class MainWindow(QMainWindow):
         self.__room_map = np.ones((ROOM_MAP_FRAME_SHAPE[1], ROOM_MAP_FRAME_SHAPE[0], 3), dtype=np.uint8) * 255
         self.__fish_state = None
         self.__fish_image = None
+        self.__battery_level = 0.0
 
         # Windows
         self.__manual_control_window = None
@@ -161,6 +163,8 @@ class MainWindow(QMainWindow):
         self.__BC_layout.addWidget(self.__foma_img_position_value_label, 3, 1, alignment=Qt.AlignCenter)
         self.__BC_layout.addWidget(self.__foma_room_position_text_label, 4, 0, alignment=Qt.AlignCenter)
         self.__BC_layout.addWidget(self.__foma_room_position_value_label, 4, 1, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__battery_text_label, 5, 0, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__battery_bar, 5, 1, alignment=Qt.AlignCenter)
         
         self.__BC_widget = QFrame()
         self.__BC_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
@@ -332,6 +336,19 @@ class MainWindow(QMainWindow):
         self.__foma_room_position_value_label = QLabel("N/A")
         self.__foma_room_position_value_label.setAlignment(Qt.AlignHCenter)
 
+        # Battery level label init
+        self.__battery_text_label = QLabel("Battery Level:")
+        self.__battery_text_label.setAlignment(Qt.AlignHCenter)
+
+        # Battery bar init
+        self.__battery_bar = QProgressBar()
+        self.__battery_bar.setMinimum(0)
+        self.__battery_bar.setMaximum(100)
+        self.__battery_bar.setValue(0)
+        self.__battery_bar.setTextVisible(True)
+        self.__battery_bar.setFormat("%p%")
+        self.__battery_bar.setMinimumWidth(150)
+
     def __init_control_widgets(self):
         # Start button init
         self.__start_button = QPushButton()
@@ -368,6 +385,7 @@ class MainWindow(QMainWindow):
         rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location, queue_size=1)
         rospy.Subscriber('lidar/blocked', Int16MultiArray, self.__update_blocked_directions, queue_size=1)
         rospy.Subscriber('motor_control/speed', TwistStamped, self.__update_foma_speed, queue_size=1)
+        rospy.Subscriber('/battery_level', Float32, self.__update_battery_level, queue_size=1)
         self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=10)
         self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=10)
@@ -753,6 +771,31 @@ class MainWindow(QMainWindow):
 
     def __update_blocked_directions(self, blocked: Int16MultiArray):
         self.__blocked_directions = blocked.data
+
+    def __update_battery_level(self, level: Float32):
+        """Update battery level and change bar color based on level: red (<30%), yellow (30-60%), green (>60%)"""
+        self.__battery_level = level.data
+        self.__battery_bar.setValue(int(self.__battery_level))
+        
+        # Set color based on battery level
+        if self.__battery_level < 30:
+            color = "#FF0000"  # Red
+        elif self.__battery_level < 60:
+            color = "#FFFF00"  # Yellow
+        else:
+            color = "#00FF00"  # Green
+        
+        self.__battery_bar.setStyleSheet(f"""
+            QProgressBar {{
+                border: 2px solid grey;
+                border-radius: 5px;
+                text-align: center;
+            }}
+            QProgressBar::chunk {{
+                background-color: {color};
+                border-radius: 3px;
+            }}
+        """)
 
     def __update_left_display(self, frame: np.ndarray):
         # 1) nothing to do if no frame
