@@ -3,7 +3,7 @@
 from pickletools import dis
 import rospy
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import Float32, Int16MultiArray, Header
+from std_msgs.msg import Float32, Header
 from geometry_msgs.msg import Twist, TwistStamped, Vector3
 from abstract_node import AbstractNode
 from etc.settings import *
@@ -11,24 +11,16 @@ from etc.MotorControl import *
 from gpiozero import BadPinFactory
 import numpy as np
 from std_srvs.srv import SetBool, SetBoolRequest, SetBoolResponse
-import faulthandler, sys
-faulthandler.enable(sys.stderr, all_threads=True)
-import signal, traceback
-
-def on_sigill(signum, frame):
-    traceback.print_stack(frame)
-    sys.exit(1)
-
-signal.signal(signal.SIGILL, on_sigill)
+from foma.srv import Float, FloatRequest, FloatResponse
+import math
 
 class MotorControlNode(AbstractNode):
-    safety_distance_vector = SAFETY_DISTANCE / np.cos(np.abs(np.arange(-45,45) * np.pi/180 ))
     def __init__(self):
         super().__init__('motor_control', 'Motor control')
 
-        self.__blocked_publisher = rospy.Publisher('motor_control/blocked', Int16MultiArray, queue_size=10)
         self.__speed_publisher = rospy.Publisher('motor_control/speed', TwistStamped, queue_size=10)
         
+        rospy.Subscriber('fish_detection/state', TwistStamped, self.__handle_fish_direction, queue_size=10)
         rospy.Subscriber('lidar/scans', LaserScan, self.__update_lidar, queue_size=10)
         rospy.Subscriber('motor_control/angle', Float32, self.__handle_angle) 
         rospy.Subscriber('motor_control/vector',  Vector3,  self.__handle_vector)
@@ -36,9 +28,7 @@ class MotorControlNode(AbstractNode):
         rospy.Subscriber('motor_control/rotate',  Float32,  self.__handle_rotate)
 
         rospy.Service('motor_control/bypass_lidar', SetBool, self.__bypass_lidar)
-        rospy.Subscriber('motor_control/set_speed', Float32, self.__set_speed)
-        
-        self.__scans = None
+        rospy.Service('motor_control/set_speed', Float, self.__set_speed)
 
         try:
             self.__motor_control = MotorControl(resetPins = (MOTOR_TOP_BOTTOM_RESET, MOTOR_RIGHT_LEFT_RESET)
@@ -53,7 +43,9 @@ class MotorControlNode(AbstractNode):
         except BadPinFactory as e:
             self.logerr("MotorControlNode: "+e.msg)
 
+        self.__scans = None
         self.__movement = 'linear'  # or 'rotate'
+        self._mode = 'idle'
 
         self.__lidar_bypassed = False
         self.__speed = 1.0
@@ -98,13 +90,13 @@ class MotorControlNode(AbstractNode):
                 self.__current_h, self.__current_v = self.__check_blocking(self.__current_h, self.__current_v)
                 self.__move_by_components(self.__current_h, self.__current_v)
 
-            self.__speed_publisher.publish(
-                TwistStamped(
-                    twist = Twist(linear = Vector3(self.__current_v * self.__speed, self.__current_h * self.__speed, 0.0),
-                                  angular = Vector3(0.0, 0.0, self.__current_rotate * self.__speed)),
-                    header = Header(stamp = rospy.Time.now())
+                self.__speed_publisher.publish(
+                    TwistStamped(
+                        twist = Twist(linear = Vector3(self.__current_v * self.__speed, self.__current_h * self.__speed, 0.0),
+                                    angular = Vector3(0.0, 0.0, self.__current_rotate * self.__speed)),
+                        header = Header(stamp = rospy.Time.now())
+                    )
                 )
-            )
             rate.sleep()
 
     def __ramp(self, current, target):
@@ -121,8 +113,9 @@ class MotorControlNode(AbstractNode):
         self.__lidar_bypassed = request.data
         return SetBoolResponse(success = True, message = f"LIDAR {'' if self.__lidar_bypassed else 'not'} bypassed.")
 
-    def __set_speed(self, request:Float32):
+    def __set_speed(self, request:FloatRequest):
         self.__speed = request.data
+        return FloatResponse(result = True)
 
     def __move_by_components(self, h_component, v_component):
         if self.__movement != 'linear':
@@ -153,6 +146,37 @@ class MotorControlNode(AbstractNode):
                 v_component = 0
 
         return h_component, v_component
+
+    def __handle_fish_direction(self, msg: TwistStamped):
+        if self._mode != 'trial':
+            return
+        
+        # Get fish location
+        fish_x = msg.twist.linear.x
+        fish_y = msg.twist.linear.y
+
+        # Calculate the vector from the image center to the fish location
+        height, width = FOMA_CAMERA_FRAME_SHAPE
+        center_x = width // 2
+        center_y = height // 2
+        # 1. compute the pixel‐offset with y inverted
+        vector_x = fish_x - center_x
+        vector_y = center_y - fish_y   # <— flip the sign here!
+
+        # 2. get the two angles
+        center_to_fish_angle = math.degrees(math.atan2(vector_y, vector_x))
+
+        direction_angle = math.degrees(
+            math.atan2(msg.twist.angular.y,   # note: angular.y is the ‘up/down’ component
+                    msg.twist.angular.x)   #        angular.x is the ‘left/right’ component
+        )
+
+        diff = (direction_angle - center_to_fish_angle + 180) % 360 - 180
+
+        if abs(diff) <= DIRECTION_EPSILON:
+            self.__handle_angle(Float32(direction_angle))
+        else:
+            self.__handle_vector(Vector3(0, 0, 0))
 
     def __handle_angle(self, msg: Float32):
         angle = msg.data % 360
@@ -193,19 +217,9 @@ class MotorControlNode(AbstractNode):
     def __update_lidar(self, scans: LaserScan):
         self.__scans = np.array(scans.ranges)
 
-        # Reshape scans into (4, 90) to match safety_vec shape for elementwise comparison
-        scans_reshaped = self.__scans.reshape(4, 90)
-        distance_checks = (scans_reshaped < MotorControlNode.safety_distance_vector)
-        distance_checks = distance_checks.reshape(-1)  # back to 360‐length
-
-        blocked_indices = np.where(distance_checks)[0]
-        blocked_array = Int16MultiArray()
-        blocked_array.data = blocked_indices.tolist()
-        self.__blocked_publisher.publish(blocked_array)
-
     def __is_sector_blocked(self, sector):
         filtered_scans = np.array(self.__scans)[sector] 
-        distance_checks = filtered_scans < MotorControlNode.safety_distance_vector[45-len(sector)//2:45+len(sector)//2]
+        distance_checks = filtered_scans < SAFETY_DISTANCE_VECTOR[45-len(sector)//2:45+len(sector)//2]
         return np.any(distance_checks)
     
     def __is_direction_blocked(self, heading_deg: float) -> bool:

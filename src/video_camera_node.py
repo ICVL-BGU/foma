@@ -7,15 +7,6 @@ import cv2
 from picamera2 import Picamera2
 from etc.settings import *
 from concurrent.futures import TimeoutError
-import faulthandler, sys, signal, traceback
-
-faulthandler.enable(sys.stderr, all_threads=True)
-
-def on_sigill(signum, frame):
-    traceback.print_stack(frame)
-    sys.exit(1)
-
-signal.signal(signal.SIGILL, on_sigill)
 
 class VideoCameraNode(AbstractNode):
     def __init__(self):

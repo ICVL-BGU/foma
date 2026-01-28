@@ -17,7 +17,6 @@ class CSVWriterNode(AbstractNode):
         super().__init__(node_name, f'CSV Writer Node ({node_name})')
 
         # Get ROS parameters for this specific CSV file
-        self.__output_folder = rospy.get_param('~output_folder', '~/trial_output')
         self.__topic = rospy.get_param('~topic')
         self.__msg_type = rospy.get_param('~msg_type')
         self.__filename = rospy.get_param('~filename')
@@ -37,9 +36,6 @@ class CSVWriterNode(AbstractNode):
         self.__csv_file = None
         self.__csv_writer = None
         self.__folder = ""
-        self.__folder = ""
-        self.__start_time = None
-        self.__stop_time = None
 
     def __setup_subscriber(self):
         """Setup subscriber for the configured topic"""
@@ -91,14 +87,12 @@ class CSVWriterNode(AbstractNode):
 
     def __set_write(self, write: WriteRequest):
         if write.msg == "start":
-            self.__start_time = write.stamp
             self.__folder = write.folder
             self.__start_trial()
             self.__write = True
             self.loginfo(f"Started CSV writing for subject {self.__folder}")
 
         elif write.msg == "stop" and self.__write:
-            self.__stop_time = write.stamp
             self.__write = False
             self.__stop_trial()
             self.loginfo("Stopped CSV writing")

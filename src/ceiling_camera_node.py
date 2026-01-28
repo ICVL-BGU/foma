@@ -9,7 +9,7 @@ from etc.settings import *
 class CeilingCameraNode(AbstractNode):
     def __init__(self):
         super().__init__('ceiling_camera_node', 'Ceiling Camera Node')
-        self.url = "rtsp://admin:icvl2023@1.1.2.103:554"
+        self.url = rospy.get_param('~rtsp_url')
 
         gst_str = (
             f"rtspsrc location={self.url} protocols=tcp latency=50 ! "

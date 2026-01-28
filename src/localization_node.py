@@ -12,7 +12,6 @@ from cv_bridge import CvBridge, CvBridgeError
 from foma.msg import FomaLocation
 from geometry_msgs.msg import Point
 from ultralytics import YOLO
-import joblib
 import json
 import numpy as np
 from etc.settings import *
@@ -23,8 +22,8 @@ class LocalizationNode(AbstractNode):
     def __init__(self):
         super().__init__('localization', 'FOMA Localization')
 
-        detection_model_path = r"/home/icvl/ros_ws/src/foma/models/foma_detection.pt"
-        mapper_path = r"/home/icvl/ros_ws/src/foma/models/image_world_mapper.json"
+        detection_model_path = rospy.get_param('~detection_model_path')
+        mapper_path = rospy.get_param('~mapper_path')
         self.detection_model = YOLO(detection_model_path)
         with open(mapper_path, 'r') as f:
             self.mapper_params = json.load(f)

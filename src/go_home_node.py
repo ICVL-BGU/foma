@@ -2,13 +2,15 @@
 import rospy
 import math
 import numpy as np
+from abstract_node import AbstractNode
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Bool
 from std_srvs.srv import SetBool, SetBoolResponse
 
-class GoHomeNode:
+class GoHomeNode(AbstractNode):
     def __init__(self): 
+        super().__init__('go_home', 'Go Home')
         self.arrival_tol = rospy.get_param("~arrival_tol", 0.05)
         self.enabled = False
         self.max_speed = 0.8
@@ -25,7 +27,6 @@ class GoHomeNode:
         self.srv = rospy.Service("/go_home/enable", SetBool, self.on_enable)
         
         self.pub_enabled.publish(Bool(False))
-        rospy.loginfo("GoHomeNode active and ready.")
 
     def on_enable(self, req):
         self.enabled = bool(req.data)
