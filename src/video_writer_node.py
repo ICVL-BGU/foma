@@ -23,7 +23,6 @@ class VideoWriterNode(AbstractNode):
         super().__init__(node_name, f'Video Writer Node ({node_name})')
 
         # Get ROS parameters for this specific video file
-        self.__output_folder = rospy.get_param('~output_folder', '~/trial_output')
         self.__topic = rospy.get_param('~topic')
         self.__msg_type = rospy.get_param('~msg_type')
         self.__filename = rospy.get_param('~filename')
@@ -52,7 +51,6 @@ class VideoWriterNode(AbstractNode):
     def __init_attributes(self):
         self.__video_writer = None
         self.__map_image = None  # For trajectory map
-        self.__folder = ""
         self.__folder = ""
         self.__start_time = None
         self.__stop_time = None
@@ -91,9 +89,6 @@ class VideoWriterNode(AbstractNode):
                 self.logerr(f"Error in writer thread: {e}")
 
     def __start_trial(self):
-        # Use the folder path provided by GUI (subject_id parameter now contains folder path)
-        self.__trial_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-        
         if not os.path.exists(self.__folder):
             self.logerr(f"Trial folder does not exist: {self.__folder}")
             return

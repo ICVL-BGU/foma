@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 import rospy
 import numpy as np
-
+from abstract_node import AbstractNode
 from sensor_msgs.msg import Joy
 from std_msgs.msg import String, Float32
 from geometry_msgs.msg import Vector3, Twist
-from std_srvs.srv import Trigger, TriggerRequest
-from std_srvs.srv import SetBool, SetBoolRequest   # <-- for lidar bypass
+from std_srvs.srv import Trigger, TriggerRequest, SetBool, SetBoolRequest
+from foma.srv import Float
 
-class JoystickNode:
+class JoystickNode(AbstractNode):
     def __init__(self):
-        rospy.init_node("joystick_node")
-        rospy.loginfo("Joystick node started")
+        super().__init__('joystick', 'Joystick')
 
         # mode handling 
         self.mode = "disabled"
@@ -32,7 +31,7 @@ class JoystickNode:
         self.lidar_bypassed = False   
 
         # speed control (optional)
-        self.speed_pub = rospy.Publisher("motor_control/set_speed", Float32, queue_size=1)
+        self.speed_srv = rospy.ServiceProxy("motor_control/set_speed", Float)
         self.current_speed = 1.0
 
         # joystick subscriber
@@ -41,7 +40,6 @@ class JoystickNode:
         # for edge detection on buttons (so we don’t spam services)
         self.prev_buttons = []
    
-
     def set_mode(self, msg: String):
         self.mode = msg.data
         rospy.loginfo(f"[joystick_node] Control mode set to: {self.mode}")
@@ -97,11 +95,11 @@ class JoystickNode:
         #  LB/RB: simple speed control example 
         if BTN_LB and not self.prev_buttons[4]:
             self.current_speed = max(0.2, self.current_speed - 0.2)
-            self.speed_pub.publish(self.current_speed)
+            self.speed_srv(self.current_speed)
             rospy.loginfo(f"[joystick_node] Speed down: {self.current_speed:.2f}")
         if BTN_RB and not self.prev_buttons[5]:
             self.current_speed = min(2.0, self.current_speed + 0.2)
-            self.speed_pub.publish(self.current_speed)
+            self.speed_srv(self.current_speed)
             rospy.loginfo(f"[joystick_node] Speed up: {self.current_speed:.2f}")
 
         #  movement: rotate or translate 
@@ -121,10 +119,8 @@ class JoystickNode:
 
         self.prev_buttons = msg.buttons[:]
  
-
     def run(self):
         rospy.spin()
-
 
 if __name__ == "__main__":
     node = JoystickNode()

@@ -6,22 +6,14 @@ from abstract_node import AbstractNode
 from adafruit_rplidar import RPLidar, RPLidarException
 import numpy as np
 import threading
-from etc.settings import LIDAR_PORT, LIDAR_PORT_SPEED, LIDAR_OFFSET
-
-import faulthandler, sys
-faulthandler.enable(sys.stderr, all_threads=True)
-import signal, traceback
-
-def on_sigill(signum, frame):
-    traceback.print_stack(frame)
-    sys.exit(1)
-
-signal.signal(signal.SIGILL, on_sigill)
+from std_msgs.msg import Int16MultiArray
+from etc.settings import LIDAR_PORT, LIDAR_PORT_SPEED, LIDAR_OFFSET, SAFETY_DISTANCE_VECTOR
 
 class LIDARNode(AbstractNode):
     def __init__(self):
         super().__init__('lidar', 'LIDAR')
-        self.lidar_pub = rospy.Publisher('lidar/scans', LaserScan, queue_size=10)
+        self.__lidar_pub = rospy.Publisher('lidar/scans', LaserScan, queue_size=10)
+        self.__blocked_pub = rospy.Publisher('lidar/blocked', Int16MultiArray, queue_size=10)
         try:
             self.lidar = RPLidar(None, LIDAR_PORT, baudrate = LIDAR_PORT_SPEED, timeout = 3)
             self.lidar.stop()
@@ -75,8 +67,20 @@ class LIDARNode(AbstractNode):
         """Main thread: publishes the latest scan_msg at a fixed rate."""
         rate = rospy.Rate(100)
         while not rospy.is_shutdown():
-            self.lidar_pub.publish(self.scan_msg)
+            self.__lidar_pub.publish(self.scan_msg)
+            self.publish_blocked()
             rate.sleep()
+
+    def publish_blocked(self):
+        # Reshape scans into (4, 90) to match safety_vec shape for elementwise comparison
+        scans_reshaped = self.scan_msg.ranges.reshape(4, 90)
+        distance_checks = (scans_reshaped < SAFETY_DISTANCE_VECTOR)
+        distance_checks = distance_checks.reshape(-1)  # back to 360‐length
+
+        blocked_indices = np.where(distance_checks)[0]
+        blocked_array = Int16MultiArray()
+        blocked_array.data = blocked_indices.tolist()
+        self.__blocked_pub.publish(blocked_array)
 
     def __on_shutdown(self):
         if self.lidar:

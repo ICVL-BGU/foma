@@ -1,21 +1,18 @@
 import rospy
-from std_srvs.srv import SetBool, SetBoolRequest, SetBoolResponse
-from foma.srv import Check, CheckRequest, CheckResponse
+from foma.srv import String, StringRequest, StringResponse
 
 class AbstractNode:
     def __init__(self, node_name, node_repr, system_on = False):
         self._node_name = node_name
         self._node_repr = node_repr
         self._system_on = system_on
-        self._system_toggle_service = rospy.Service('{}/system_toggle'.format(node_name), SetBool, self.system_toggle)
-        self._system_check_service = rospy.Service('{}/system_check'.format(node_name), Check, self.system_toggle)
-
-    def system_toggle(self, request:SetBoolRequest):
-        self._system_on = request.data
-        return SetBoolResponse(success = True, message = "{} turned {}.".format(self._node_repr ,self._system_on))
+        self._mode = None
+        rospy.Service(f'{node_name}/set_mode', String, self.set_mode)
     
-    def system_check(self, check: CheckRequest):
-        return CheckResponse()
+    def set_mode(self, msg:StringRequest):
+        self._mode = msg.data
+        self.loginfo(f"Mode set to: {self._mode}")
+        return StringResponse(result=True)
 
     def loginfo(self, msg):
         rospy.loginfo(f"{self._node_repr}: {msg}")

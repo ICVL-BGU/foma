@@ -11,14 +11,13 @@ from abstract_node import AbstractNode
 from cv_bridge import CvBridge, CvBridgeError
 from geometry_msgs.msg import TwistStamped, Twist, Vector3
 from std_msgs.msg import Header
-# import sleap
 from ultralytics import YOLO
 
 class FishDetectionNode(AbstractNode):
     def __init__(self):
         super().__init__('fish_detection', 'Fish detection')
 
-        model_path = r"/home/icvl/ros_ws/src/foma/models/fish_detection.pt" # /home/icvl/ros_ws/src/foma/yolo_pose.pt" OR /home/alex/ROS/src/foma/yolo_pose.pt 
+        model_path = rospy.get_param('~model_path')
         self.model = YOLO(model_path)
         self.img = None
         self.bridge = CvBridge()

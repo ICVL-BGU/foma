@@ -3,16 +3,18 @@
 import rospy
 import serial
 from abstract_node import AbstractNode
-from foma.srv import Light, LightRequest, LightResponse
+from foma.srv import Float, FloatRequest, FloatResponse
+from etc.settings import DIMMER_PORT, DIMMER_PORT_SPEED
+
 
 class LightDimmerNode(AbstractNode):
     def __init__(self):
         super().__init__('light_dimmer', 'Light dimmer')
-        self.dimmer_service = rospy.Service('light_dimmer/change', Light, self.dim)
+        self.dimmer_service = rospy.Service('light_dimmer/change', Float, self.dim)
 
         # Use the alias for the serial port
-        self.serial_port_alias = '/dev/light_dimmer'  # Replace this with your configured alias
-        self.serial_baud_rate = 115200 #9600
+        self.serial_port_alias = DIMMER_PORT
+        self.serial_baud_rate = DIMMER_PORT_SPEED
         self.serial_timeout = 1
 
         # Initialize serial port as None
@@ -33,7 +35,7 @@ class LightDimmerNode(AbstractNode):
             self.logerr(f"Failed to open serial port {self.serial_port_alias}: {e}")
             self.serial_port = None
 
-    def dim(self, data: LightRequest):
+    def dim(self, data: FloatRequest):
         """Handle the light dimming request."""
         # Attempt to open the serial port if not open
         if not self.serial_port or not self.serial_port.is_open:
@@ -42,7 +44,7 @@ class LightDimmerNode(AbstractNode):
 
         # If still not open, return an error response
         if not self.serial_port or not self.serial_port.is_open:
-            return LightResponse(result=False)#, message="Serial port is not available.")
+            return FloatResponse(result=False)#, message="Serial port is not available.")
 
         try:
             # Ensure data is within the valid range (0-255)
@@ -51,10 +53,10 @@ class LightDimmerNode(AbstractNode):
             # Send the value via serial
             self.serial_port.write(f"{value}".encode('utf-8'))
             self.loginfo(f"Sent value {value} to the light dimmer via serial.")
-            return LightResponse(result=True)#, message=f"Light dimmer dimmed to {value}.")
+            return FloatResponse(result=True)#, message=f"Light dimmer dimmed to {value}.")
         except Exception as e:
             rospy.logerr(f"Failed to send data via serial: {e}")
-            return LightResponse(result=False)#, message="Failed to dim light.")
+            return FloatResponse(result=False)#, message="Failed to dim light.")
         
     def __on_shutdown(self):
         self.loginfo(f"Turning off the light dimmer.")
