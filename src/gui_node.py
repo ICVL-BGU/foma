@@ -1075,7 +1075,7 @@ class MainWindow(QMainWindow):
             output_folder = os.path.expanduser('~/trial_output')
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
             self.__session_folder = os.path.join(output_folder, f"{timestamp}-{subject_id}")
-            self.__current_trial = 0
+            self.__current_trial = 1
             
             if not os.path.exists(self.__session_folder):
                 os.makedirs(self.__session_folder)
@@ -1091,12 +1091,13 @@ class MainWindow(QMainWindow):
             if self.__session_folder is None:
                 QMessageBox.warning(self, "No Session", "Please create a New Session first!")
                 return
+            self.__current_trial += 1
+            self.__trial_num_value_label.setText(str(self.__current_trial))
         else:
             # Cancelled
             return
         
         # Increment trial number
-        self.__current_trial += 1
         trial_folder = os.path.join(self.__session_folder, f"trial_{self.__current_trial}")
         
         if not os.path.exists(trial_folder):
@@ -1129,11 +1130,6 @@ class MainWindow(QMainWindow):
             except rospy.ServiceException as e:
                 rospy.logerr(f"Writer service call failed: {e}")
 
-        # Update GUI labels
-        self.__trial_num_value_label.setText(str(self.__current_trial))
-        self.__times_fed_value_label.setText("0")
-
-        self.__dim_lights(255)
         self.__log_event("light_control", f"Brightness set to 255/255")
         self.__lights_slider.setValue(self.__lights_slider.maximum())
         self.__motor_set_mode("trial")
