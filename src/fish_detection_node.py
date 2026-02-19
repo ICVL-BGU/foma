@@ -25,6 +25,7 @@ class FishDetectionNode(AbstractNode):
         self.direction = Twist(linear=Vector3(0, 0, 0))
         self.prediction = None
         self.point_b, self.point_a = 0, 3
+        self._log_counter = 0
 
         self.image_sub = rospy.Subscriber('fish_camera/image', CompressedImage, self.read_image, queue_size=1, buff_size=2**20, tcp_nodelay=True)
         self.fish_state_pub = rospy.Publisher('fish_detection/state', TwistStamped, queue_size=10, tcp_nodelay=True)
@@ -45,11 +46,15 @@ class FishDetectionNode(AbstractNode):
         min_dist = float('inf')
 
         timestamp = rospy.Time.now()
+        self._log_counter += 1
+        do_log = (self._log_counter % 30 == 0)
 
         kps = prediction.keypoints
         
         if kps.shape[1] == 0:
             self.no_fish_count += 1
+            if do_log:
+                self.loginfo("Fish not detected")
             if self.no_fish_count >= 5:
                 self.fish_state_pub.publish(TwistStamped(twist = Twist(linear=Vector3(0, 0, 0)), header = Header(stamp = timestamp)))  # fish not detected for 5 frames
             else:
@@ -57,6 +62,9 @@ class FishDetectionNode(AbstractNode):
             return
         else:
             self.no_fish_count = 0  # reset no fish count if fish is detected
+            confs = [round(float(c), 3) for c in prediction.boxes.conf]
+            if do_log:
+                self.loginfo(f"Fish detections: {len(confs)}, confs: {confs}")
             for kp in kps:
                 keypoint_xy = kp.data[0][self.point_a] # tail
                 dist = ((keypoint_xy[0] - img_center[0]) ** 2 + (keypoint_xy[1] - img_center[1]) ** 2) ** 0.5

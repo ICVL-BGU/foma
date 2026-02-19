@@ -727,12 +727,7 @@ class MainWindow(QMainWindow):
     def __update_room_image(self, img_msg: CompressedImage):
         try:
             self.__room_image = self.bridge.compressed_imgmsg_to_cv2(img_msg, desired_encoding="rgb8")
-            frame = self.__room_image.copy()
-            if self.__foma_img_location:
-                center_x = self.__foma_img_location.x
-                center_y = self.__foma_img_location.y
-                cv2.circle(frame, (int(center_x), int(center_y)), 5, (0, 255, 0), -1)
-            self.room_frame_ready.emit(frame)
+            self.room_frame_ready.emit(self.__room_image.copy())
         except CvBridgeError as e:
             self.logwarn(f"Error converting image message: {e}")
         except Exception as e:
@@ -760,6 +755,10 @@ class MainWindow(QMainWindow):
         # Update the FOMA room position label
         self.__foma_room_position_value_label.setText(f"({round(location.world.x * ROOM_FLOOR_MAP_SHAPE[1])}, {round(location.world.y * ROOM_FLOOR_MAP_SHAPE[0])})")
         self.__foma_img_position_value_label.setText(f"({round(self.__foma_img_location.x)}, {round(self.__foma_img_location.y)})")
+
+        # Re-emit the latest room frame so the dot redraws at the new position without waiting for the next frame
+        if self.__room_image is not None:
+            self.room_frame_ready.emit(self.__room_image.copy())
 
     def __update_foma_speed(self, speed: TwistStamped):
         self.__foma_speed = speed.twist
@@ -930,6 +929,11 @@ class MainWindow(QMainWindow):
         if self.__room_camera_display_rb.isChecked() and frame is not None:
             height, width, channel = frame.shape
             bytes_per_line = 3 * width
+            # Draw the FOMA location dot on the camera frame at current location
+            if self.__foma_img_location is not None:
+                cx = int(self.__foma_img_location.x)
+                cy = int(self.__foma_img_location.y)
+                cv2.circle(frame, (cx, cy), 5, (0, 255, 0), -1)
             frame = frame.data
 
         elif self.__map_display_rb.isChecked() and self.__room_map is not None:
