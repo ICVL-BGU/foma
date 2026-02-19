@@ -17,11 +17,11 @@ class GoHomeNode(AbstractNode):
         self.kp = 2.0 
 
         # Publishers 
-        self.cmd_pub = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
+        self.cmd_pub = rospy.Publisher('motor_control/twist', Twist, queue_size=1, tcp_nodelay=True)
         self.pub_enabled = rospy.Publisher("go_home/enabled", Bool, queue_size=1, latch=True)
         
         # Subscribers
-        rospy.Subscriber("lidar/scans", LaserScan, self.on_lidar)
+        rospy.Subscriber("lidar/scans", LaserScan, self.on_lidar, queue_size=1, tcp_nodelay=True)
 
         # Services
         self.srv = rospy.Service("/go_home/enable", SetBool, self.on_enable)

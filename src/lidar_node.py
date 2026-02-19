@@ -12,8 +12,8 @@ from etc.settings import LIDAR_PORT, LIDAR_PORT_SPEED, LIDAR_OFFSET, SAFETY_DIST
 class LIDARNode(AbstractNode):
     def __init__(self):
         super().__init__('lidar', 'LIDAR')
-        self.__lidar_pub = rospy.Publisher('lidar/scans', LaserScan, queue_size=10)
-        self.__blocked_pub = rospy.Publisher('lidar/blocked', Int16MultiArray, queue_size=10)
+        self.__lidar_pub = rospy.Publisher('lidar/scans', LaserScan, queue_size=1, tcp_nodelay=True)
+        self.__blocked_pub = rospy.Publisher('lidar/blocked', Int16MultiArray, queue_size=1, tcp_nodelay=True)
 
         self.__stop_event = threading.Event()
         try:

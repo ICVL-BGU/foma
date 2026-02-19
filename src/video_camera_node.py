@@ -12,7 +12,7 @@ class VideoCameraNode(AbstractNode):
     def __init__(self):
         super().__init__('fish_camera', 'Fish camera')
 
-        self.pub = rospy.Publisher('fish_camera/image', CompressedImage, queue_size=1)
+        self.pub = rospy.Publisher('fish_camera/image', CompressedImage, queue_size=10, tcp_nodelay=True)
 
         self.cam = Picamera2()
 

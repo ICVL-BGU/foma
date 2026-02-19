@@ -313,8 +313,9 @@ class MainWindow(QMainWindow):
         self.__times_fed_text_label = QLabel("Times Fed:")
         self.__times_fed_text_label.setAlignment(Qt.AlignHCenter)
 
-        self.__times_fed_value_label = QLabel("N/A")
+        self.__times_fed_value_label = QLineEdit("N/A")
         self.__times_fed_value_label.setAlignment(Qt.AlignHCenter)
+        self.__times_fed_value_label.setValidator(QDoubleValidator(0, 9999, 0))
 
         # FOMA image position label init
         self.__foma_img_position_text_label = QLabel("FOMA Image Position(X,Y):")
@@ -362,15 +363,15 @@ class MainWindow(QMainWindow):
         self.__close_button.clicked.connect(self.__on_close_click)
 
     def __init_subscriptions_and_services(self):
-        rospy.Subscriber('fish_camera/image', CompressedImage, self.__update_fish_image, queue_size=1)
-        rospy.Subscriber('fish_detection/state', TwistStamped, self.__update_fish_state, queue_size=1)
-        rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image, queue_size=1)
-        rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location, queue_size=1)
-        rospy.Subscriber('lidar/blocked', Int16MultiArray, self.__update_blocked_directions, queue_size=1)
-        rospy.Subscriber('motor_control/speed', TwistStamped, self.__update_foma_speed, queue_size=1)
-        self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=10)
-        self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=10)
-        self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=10)
+        rospy.Subscriber('fish_camera/image', CompressedImage, self.__update_fish_image, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('fish_detection/state', TwistStamped, self.__update_fish_state, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('lidar/blocked', Int16MultiArray, self.__update_blocked_directions, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('motor_control/speed', TwistStamped, self.__update_foma_speed, queue_size=1, tcp_nodelay=True)
+        self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=1, tcp_nodelay=True)
+        self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=1, tcp_nodelay=True)
+        self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=1, tcp_nodelay=True)
         
         # Writer services - one for each writer node
         self.__writer_services = [
@@ -494,6 +495,8 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.logwarn(f"Failed to start GoHome: {e}")
                 return
+            if self.__manual_control_window is not None:
+                self.__manual_control_window.close()
             
         control_layout.addWidget(forward_left_button, 0, 0)
         control_layout.addWidget(forward_button, 0, 1, 1, 2)
@@ -1051,6 +1054,45 @@ class MainWindow(QMainWindow):
             self.__dim_lights(brightness)
             self.__log_event("light_control", f"Brightness set to {brightness}/255")
 
+    def __find_latest_session(self):
+        """
+        Looks in ~/trial_output for the most recent session folder from today.
+        Folder names are formatted as {%Y%m%d_%H%M}-{subject_id}.
+        Returns (folder_path, subject_id, trial_count) or None if not found.
+        """
+        output_folder = os.path.expanduser('~/trial_output')
+        if not os.path.exists(output_folder):
+            return None
+        
+        today_prefix = datetime.datetime.now().strftime("%Y%m%d")
+        candidates = []
+        for name in os.listdir(output_folder):
+            full_path = os.path.join(output_folder, name)
+            if os.path.isdir(full_path) and name.startswith(today_prefix) and '-' in name:
+                candidates.append((name, full_path))
+        
+        if not candidates:
+            return None
+        
+        # Sort lexicographically — timestamp prefix makes this chronological
+        candidates.sort(key=lambda x: x[0])
+        latest_name, latest_path = candidates[-1]
+
+        # Parse subject_id: everything after the first '-'
+        subject_id = latest_name.split('-', 1)[1]
+
+        # Count completed trial folders
+        trial_nums = []
+        for entry in os.listdir(latest_path):
+            if os.path.isdir(os.path.join(latest_path, entry)) and entry.startswith('trial_'):
+                try:
+                    trial_nums.append(int(entry.split('_', 1)[1]))
+                except ValueError:
+                    pass
+        trial_count = max(trial_nums) if trial_nums else 0
+
+        return latest_path, subject_id, trial_count
+
     def __on_start_click(self):
         # Ask if New Session or New Trial        
         msg_box = QMessageBox(self)
@@ -1058,6 +1100,7 @@ class MainWindow(QMainWindow):
         msg_box.setText("What would you like to start?")
         new_session_btn = msg_box.addButton("New Session", QMessageBox.ActionRole)
         new_trial_btn = msg_box.addButton("New Trial", QMessageBox.ActionRole)
+        load_session_btn = msg_box.addButton("Load Session", QMessageBox.ActionRole)
         msg_box.addButton(QMessageBox.Cancel)
         msg_box.exec_()
         
@@ -1093,6 +1136,30 @@ class MainWindow(QMainWindow):
                 return
             self.__current_trial += 1
             self.__trial_num_value_label.setText(str(self.__current_trial))
+
+        elif msg_box.clickedButton() == load_session_btn:
+            result = self.__find_latest_session()
+            if result is None:
+                QMessageBox.warning(self, "No Session Found",
+                                    "No session folder from today was found in ~/trial_output.")
+                return
+            session_path, subject_id, trial_count = result
+            self.__session_folder = session_path
+            self.__current_trial = trial_count
+            self.__subject_id_value_label.setText(subject_id)
+            self.__trial_num_value_label.setText(str(trial_count) if trial_count > 0 else "N/A")
+            self.__times_fed_value_label.setText("0")
+            folder_name = os.path.basename(session_path)
+            QMessageBox.information(
+                self,
+                "Session Loaded",
+                f"Loaded session: {folder_name}\n"
+                f"Subject ID: {subject_id}\n"
+                f"Trials completed: {trial_count}\n\n"
+                f"Press Start → New Trial to begin the next trial."
+            )
+            return
+
         else:
             # Cancelled
             return

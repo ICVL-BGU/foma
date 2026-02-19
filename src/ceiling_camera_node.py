@@ -23,7 +23,7 @@ class CeilingCameraNode(AbstractNode):
             rospy.signal_shutdown("pipeline open failed")
             return
 
-        self.pub    = rospy.Publisher('ceiling_camera/image', Image, queue_size=1)
+        self.pub    = rospy.Publisher('ceiling_camera/image', Image, queue_size=10, tcp_nodelay=True)
         self.bridge = CvBridge()
         rospy.on_shutdown(self._on_shutdown)
 

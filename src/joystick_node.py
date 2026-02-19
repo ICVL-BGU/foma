@@ -18,9 +18,9 @@ class JoystickNode(AbstractNode):
         self.mode_pub = rospy.Publisher("control/mode", String, queue_size=1)
 
         #  publishers to MotorControlNode 
-        self.pub_vector = rospy.Publisher("motor_control/vector", Vector3, queue_size=10)
-        self.pub_rotate = rospy.Publisher("motor_control/rotate", Float32, queue_size=10)
-        self.pub_twist  = rospy.Publisher("motor_control/twist", Twist, queue_size=10)
+        self.pub_vector = rospy.Publisher("motor_control/vector", Vector3, queue_size=1, tcp_nodelay=True)
+        self.pub_rotate = rospy.Publisher("motor_control/rotate", Float32, queue_size=1, tcp_nodelay=True)
+        self.pub_twist  = rospy.Publisher("motor_control/twist", Twist, queue_size=1, tcp_nodelay=True)
 
         #  services 
         # fish feeder 
@@ -35,7 +35,7 @@ class JoystickNode(AbstractNode):
         self.current_speed = 1.0
 
         # joystick subscriber
-        rospy.Subscriber("/joy", Joy, self.on_joy)
+        rospy.Subscriber("/joy", Joy, self.on_joy, queue_size=1, tcp_nodelay=True)
 
         # for edge detection on buttons (so we don’t spam services)
         self.prev_buttons = []

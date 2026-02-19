@@ -18,14 +18,14 @@ class MotorControlNode(AbstractNode):
     def __init__(self):
         super().__init__('motor_control', 'Motor control')
 
-        self.__speed_publisher = rospy.Publisher('motor_control/speed', TwistStamped, queue_size=10)
+        self.__speed_publisher = rospy.Publisher('motor_control/speed', TwistStamped, queue_size=10, tcp_nodelay=True)
         
-        rospy.Subscriber('fish_detection/state', TwistStamped, self.__handle_fish_direction, queue_size=10)
-        rospy.Subscriber('lidar/scans', LaserScan, self.__update_lidar, queue_size=10)
-        rospy.Subscriber('motor_control/angle', Float32, self.__handle_angle) 
-        rospy.Subscriber('motor_control/vector',  Vector3,  self.__handle_vector)
-        rospy.Subscriber('motor_control/twist',   Twist,    self.__handle_twist)
-        rospy.Subscriber('motor_control/rotate',  Float32,  self.__handle_rotate)
+        rospy.Subscriber('fish_detection/state', TwistStamped, self.__handle_fish_direction, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('lidar/scans', LaserScan, self.__update_lidar, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('motor_control/angle', Float32, self.__handle_angle, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('motor_control/vector',  Vector3,  self.__handle_vector, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('motor_control/twist',   Twist,    self.__handle_twist, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('motor_control/rotate',  Float32,  self.__handle_rotate, queue_size=1, tcp_nodelay=True)
 
         rospy.Service('motor_control/bypass_lidar', SetBool, self.__bypass_lidar)
         rospy.Service('motor_control/set_speed', Float, self.__set_speed)
