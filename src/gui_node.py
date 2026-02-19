@@ -37,7 +37,7 @@ from PyQt5.QtWidgets import (
 # ROS imports
 from geometry_msgs.msg import Twist, Vector3, TwistStamped
 from sensor_msgs.msg import Image, CompressedImage
-from std_msgs.msg import Float32, Int16MultiArray
+from std_msgs.msg import Float32, Int16MultiArray, Bool
 from std_srvs.srv import Trigger, SetBool
 from cv_bridge import CvBridge, CvBridgeError
 from std_srvs.srv import SetBool
@@ -52,6 +52,7 @@ class MainWindow(QMainWindow):
     fish_frame_ready = pyqtSignal(np.ndarray)
     room_frame_ready = pyqtSignal(np.ndarray)
     services_updated = pyqtSignal(dict)
+    go_home_state_signal = pyqtSignal(bool)
 
     def __init__(self):
         super(MainWindow, self).__init__()
@@ -74,6 +75,7 @@ class MainWindow(QMainWindow):
         self.fish_frame_ready.connect(self.__update_left_display)
         self.room_frame_ready.connect(self.__update_right_display)
         self.services_updated.connect(self.__update_services)
+        self.go_home_state_signal.connect(self.__update_go_home_state)
 
     def __init_attributes(self):
         # Images and locations
@@ -100,6 +102,7 @@ class MainWindow(QMainWindow):
         self.__empty_feeder = None
         self.__bypass_lidar = None
         self.__go_home_enable = None
+        self.__go_home_active = False
         self.__motor_set_speed = None
         self.__motor_set_mode = None
 
@@ -378,6 +381,7 @@ class MainWindow(QMainWindow):
         rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('lidar/blocked', Int16MultiArray, self.__update_blocked_directions, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('motor_control/speed', TwistStamped, self.__update_foma_speed, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('go_home/enabled', Bool, self.__on_go_home_state, queue_size=1, tcp_nodelay=True)
         self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=1, tcp_nodelay=True)
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=1, tcp_nodelay=True)
         self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=1, tcp_nodelay=True)
@@ -538,20 +542,33 @@ class MainWindow(QMainWindow):
         self.__manual_control_window.setLayout(control_layout)
         self.__manual_control_window.show()
 
+    def __on_go_home_state(self, msg: Bool):
+        self.go_home_state_signal.emit(bool(msg.data))
+
+    def __update_go_home_state(self, active: bool):
+        self.__go_home_active = active
+        self.__go_home_button.setText("Stop Go Home" if active else "Go Home")
+
     def __start_go_home(self):
-        """Start go home — usable from both the main GUI and (formerly) the manual control window."""
-        if self.__manual_control_window is not None:
-            self.__motor_control_twist.publish(Twist())
-            if hasattr(self, '_MainWindow__velocity_timer') and self.__velocity_timer is not None:
-                self.__velocity_timer.stop()
-            self.__manual_control_window.close()
+        """Toggle go home — starts if idle, stops if already running."""
         if self.__go_home_enable is None:
             self.logwarn("GoHome service not available")
             return
-        try:
-            self.__go_home_enable(True)
-        except Exception as e:
-            self.logwarn(f"Failed to start GoHome: {e}")
+        if self.__go_home_active:
+            try:
+                self.__go_home_enable(False)
+            except Exception as e:
+                self.logwarn(f"Failed to stop GoHome: {e}")
+        else:
+            if self.__manual_control_window is not None:
+                self.__motor_control_twist.publish(Twist())
+                if hasattr(self, '_MainWindow__velocity_timer') and self.__velocity_timer is not None:
+                    self.__velocity_timer.stop()
+                self.__manual_control_window.close()
+            try:
+                self.__go_home_enable(True)
+            except Exception as e:
+                self.logwarn(f"Failed to start GoHome: {e}")
 
     def __init_feeding_load_window(self):
         rospy.wait_for_service('fish_feeder/feed')

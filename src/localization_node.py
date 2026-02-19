@@ -27,10 +27,6 @@ class LocalizationNode(AbstractNode):
         self.detection_model = YOLO(detection_model_path)
         with open(mapper_path, 'r') as f:
             self.mapper_params = json.load(f)
-        # Scale pixel-space calibration parameters to match the published (resized) image resolution
-        for key in ('cx', 'cy', 'f'):
-            if key in self.mapper_params:
-                self.mapper_params[key] *= ROOM_CAMERA_PUBLISH_SCALE
         self.img = None
         self.image_sub = rospy.Subscriber('ceiling_camera/image', CompressedImage, self.read_image, queue_size=1, buff_size=2**21, tcp_nodelay=True)
         self.location_pub = rospy.Publisher('localization/location', FomaLocation, queue_size=10, tcp_nodelay=True)
@@ -52,7 +48,7 @@ class LocalizationNode(AbstractNode):
         if result is not None:
             x_i, y_i = result
             
-            x_w, y_w = self._map(x_i * ROOM_CAMERA_FRAME_SHAPE[1], y_i * ROOM_CAMERA_FRAME_SHAPE[0])
+            x_w, y_w = self._map(x_i * ROOM_CAMERA_NATIVE_SHAPE[1], y_i * ROOM_CAMERA_NATIVE_SHAPE[0])
 
             self.location.image = Point(x_i, y_i, 0)
             self.location.world = Point(x_w / ROOM_FLOOR_MAP_SHAPE[1], y_w / ROOM_FLOOR_MAP_SHAPE[1], 0)
@@ -119,10 +115,10 @@ class LocalizationNode(AbstractNode):
         x_u = x_d * scale
         y_u = y_d * scale
         
-        # Convert back to pixel coordinates
+        # Convert back to pixel coordinates (in published/scaled resolution)
         undistorted_x = x_u * f + cx
         undistorted_y = y_u * f + cy
-        
+
         # Step 2: Apply homography
         # Convert to homogeneous coordinates
         H = np.array(self.mapper_params['homography'])
