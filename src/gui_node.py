@@ -225,7 +225,7 @@ class MainWindow(QMainWindow):
         self.__lights_slider.setPageStep(1)
         self.__lights_slider.setMaximumHeight(50)
         self.__lights_slider.setDisabled(True)
-        self.__lights_slider.setValue(1)
+        self.__lights_slider.setValue(0)
 
         # Lights slider label init
         self.__lights_label = QLabel("Lights dimming")
