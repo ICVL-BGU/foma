@@ -24,7 +24,6 @@ class CeilingCameraNode(AbstractNode):
 
         self.pub    = rospy.Publisher('ceiling_camera/image', CompressedImage, queue_size=5, tcp_nodelay=True)
         self._jpeg_params = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
-        self._publish_size = (ROOM_CAMERA_FRAME_SHAPE[1], ROOM_CAMERA_FRAME_SHAPE[0])  # (w, h) for cv2.resize
         self._msg = CompressedImage()
         self._msg.format = "jpeg"
         rospy.on_shutdown(self._on_shutdown)
@@ -35,7 +34,6 @@ class CeilingCameraNode(AbstractNode):
         while not rospy.is_shutdown():
             ret, frame = self.cap.read()
             if ret:
-                frame = cv2.resize(frame, self._publish_size, interpolation=cv2.INTER_AREA)
                 ok, buf = cv2.imencode(".jpg", frame, self._jpeg_params)
                 if ok:
                     self._msg.header.stamp = rospy.Time.now()

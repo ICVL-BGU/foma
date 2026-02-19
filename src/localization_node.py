@@ -27,10 +27,6 @@ class LocalizationNode(AbstractNode):
         self.detection_model = YOLO(detection_model_path)
         with open(mapper_path, 'r') as f:
             self.mapper_params = json.load(f)
-        # Scale pixel-space calibration parameters to match the published (resized) image resolution
-        for key in ('cx', 'cy', 'f'):
-            if key in self.mapper_params:
-                self.mapper_params[key] *= ROOM_CAMERA_PUBLISH_SCALE
         self.img = None
         self._log_counter = 0
         self.image_sub = rospy.Subscriber('ceiling_camera/image', CompressedImage, self.read_image, queue_size=1, buff_size=2**21, tcp_nodelay=True)
