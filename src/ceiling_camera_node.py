@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 import rospy
 import cv2
-from sensor_msgs.msg import Image
-from cv_bridge import CvBridge
+from sensor_msgs.msg import CompressedImage
 from abstract_node import AbstractNode
 from etc.settings import *
 
@@ -23,8 +22,10 @@ class CeilingCameraNode(AbstractNode):
             rospy.signal_shutdown("pipeline open failed")
             return
 
-        self.pub    = rospy.Publisher('ceiling_camera/image', Image, queue_size=10, tcp_nodelay=True)
-        self.bridge = CvBridge()
+        self.pub    = rospy.Publisher('ceiling_camera/image', CompressedImage, queue_size=5, tcp_nodelay=True)
+        self._jpeg_params = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
+        self._msg = CompressedImage()
+        self._msg.format = "jpeg"
         rospy.on_shutdown(self._on_shutdown)
 
     def run(self):
@@ -33,9 +34,13 @@ class CeilingCameraNode(AbstractNode):
         while not rospy.is_shutdown():
             ret, frame = self.cap.read()
             if ret:
-                msg = self.bridge.cv2_to_imgmsg(frame, "bgr8")
-                msg.header.stamp = rospy.Time.now()
-                self.pub.publish(msg)
+                ok, buf = cv2.imencode(".jpg", frame, self._jpeg_params)
+                if ok:
+                    self._msg.header.stamp = rospy.Time.now()
+                    self._msg.data = buf.tobytes()
+                    self.pub.publish(self._msg)
+                else:
+                    rospy.logwarn_throttle(5, "JPEG encode failed; skipping frame.")
             else:
                 rospy.logwarn_throttle(5, "Frame drop")
             rate.sleep()

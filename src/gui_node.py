@@ -374,7 +374,7 @@ class MainWindow(QMainWindow):
     def __init_subscriptions_and_services(self):
         rospy.Subscriber('fish_camera/image', CompressedImage, self.__update_fish_image, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('fish_detection/state', TwistStamped, self.__update_fish_state, queue_size=1, tcp_nodelay=True)
-        rospy.Subscriber('ceiling_camera/image', Image, self.__update_room_image, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('ceiling_camera/image', CompressedImage, self.__update_room_image, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('lidar/blocked', Int16MultiArray, self.__update_blocked_directions, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('motor_control/speed', TwistStamped, self.__update_foma_speed, queue_size=1, tcp_nodelay=True)
@@ -724,10 +724,10 @@ class MainWindow(QMainWindow):
         else:
             self.__fish_state = state
 
-    def __update_room_image(self, img_msg: Image):
+    def __update_room_image(self, img_msg: CompressedImage):
         try:
-            self.__room_image = self.bridge.imgmsg_to_cv2(img_msg, desired_encoding="rgb8") # was passthrough
-            frame = self.__room_image.copy() # might not be correct
+            self.__room_image = self.bridge.compressed_imgmsg_to_cv2(img_msg, desired_encoding="rgb8")
+            frame = self.__room_image.copy()
             if self.__foma_img_location:
                 center_x = self.__foma_img_location.x
                 center_y = self.__foma_img_location.y

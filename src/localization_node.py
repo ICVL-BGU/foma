@@ -6,7 +6,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['NO_ALBUMENTATIONS_UPDATE'] = '1'
 
 import rospy
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage
 from abstract_node import AbstractNode
 from cv_bridge import CvBridge, CvBridgeError
 from foma.msg import FomaLocation
@@ -28,14 +28,14 @@ class LocalizationNode(AbstractNode):
         with open(mapper_path, 'r') as f:
             self.mapper_params = json.load(f)
         self.img = None
-        self.image_sub = rospy.Subscriber('ceiling_camera/image', Image, self.read_image, queue_size=1, buff_size=2**25, tcp_nodelay=True)
+        self.image_sub = rospy.Subscriber('ceiling_camera/image', CompressedImage, self.read_image, queue_size=1, buff_size=2**21, tcp_nodelay=True)
         self.location_pub = rospy.Publisher('localization/location', FomaLocation, queue_size=10, tcp_nodelay=True)
         self.location = FomaLocation()
         self.bridge = CvBridge()
         
-    def read_image(self, img_msg: Image):
+    def read_image(self, img_msg: CompressedImage):
         try:
-            self.img = self.bridge.imgmsg_to_cv2(img_msg)
+            self.img = self.bridge.compressed_imgmsg_to_cv2(img_msg)
             self.process_image()
         except CvBridgeError as e:
             self.logerr(f"Error converting image: {e}")

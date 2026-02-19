@@ -35,7 +35,7 @@
     <!-- Video Writer 1: Room Video -->
     <node name="video_writer_room" pkg="foma" type="video_writer_node.py" output="screen">
         <param name="topic" value="ceiling_camera/image" />
-        <param name="msg_type" value="Image" />
+        <param name="msg_type" value="CompressedImage" />
         <param name="filename" value="room_video.mp4" />
         <param name="fourcc" value="X264" />
         <param name="fps" value="25" />
