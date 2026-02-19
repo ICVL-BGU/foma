@@ -27,8 +27,11 @@ class LocalizationNode(AbstractNode):
         self.detection_model = YOLO(detection_model_path)
         with open(mapper_path, 'r') as f:
             self.mapper_params = json.load(f)
+        # Scale pixel-space calibration parameters to match the published (resized) image resolution
+        for key in ('cx', 'cy', 'f'):
+            if key in self.mapper_params:
+                self.mapper_params[key] *= ROOM_CAMERA_PUBLISH_SCALE
         self.img = None
-        self._log_counter = 0
         self.image_sub = rospy.Subscriber('ceiling_camera/image', CompressedImage, self.read_image, queue_size=1, buff_size=2**21, tcp_nodelay=True)
         self.location_pub = rospy.Publisher('localization/location', FomaLocation, queue_size=10, tcp_nodelay=True)
         self.location = FomaLocation()
@@ -44,9 +47,6 @@ class LocalizationNode(AbstractNode):
     def process_image(self):
         timestamp = rospy.Time.now()
         self.location.header.stamp = timestamp
-        self._log_counter += 1
-        self._do_log = (self._log_counter % 30 == 0)
-        
         result = self.__detect_lidar()
         
         if result is not None:
@@ -71,9 +71,8 @@ class LocalizationNode(AbstractNode):
             # Find the detection with the highest confidence
             max_conf_idx = lidar_conf.argmax()
             conf_val = float(lidar_conf[max_conf_idx])
-            all_confs = [round(float(c), 3) for c in lidar_conf]
-            if self._do_log:
-                self.loginfo(f"LIDAR detections: {len(all_confs)}, confs: {all_confs}, best: {conf_val:.3f}")
+            if conf_val < 0.3:
+                return None
             # Index may return tensor/np array on CUDA; normalize to host Python floats
             box = lidar_boxes[max_conf_idx]
 
