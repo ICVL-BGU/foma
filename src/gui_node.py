@@ -140,6 +140,7 @@ class MainWindow(QMainWindow):
         self.__BL_layout.addWidget(self.__feed_button, 0, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__feed_loading_button, 1, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__manual_control_button, 0, 2, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__go_home_button, 1, 2, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__show_fish_direction_cb, 0, 3, 1, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__show_foma_direction_cb, 1, 3, 1, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__room_display_group, 0, 4, 2, 1, alignment=Qt.AlignCenter)
@@ -240,6 +241,13 @@ class MainWindow(QMainWindow):
         font = self.__manual_control_label.font()
         self.__manual_control_label.setAlignment(Qt.AlignHCenter)
 
+        # Go Home button init (main GUI)
+        self.__go_home_button = QPushButton()
+        self.__go_home_button.setText("Go Home")
+        self.__go_home_button.setMaximumHeight(50)
+        self.__go_home_button.clicked.connect(self.__start_go_home)
+        self.__go_home_button.setDisabled(True)
+
         self.__feed_loading_button = QPushButton()
         self.__feed_loading_button.setText("Load Feeder")
         self.__feed_loading_button.setMaximumHeight(50)
@@ -316,6 +324,7 @@ class MainWindow(QMainWindow):
         self.__times_fed_value_label = QLineEdit("N/A")
         self.__times_fed_value_label.setAlignment(Qt.AlignHCenter)
         self.__times_fed_value_label.setValidator(QDoubleValidator(0, 9999, 0))
+        self.__times_fed_value_label.editingFinished.connect(self.__on_times_fed_edited)
 
         # FOMA image position label init
         self.__foma_img_position_text_label = QLabel("FOMA Image Position(X,Y):")
@@ -470,7 +479,6 @@ class MainWindow(QMainWindow):
         speed_control_label = QLabel("Speed Control")
         speed_control_textbox = QLineEdit()
         speed_control_button = QPushButton("Set")
-        go_home_button = QPushButton("Go Home")
         
         speed_control_textbox.setPlaceholderText("1.0")
         speed_control_textbox.setValidator(QDoubleValidator(0.0, 1.0, 2))
@@ -483,21 +491,6 @@ class MainWindow(QMainWindow):
             except ValueError:
                 self.logwarn("Invalid speed value")
 
-        def start_go_home():
-            self.__motor_control_twist.publish(Twist())
-            if self.__velocity_timer is not None:
-                self.__velocity_timer.stop()
-            if self.__go_home_enable is None:
-                self.logwarn("GoHome service not available")
-                return
-            try:
-                self.__go_home_enable(True)
-            except Exception as e:
-                self.logwarn(f"Failed to start GoHome: {e}")
-                return
-            if self.__manual_control_window is not None:
-                self.__manual_control_window.close()
-            
         control_layout.addWidget(forward_left_button, 0, 0)
         control_layout.addWidget(forward_button, 0, 1, 1, 2)
         control_layout.addWidget(forward_right_button, 0, 3)
@@ -513,7 +506,6 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(speed_control_label, 4, 0, 1, 2)
         control_layout.addWidget(speed_control_textbox, 4, 2)
         control_layout.addWidget(speed_control_button, 4, 3)
-        control_layout.addWidget(go_home_button, 5, 1, 1, 2)
 
         forward_button.pressed.connect(lambda: self.__update_velocity(True,0))
         forward_button.released.connect(lambda: self.__update_velocity(False))
@@ -536,7 +528,6 @@ class MainWindow(QMainWindow):
         ccw_button.pressed.connect(lambda: self.__update_velocity(True, -2))
         ccw_button.released.connect(lambda: self.__update_velocity(False))
         speed_control_button.clicked.connect(set_speed)
-        go_home_button.clicked.connect(start_go_home)
 
         bypass_lidar_checkbox.stateChanged.connect(lambda state: self.__bypass_lidar(state == Qt.Checked))
         
@@ -546,6 +537,21 @@ class MainWindow(QMainWindow):
 
         self.__manual_control_window.setLayout(control_layout)
         self.__manual_control_window.show()
+
+    def __start_go_home(self):
+        """Start go home — usable from both the main GUI and (formerly) the manual control window."""
+        if self.__manual_control_window is not None:
+            self.__motor_control_twist.publish(Twist())
+            if hasattr(self, '_MainWindow__velocity_timer') and self.__velocity_timer is not None:
+                self.__velocity_timer.stop()
+            self.__manual_control_window.close()
+        if self.__go_home_enable is None:
+            self.logwarn("GoHome service not available")
+            return
+        try:
+            self.__go_home_enable(True)
+        except Exception as e:
+            self.logwarn(f"Failed to start GoHome: {e}")
 
     def __init_feeding_load_window(self):
         rospy.wait_for_service('fish_feeder/feed')
@@ -655,6 +661,10 @@ class MainWindow(QMainWindow):
         self.__event_log_writer.writerow(["timestamp", "event_type", "details"])
         self.__event_log_file.flush()
         rospy.loginfo(f"Created event log: {event_log_path}")
+
+    def __on_times_fed_edited(self):
+        """Log when the times fed counter is manually edited."""
+        self.__log_event("times_fed_edited", f"Times fed manually set to {self.__times_fed_value_label.text()}")
 
     def __log_event(self, event_type, details=""):
         """Log an event to the trial events CSV"""
@@ -1019,9 +1029,11 @@ class MainWindow(QMainWindow):
         if self.__go_home_enable is None and go_home_proxy is not None:
             self.loginfo("GoHome enable service available")
             self.__go_home_enable = go_home_proxy
+            self.__go_home_button.setDisabled(False)
         elif self.__go_home_enable is not None and go_home_proxy is None:
             self.logerr("GoHome enable service unavailable")
             self.__go_home_enable = None
+            self.__go_home_button.setDisabled(True)
 
         # [ADDED] Store motor_control/set_speed service proxy when available.
         motor_set_speed_proxy = status.get('__motor_set_speed')
@@ -1148,14 +1160,31 @@ class MainWindow(QMainWindow):
             self.__current_trial = trial_count
             self.__subject_id_value_label.setText(subject_id)
             self.__trial_num_value_label.setText(str(trial_count) if trial_count > 0 else "N/A")
-            self.__times_fed_value_label.setText("0")
+
+            # Count total feedings across all existing trial event logs
+            total_fed = 0
+            for entry in os.listdir(session_path):
+                trial_events_path = os.path.join(session_path, entry, "trial_events.csv")
+                if os.path.isfile(trial_events_path):
+                    try:
+                        with open(trial_events_path, 'r') as f:
+                            reader = csv.reader(f)
+                            next(reader, None)  # skip header
+                            for row in reader:
+                                if len(row) >= 2 and row[1] == 'feeding':
+                                    total_fed += 1
+                    except Exception as e:
+                        self.logwarn(f"Could not read {trial_events_path}: {e}")
+            self.__times_fed_value_label.setText(str(total_fed))
+
             folder_name = os.path.basename(session_path)
             QMessageBox.information(
                 self,
                 "Session Loaded",
                 f"Loaded session: {folder_name}\n"
                 f"Subject ID: {subject_id}\n"
-                f"Trials completed: {trial_count}\n\n"
+                f"Trials completed: {trial_count}\n"
+                f"Total feedings: {total_fed}\n\n"
                 f"Press Start → New Trial to begin the next trial."
             )
             return
