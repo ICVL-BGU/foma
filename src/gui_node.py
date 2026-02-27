@@ -566,6 +566,8 @@ class MainWindow(QMainWindow):
                     self.__velocity_timer.stop()
                 self.__manual_control_window.close()
             try:
+                if self.__motor_set_speed is not None:
+                    self.__motor_set_speed(1.0)
                 self.__go_home_enable(True)
             except Exception as e:
                 self.logwarn(f"Failed to start GoHome: {e}")
@@ -1300,7 +1302,7 @@ class MainWindow(QMainWindow):
         self.__lights_slider.setValue(0)
 
         self.__motor_set_mode("idle")
-        self.__motor_set_speed(0.0)
+        self.__motor_set_speed(1.0)
         
         # Log stop event
         self.__log_event("trial_stop", f"Trial {self.__current_trial} stopped")
@@ -1317,9 +1319,9 @@ class MainWindow(QMainWindow):
 
         if self.__go_home_enable is not None:
             try:
-                self.__go_home_enable(False)
+                self.__go_home_enable(True)
             except Exception as e:
-                self.logwarn(f"Failed disabling go_home: {e}")
+                self.logwarn(f"Failed enabling go_home: {e}")
 
     def __on_close_click(self, event):
         # Log stop event if trial is ongoing
