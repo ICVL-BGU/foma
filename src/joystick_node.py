@@ -13,7 +13,7 @@ class JoystickNode(AbstractNode):
         super().__init__('joystick', 'Joystick')
 
         # mode handling 
-        self.mode = "disabled"
+        self.mode = "joystick"
         rospy.Subscriber("control/mode", String, self.set_mode)
         self.mode_pub = rospy.Publisher("control/mode", String, queue_size=1)
 
@@ -123,5 +123,6 @@ class JoystickNode(AbstractNode):
         rospy.spin()
 
 if __name__ == "__main__":
+    rospy.init_node('joystick_node')
     node = JoystickNode()
     node.run()
