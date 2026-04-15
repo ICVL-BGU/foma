@@ -3,7 +3,7 @@ import rospy
 import numpy as np
 from abstract_node import AbstractNode
 from sensor_msgs.msg import Joy
-from std_msgs.msg import String, Float32
+from std_msgs.msg import String, Float32, Bool
 from geometry_msgs.msg import Vector3, Twist
 from std_srvs.srv import Trigger, TriggerRequest, SetBool, SetBoolRequest
 from foma.srv import Float
@@ -13,7 +13,7 @@ class JoystickNode(AbstractNode):
         super().__init__('joystick', 'Joystick')
 
         # mode handling 
-        self.mode = "joystick"
+        self.mode = "manual"  # default mode
         rospy.Subscriber("control/mode", String, self.set_mode)
         self.mode_pub = rospy.Publisher("control/mode", String, queue_size=1)
 
@@ -34,6 +34,14 @@ class JoystickNode(AbstractNode):
         self.speed_srv = rospy.ServiceProxy("motor_control/set_speed", Float)
         self.current_speed = 1.0
 
+        #goHome toggle (optional)
+        self.go_home_srv = rospy.ServiceProxy("go_home/enable", SetBool)
+        rospy.Subscriber("go_home/enabled", Bool, self.on_go_home_state)
+
+        self.go_home_active = False
+        self.lidar_bypassed = False
+        self.current_speed = 1.0
+
         # joystick subscriber
         rospy.Subscriber("/joy", Joy, self.on_joy, queue_size=1, tcp_nodelay=True)
 
@@ -44,21 +52,25 @@ class JoystickNode(AbstractNode):
         self.mode = msg.data
         rospy.loginfo(f"[joystick_node] Control mode set to: {self.mode}")
 
+    def on_go_home_state(self, msg: Bool):
+        self.go_home_active = msg.data
+        rospy.loginfo(f"[joystick_node] Go Home active: {self.go_home_active}")
+
+    def stop_motion(self):
+        self.pub_vector.publish(Vector3(0.0, 0.0, 0.0))
+        self.pub_rotate.publish(Float32(0.0))
+        self.pub_twist.publish(Twist())
+
 
     def on_joy(self, msg: Joy):
         # store buttons for rising edge checks
         if not self.prev_buttons:
             self.prev_buttons = [0] * len(msg.buttons)
 
-        # only move the robot when in joystick mode
-        if self.mode != "joystick":
-            self.prev_buttons = msg.buttons[:]  # still update state
-            return
-
         # AXES (check with `rostopic echo /joy` if needed)
-        lx = msg.axes[0]  # left stick left/right
-        ly = msg.axes[1]  # left stick up/down
-        rx = msg.axes[3]  # right stick left/right for rotation
+        lx = msg.axes[1]  # left stick left/right
+        ly = -msg.axes[0]  # left stick up/down
+        rx = -msg.axes[3]  # right stick left/right for rotation
 
         # BUTTONS (Xbox layout)
         BTN_A = msg.buttons[0]
@@ -86,11 +98,30 @@ class JoystickNode(AbstractNode):
             except rospy.ServiceException as e:
                 rospy.logerr(f"[joystick_node] LIDAR bypass service call failed: {e}")
 
-        #  X/Y: change global mode if you want 
+        #  X: change global mode if you want 
         if BTN_X and not self.prev_buttons[2]:
-            self.mode_pub.publish("manual")
+            try:
+                self.stop_motion()  # stop before switching modes
+                if self.go_home_active:
+                    self.go_home_srv(False)  # disable go home if active
+                if self.mode != "joystick":
+                    self.mode_pub.publish(String("joystick"))
+                    rospy.loginfo("[joystick_node] Switched to joystick mode")
+                else:
+                    self.mode_pub.publish(String("manual"))
+                    rospy.loginfo("[joystick_node] Switched to manual mode")
+            except rospy.ServiceException as e:
+                rospy.logerr(f"[joystick_node] Mode switch failed: {e}")
+                
+        #  Y: toggle go home mode 
         if BTN_Y and not self.prev_buttons[3]:
-            self.mode_pub.publish("fish_feeder")
+            try:
+                self.stop_motion()  # stop before switching modes
+                self.mode_pub.publish(String("joystick"))  # ensure we’re in joystick mode
+                self.go_home_srv(not self.go_home_active)
+                rospy.loginfo(f"[joystick_node] Go Home toggled to: {not self.go_home_active}")
+            except rospy.ServiceException as e:
+                rospy.logerr(f"[joystick_node] Go Home service call failed: {e}")
 
         #  LB/RB: simple speed control example 
         if BTN_LB and not self.prev_buttons[4]:
@@ -103,6 +134,10 @@ class JoystickNode(AbstractNode):
             rospy.loginfo(f"[joystick_node] Speed up: {self.current_speed:.2f}")
 
         #  movement: rotate or translate 
+        # only move the robot when in joystick mode
+        if self.mode != "joystick":
+            self.prev_buttons = msg.buttons[:]  # still update state
+            return
 
         # rotation wins if strong enough
         if abs(rx) > 0.2:
