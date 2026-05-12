@@ -1301,7 +1301,7 @@ class MainWindow(QMainWindow):
         self.__log_event("light_control", f"Brightness set to 0/255")
         self.__lights_slider.setValue(0)
 
-        self.__motor_set_mode("idle")
+        #self.__motor_set_mode("idle")
         self.__motor_set_speed(1.0)
         
         # Log stop event
@@ -1319,9 +1319,9 @@ class MainWindow(QMainWindow):
 
         if self.__go_home_enable is not None:
             try:
-                self.__go_home_enable(True)
+                self.__go_home_enable(False)
             except Exception as e:
-                self.logwarn(f"Failed enabling go_home: {e}")
+                self.logwarn(f"Failed disabling go_home: {e}")
 
     def __on_close_click(self, event):
         # Log stop event if trial is ongoing
