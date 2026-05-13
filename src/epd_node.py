@@ -22,7 +22,7 @@ class EPDNode(AbstractNode):
         for i in range(1,256):
             ans = touch(self.base_addr.format(i))
             if ans:
-                self.epds.append[i]
+                self.epds.append(i)
 
     def display(self, data:EPDImageRequest):
         self.scan()

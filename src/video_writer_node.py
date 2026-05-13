@@ -40,8 +40,8 @@ class VideoWriterNode(AbstractNode):
         self.__write = False
         self.__init_attributes()
 
-        # Subscribe to the configured topic
-        self.__setup_subscriber()
+        if not self.__topic or not self.__msg_type:
+            self.logerr("Missing topic or msg_type parameter")
 
         rospy.Service(f'{node_name}/write', Write, self.__set_write)
         
@@ -58,23 +58,18 @@ class VideoWriterNode(AbstractNode):
         self.__frame_queue = None
         self.__writer_thread = None
         self.__writer_running = False
+        self.__subscriber = None
 
-    def __setup_subscriber(self):
-        """Setup subscriber for the configured topic"""
-        if not self.__topic or not self.__msg_type:
-            self.logerr("Missing topic or msg_type parameter")
-            return
-        
-        # Create callback based on message type
-        # Video writer needs large queue to capture ALL frames without dropping
+    def __create_subscriber(self):
+        """Create subscriber for configured topic. Called on start_trial."""
         if self.__msg_type == 'Image':
-            rospy.Subscriber(self.__topic, Image, self.__image_callback, queue_size=500, buff_size=2**28)
-        elif self.__msg_type == 'CompressedImage':
-            rospy.Subscriber(self.__topic, CompressedImage, self.__compressed_image_callback, queue_size=500, buff_size=2**27)
-        elif self.__msg_type == 'FomaLocation':
-            rospy.Subscriber(self.__topic, FomaLocation, self.__foma_location_callback, queue_size=1000)
-        else:
-            self.logerr(f"Unsupported message type for video: {self.__msg_type}")
+            return rospy.Subscriber(self.__topic, Image, self.__image_callback, queue_size=500, buff_size=2**28)
+        if self.__msg_type == 'CompressedImage':
+            return rospy.Subscriber(self.__topic, CompressedImage, self.__compressed_image_callback, queue_size=500, buff_size=2**27)
+        if self.__msg_type == 'FomaLocation':
+            return rospy.Subscriber(self.__topic, FomaLocation, self.__foma_location_callback, queue_size=1000)
+        self.logerr(f"Unsupported message type for video: {self.__msg_type}")
+        return None
     
     def __writer_thread_loop(self):
         """Background thread that writes frames to disk"""
@@ -112,6 +107,10 @@ class VideoWriterNode(AbstractNode):
         self.__writer_thread = threading.Thread(target=self.__writer_thread_loop, daemon=True)
         self.__writer_thread.start()
         self.loginfo("Started writer thread")
+
+        self.__subscriber = self.__create_subscriber()
+        if self.__subscriber is not None:
+            self.loginfo(f"Subscribed to {self.__topic}")
 
     def __stop_trial(self):
         # Stop writer thread first
@@ -211,6 +210,11 @@ class VideoWriterNode(AbstractNode):
         elif write.msg == "stop" and self.__write:
             self.__stop_time = write.stamp
             self.__write = False
+            # Unregister sub first so no new callbacks fire during teardown
+            if self.__subscriber is not None:
+                self.__subscriber.unregister()
+                self.__subscriber = None
+                self.loginfo(f"Unsubscribed from {self.__topic}")
             # Stop trial in separate thread to avoid blocking GUI
             stop_thread = threading.Thread(target=self.__stop_trial, daemon=True)
             stop_thread.start()
@@ -279,6 +283,9 @@ class VideoWriterNode(AbstractNode):
 
     def __on_shutdown(self):
         self.loginfo("Shutting down VideoWriterNode...")
+        if self.__subscriber is not None:
+            self.__subscriber.unregister()
+            self.__subscriber = None
         self.__stop_trial()
 
 if __name__ == "__main__":

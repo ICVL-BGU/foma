@@ -6,6 +6,7 @@ from abstract_node import AbstractNode
 import datetime
 import os
 from geometry_msgs.msg import Twist, Vector3, TwistStamped
+from sensor_msgs.msg import LaserScan
 from foma.msg import FomaLocation
 import math
 from etc.settings import *
@@ -26,8 +27,11 @@ class CSVWriterNode(AbstractNode):
         self.__write = False
         self.__init_attributes()
 
-        # Subscribe to the configured topic
-        self.__setup_subscriber()
+        if self.__msg_type == 'LaserScan' and len(self.__fields) <= 1:
+            self.__fields = ['time'] + [f'r{i}' for i in range(360)]
+
+        if not self.__topic or not self.__msg_type:
+            self.logerr("Missing topic or msg_type parameter")
 
         rospy.Service(f'{node_name}/write', Write, self.__set_write)
         rospy.on_shutdown(self.__on_shutdown)
@@ -36,26 +40,22 @@ class CSVWriterNode(AbstractNode):
         self.__csv_file = None
         self.__csv_writer = None
         self.__folder = ""
+        self.__subscriber = None
 
-    def __setup_subscriber(self):
-        """Setup subscriber for the configured topic"""
-        if not self.__topic or not self.__msg_type:
-            self.logerr("Missing topic or msg_type parameter")
-            return
-        
-        # Create callback based on message type and data type
-        # CSV writer needs large queue to capture ALL data without dropping
+    def __create_subscriber(self):
+        """Create subscriber for configured topic. Called on start_trial."""
         if self.__msg_type == 'FomaLocation':
-            rospy.Subscriber(self.__topic, FomaLocation, self.__foma_location_callback, queue_size=1000)
-        elif self.__msg_type == 'TwistStamped':
+            return rospy.Subscriber(self.__topic, FomaLocation, self.__foma_location_callback, queue_size=1000)
+        if self.__msg_type == 'LaserScan':
+            return rospy.Subscriber(self.__topic, LaserScan, self.__laser_scan_callback, queue_size=1000)
+        if self.__msg_type == 'TwistStamped':
             if self.__data_type == 'fish_state':
-                rospy.Subscriber(self.__topic, TwistStamped, self.__fish_state_callback, queue_size=1000)
-            elif self.__data_type == 'foma_speed':
-                rospy.Subscriber(self.__topic, TwistStamped, self.__foma_speed_callback, queue_size=1000)
-            else:
-                rospy.Subscriber(self.__topic, TwistStamped, self.__generic_twist_callback, queue_size=1000)
-        else:
-            self.logerr(f"Unsupported message type: {self.__msg_type}")
+                return rospy.Subscriber(self.__topic, TwistStamped, self.__fish_state_callback, queue_size=1000)
+            if self.__data_type == 'foma_speed':
+                return rospy.Subscriber(self.__topic, TwistStamped, self.__foma_speed_callback, queue_size=1000)
+            return rospy.Subscriber(self.__topic, TwistStamped, self.__generic_twist_callback, queue_size=1000)
+        self.logerr(f"Unsupported message type: {self.__msg_type}")
+        return None
 
     def __start_trial(self):
         # Use the folder path provided by GUI (subject_id parameter now contains folder path)
@@ -76,10 +76,19 @@ class CSVWriterNode(AbstractNode):
         
         self.loginfo(f"Created CSV writer at {filepath}")
 
+        self.__subscriber = self.__create_subscriber()
+        if self.__subscriber is not None:
+            self.loginfo(f"Subscribed to {self.__topic}")
+
     def __stop_trial(self):
+        if self.__subscriber is not None:
+            self.__subscriber.unregister()
+            self.__subscriber = None
+            self.loginfo(f"Unsubscribed from {self.__topic}")
+
         rospy.sleep(0.1)  # Ensure all data is processed
         self.loginfo("Closing CSV file.")
-        
+
         if self.__csv_file is not None:
             self.__csv_file.close()
             self.__csv_file = None
@@ -152,6 +161,19 @@ class CSVWriterNode(AbstractNode):
             speed_msg.twist.linear.y,
             speed_msg.twist.angular.z
         ]
+        self.__csv_writer.writerow(row)
+        self.__csv_file.flush()
+
+    def __laser_scan_callback(self, scan: LaserScan):
+        """Write LIDAR scan data to CSV"""
+        if not self.__write or self.__csv_writer is None:
+            return
+
+        stamp = scan.header.stamp.to_sec()
+        if stamp == 0.0:
+            stamp = rospy.Time.now().to_sec()
+
+        row = [stamp] + list(scan.ranges)
         self.__csv_writer.writerow(row)
         self.__csv_file.flush()
 

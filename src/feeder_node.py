@@ -14,6 +14,7 @@ class FeederNode(AbstractNode):
         
         rospy.Service('fish_feeder/feed', Trigger, self.feed)
         rospy.Service('fish_feeder/empty', Trigger, self.empty)
+        self.feed_inc_pub = rospy.Publisher('fish_feeder/feed_inc', TriggerResponse, queue_size=10)
 
         self.feeder = PS.DRV8834(FEEDER_STEPS_PER_REVOLUTION,
                                  FEEDER_DIR_PIN,
@@ -24,6 +25,7 @@ class FeederNode(AbstractNode):
 
     def feed(self, data: TriggerRequest):
         self.feeder.rotate(FEEDER_HOLE_OFFSET_ANGLE)
+        self.feed_inc_pub.publish(TriggerResponse(success = True, message = "Fish feeder fed."))
         return TriggerResponse(success = True, message = "Fish feeder fed.")
     
     def empty(self, data: TriggerRequest):

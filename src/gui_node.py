@@ -38,7 +38,7 @@ from PyQt5.QtWidgets import (
 from geometry_msgs.msg import Twist, Vector3, TwistStamped
 from sensor_msgs.msg import Image, CompressedImage
 from std_msgs.msg import Float32, Int16MultiArray, Bool
-from std_srvs.srv import Trigger, SetBool
+from std_srvs.srv import Trigger, TriggerRequest, TriggerResponse, SetBool
 from cv_bridge import CvBridge, CvBridgeError
 from std_srvs.srv import SetBool
 
@@ -193,7 +193,6 @@ class MainWindow(QMainWindow):
 
         # ensure all 4 columns participate in sizing
         for i in range(4):
-            main_layout.setColumnStretch(i, 1)
             main_layout.setColumnStretch(i, 1)
 
         main_layout.setSpacing(10)
@@ -382,6 +381,7 @@ class MainWindow(QMainWindow):
         rospy.Subscriber('lidar/blocked', Int16MultiArray, self.__update_blocked_directions, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('motor_control/speed', TwistStamped, self.__update_foma_speed, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('go_home/enabled', Bool, self.__on_go_home_state, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('fish_feeder/feed_inc', TriggerResponse, self.__update_feeder_status, queue_size=1, tcp_nodelay=True)
         self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=1, tcp_nodelay=True)
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=1, tcp_nodelay=True)
         self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=1, tcp_nodelay=True)
@@ -542,6 +542,17 @@ class MainWindow(QMainWindow):
         self.__manual_control_window.setLayout(control_layout)
         self.__manual_control_window.show()
 
+    def __update_feeder_status(self, msg: TriggerResponse):
+        if msg.success:
+            try:
+                times_fed = int(self.__times_fed_value_label.text()) if self.__times_fed_value_label.text() != "N/A" else 0
+                times_fed += 1
+                self.__times_fed_value_label.setText(str(times_fed))
+            except ValueError:
+                self.logwarn("Received invalid times fed value from feeder status update")
+        else:
+            self.logwarn(f"Feeder reported failure: {msg.message}")
+
     def __on_go_home_state(self, msg: Bool):
         self.go_home_state_signal.emit(bool(msg.data))
 
@@ -604,8 +615,8 @@ class MainWindow(QMainWindow):
                 step_label.setText(f"Step: {step}/5")
             elif step == 4:
                 # Feed 2 times for step 4 (26 total = 32 holes - 6 visible slots)
-                for _ in range(2):
-                    self.__feed()
+                # for _ in range(2):
+                #     self.__feed()
                 step = -1
                 empty_button.setDisabled(False)
                 step_label.setText("Finished Loading")

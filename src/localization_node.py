@@ -51,7 +51,7 @@ class LocalizationNode(AbstractNode):
             x_w, y_w = self._map(x_i * ROOM_CAMERA_NATIVE_SHAPE[1], y_i * ROOM_CAMERA_NATIVE_SHAPE[0])
 
             self.location.image = Point(x_i, y_i, 0)
-            self.location.world = Point(x_w / ROOM_FLOOR_MAP_SHAPE[1], y_w / ROOM_FLOOR_MAP_SHAPE[1], 0)
+            self.location.world = Point(x_w / ROOM_FLOOR_MAP_SHAPE[1], y_w / ROOM_FLOOR_MAP_SHAPE[0], 0)
         
         self.location_pub.publish(self.location)
 
