@@ -25,6 +25,9 @@ class JoystickNode(AbstractNode):
         #  services 
         # fish feeder 
         self.feed_srv  = rospy.ServiceProxy("fish_feeder/feed", Trigger)
+        self.empty_srv = rospy.ServiceProxy("fish_feeder/empty", Trigger)
+
+        self.loading_step = -1
 
         # lidar bypass
         self.lidar_srv = rospy.ServiceProxy("motor_control/bypass_lidar", SetBool)
@@ -79,6 +82,8 @@ class JoystickNode(AbstractNode):
         BTN_Y = msg.buttons[3]
         BTN_LB = msg.buttons[4]
         BTN_RB = msg.buttons[5]
+        BTN_BACK = msg.buttons[6]
+        BTN_START = msg.buttons[7]
 
         #  A: feed fish 
         if BTN_A and not self.prev_buttons[0]:
@@ -133,6 +138,16 @@ class JoystickNode(AbstractNode):
             self.speed_srv(self.current_speed)
             rospy.loginfo(f"[joystick_node] Speed up: {self.current_speed:.2f}")
 
+        if BTN_BACK and not self.prev_buttons[6]:
+            try:
+                self.empty_srv(TriggerRequest())
+                rospy.loginfo("[joystick_node] Emptying feeder...")
+            except rospy.ServiceException as e:
+                rospy.logerr(f"Empty service failed: {e}")
+
+        if BTN_START and not self.prev_buttons[7]:
+            self.handle_loading_sequence()
+
         #  movement: rotate or translate 
         # only move the robot when in joystick mode
         if self.mode != "joystick":
@@ -153,6 +168,28 @@ class JoystickNode(AbstractNode):
             self.pub_vector.publish(vec)
 
         self.prev_buttons = msg.buttons[:]
+
+    def handle_loading_sequence(self):
+    
+        if self.loading_step == -1:
+            # start loading sequence
+            self.loading_step = 0
+            rospy.loginfo("[joystick_node] Started Loading. Press START for next step.")
+        
+        elif self.loading_step in range(4):
+            # perform loading step
+            rospy.loginfo(f"[joystick_node] Loading step {self.loading_step}/5...")
+            for _ in range(6):
+                self.feed_srv(TriggerRequest())
+            self.loading_step += 1
+            
+        elif self.loading_step == 4:
+            # final step: feed a lot to ensure full
+            rospy.loginfo("[joystick_node] Final loading step...")
+            for _ in range(2):
+                self.feed_srv(TriggerRequest())
+            self.loading_step = -1 
+            rospy.loginfo("[joystick_node] Finished Loading!")
  
     def run(self):
         rospy.spin()
