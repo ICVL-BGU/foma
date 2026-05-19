@@ -36,7 +36,7 @@ from PyQt5.QtWidgets import (
 
 # ROS imports
 from geometry_msgs.msg import Twist, Vector3, TwistStamped
-from sensor_msgs.msg import Image, CompressedImage
+from sensor_msgs.msg import Image, CompressedImage, LaserScan
 from std_msgs.msg import Float32, Int16MultiArray, Bool
 from std_srvs.srv import Trigger, TriggerRequest, TriggerResponse, SetBool
 from cv_bridge import CvBridge, CvBridgeError
@@ -90,8 +90,12 @@ class MainWindow(QMainWindow):
         self.__manual_control_window = None
         self.__feeding_load_window = None
 
-        # Rotation control
-        self.__rotate_timer = None
+        # Rotation control (closed-loop via LiDAR scan-matching)
+        self.__lidar_ranges = None
+        self.__rotation_target = None
+        self.__rotation_prev_scan = None
+        self.__rotation_accumulated = 0.0
+        self.__rotation_control_timer = None
 
         # Motor Control
         self.__velocity = Twist()
@@ -390,6 +394,7 @@ class MainWindow(QMainWindow):
         rospy.Subscriber('ceiling_camera/image', CompressedImage, self.__update_room_image, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('localization/location', FomaLocation, self.__update_foma_location, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('lidar/blocked', Int16MultiArray, self.__update_blocked_directions, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('lidar/scans', LaserScan, self.__update_lidar_scan, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('motor_control/speed', TwistStamped, self.__update_foma_speed, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('go_home/enabled', Bool, self.__on_go_home_state, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('fish_feeder/feed_inc', TriggerResponse, self.__update_feeder_status, queue_size=1, tcp_nodelay=True)
@@ -613,34 +618,82 @@ class MainWindow(QMainWindow):
         dialog.setLayout(layout)
         dialog.exec_()
 
+    def __update_lidar_scan(self, msg):
+        """Cache latest LiDAR ranges for closed-loop rotation."""
+        self.__lidar_ranges = np.array(msg.ranges, dtype=np.float64)
+
     def __execute_rotation(self, degrees):
-        """Publish angular twist for the given rotation (open-loop timed)."""
-        # Approximate rotation rate (deg/s) at speed=1.0; tune on real hardware
-        ROTATION_RATE_DPS = 90.0
-        duration_sec = degrees / ROTATION_RATE_DPS
-        duration_ms = int(duration_sec * 1000)
+        """Start closed-loop rotation using LiDAR scan-matching."""
+        if self.__lidar_ranges is None:
+            self.logwarn("No LiDAR data available for rotation")
+            return
 
-        # Disable rotate button during rotation
         self.__rotate_button.setDisabled(True)
-        self.__log_event("rotation", f"Rotating {degrees} degrees")
+        self.__log_event("rotation", f"Rotating {degrees} degrees (CCW, closed-loop)")
 
-        # Publish clockwise angular command
+        # Initialize scan-matching state
+        self.__rotation_target = float(degrees)
+        self.__rotation_accumulated = 0.0
+        self.__rotation_prev_scan = self.__lidar_ranges.copy()
+
+        # CCW rotation: negative angular.z per existing motor convention
         twist = Twist()
-        twist.angular.z = 1.0
+        twist.angular.z = -1.0
         self.__motor_control_twist.publish(twist)
 
-        # Stop after the computed duration
-        self.__rotate_timer = QTimer(self)
-        self.__rotate_timer.setSingleShot(True)
-        self.__rotate_timer.timeout.connect(lambda: self.__finish_rotation(degrees))
-        self.__rotate_timer.start(duration_ms)
+        # Start closed-loop control at 20 Hz
+        self.__rotation_control_timer = QTimer(self)
+        self.__rotation_control_timer.timeout.connect(self.__rotation_control_step)
+        self.__rotation_control_timer.start(50)
 
-    def __finish_rotation(self, degrees):
-        """Stop rotation and re-enable button."""
+    def __rotation_control_step(self):
+        """Measure rotation delta via FFT circular cross-correlation and stop at target."""
+        if self.__lidar_ranges is None or self.__rotation_prev_scan is None:
+            return
+
+        current = self.__lidar_ranges.copy()
+        prev = self.__rotation_prev_scan
+
+        # FFT-based circular cross-correlation to find angular shift
+        f_prev = np.fft.fft(prev)
+        f_curr = np.fft.fft(current)
+        cross_corr = np.fft.ifft(f_curr * np.conj(f_prev)).real
+        shift = int(np.argmax(cross_corr))
+
+        # Normalize shift to [-180, 180]
+        if shift > 180:
+            shift -= 360
+
+        # Reject implausible jumps (noise/bad scan)
+        if abs(shift) > 30:
+            self.__rotation_prev_scan = current
+            return
+
+        # CCW rotation produces positive shift in scan indices
+        self.__rotation_accumulated += abs(shift)
+        self.__rotation_prev_scan = current
+
+        # Check if target reached (within 2 deg tolerance)
+        if self.__rotation_accumulated >= self.__rotation_target - 2.0:
+            self.__finish_rotation()
+
+    def __finish_rotation(self):
+        """Stop rotation, clean up control state, re-enable button."""
         self.__motor_control_twist.publish(Twist())
+
+        if self.__rotation_control_timer is not None:
+            self.__rotation_control_timer.stop()
+            self.__rotation_control_timer = None
+
+        achieved = self.__rotation_accumulated
+        target = self.__rotation_target
+        self.__rotation_target = None
+        self.__rotation_prev_scan = None
+        self.__rotation_accumulated = 0.0
+
         self.__rotate_button.setDisabled(False)
-        self.__log_event("rotation", f"Rotation of {degrees} degrees completed")
-        self.loginfo(f"Rotation of {degrees} degrees completed")
+        self.__log_event("rotation", f"Rotation completed (target={target:.0f}, achieved={achieved:.1f} deg)")
+        self.loginfo(f"Rotation completed (target={target:.0f}, achieved={achieved:.1f} deg)")
 
     def __init_feeding_load_window(self):
         rospy.wait_for_service('fish_feeder/feed')
