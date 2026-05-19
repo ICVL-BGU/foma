@@ -27,6 +27,10 @@ class GoHomeNode(AbstractNode):
         self.fine_tol = 0.08
         self.verify_angle_tol = 4.0
         self.verify_dist_tol = 0.10
+
+        # Debug viz state
+        self._dist_to_center = 0.0
+        self._h_err = 0.0
         
         # Publishers
         self.cmd_pub = rospy.Publisher('motor_control/twist', Twist, queue_size=1, tcp_nodelay=True)
@@ -57,7 +61,7 @@ class GoHomeNode(AbstractNode):
         return SetBoolResponse(success=True, message=f"GoHome status: {self.enabled}")
 
     def get_heading_error(self, ranges):
-        """ Calculate heading error via LLS; also return fitted wall lines for visualization """
+        """ Calculate heading error via PCA wall fitting; return wall lines for visualization """
         wall_lines = []
         try:
             angles_rad = np.deg2rad(np.arange(len(ranges)))
@@ -73,19 +77,20 @@ class GoHomeNode(AbstractNode):
                 if np.sum(mask) < 40: continue 
                 
                 x, y = x_all[idx][mask], y_all[idx][mask]
-                n = len(x)
-                
-                # Least Squares Linear Regression
-                denom = (n * np.sum(x**2) - (np.sum(x))**2)
-                if abs(denom) < 1e-5: continue
-                
-                m = (n * np.sum(x*y) - np.sum(x)*np.sum(y)) / denom
-                b = (np.sum(y) - m * np.sum(x)) / n
-                wall_angle = np.rad2deg(np.arctan(m))
-                
-                # Normalize error: wall surface is perpendicular to scan direction
+
+                # PCA wall direction (robust to any orientation, unlike OLS y=mx+b)
+                pts = np.column_stack([x, y])
+                centroid = pts.mean(axis=0)
+                centered = pts - centroid
+                cov = np.cov(centered.T)
+                eigvals, eigvecs = np.linalg.eigh(cov)
+                # Largest eigenvector = wall direction
+                wall_dir = eigvecs[:, 1]
+                wall_angle = np.rad2deg(np.arctan2(wall_dir[1], wall_dir[0]))
+
+                # Normalize error to [-45, 45]; handles PCA sign ambiguity via mod 90
                 errors.append((wall_angle - base - 45) % 90 - 45)
-                wall_lines.append((m, b, base))
+                wall_lines.append((wall_dir, centroid, base))
             
             heading_err = np.mean(errors) if errors else 0
             return heading_err, wall_lines
@@ -94,7 +99,7 @@ class GoHomeNode(AbstractNode):
             return 0, wall_lines
 
     def _publish_room_viz(self, ranges, wall_lines):
-        """ Render top-down LiDAR scan with LLS wall lines into an Image msg """
+        """ Render top-down LiDAR scan with wall lines; show as pop-up and publish to topic """
         viz_size = 400
         scale = viz_size / 24.0  # ~12m max range mapped to half the image
         center = viz_size // 2
@@ -111,23 +116,64 @@ class GoHomeNode(AbstractNode):
             if 0 <= px < viz_size and 0 <= py < viz_size:
                 cv2.circle(canvas, (px, py), 1, (200, 200, 200), -1)
 
-        # Draw fitted wall lines
-        for m, b, base_angle in wall_lines:
-            # Sample two far-apart x values to draw the line
-            x1, x2 = -12.0, 12.0
-            y1_w, y2_w = m * x1 + b, m * x2 + b
-            p1 = (int(center + x1 * scale), int(center - y1_w * scale))
-            p2 = (int(center + x2 * scale), int(center - y2_w * scale))
-            cv2.line(canvas, p1, p2, (0, 255, 0), 1)
+        # Draw fitted wall lines from PCA direction + centroid
+        for wall_dir, centroid, base_angle in wall_lines:
+            t = 12.0
+            p1 = centroid - t * wall_dir
+            p2 = centroid + t * wall_dir
+            pt1 = (int(center + p1[0] * scale), int(center - p1[1] * scale))
+            pt2 = (int(center + p2[0] * scale), int(center - p2[1] * scale))
+            cv2.line(canvas, pt1, pt2, (0, 255, 0), 1)
 
         # Draw robot at center
         cv2.circle(canvas, (center, center), 4, (0, 0, 255), -1)
 
+        # Debug overlay: state, heading error, distance
+        state_names = {0: "COARSE_CENTER", 1: "ALIGN", 2: "FINE_CENTER", 3: "VERIFY"}
+        info = [
+            f"State: {self.state} ({state_names.get(self.state, '?')})",
+            f"Enabled: {self.enabled}",
+            f"H_err: {self._h_err:.2f} deg",
+            f"Dist: {self._dist_to_center:.3f} m",
+            f"Walls: {len(wall_lines)}/4",
+        ]
+        for i, txt in enumerate(info):
+            cv2.putText(canvas, txt, (5, 15 + i * 18),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1, cv2.LINE_AA)
+
+        # Independent pop-up debug window
+        cv2.imshow("GoHome Debug", canvas)
+        cv2.waitKey(1)
+
+        # Also publish to ROS topic
         try:
             img_msg = self.cv_bridge.cv2_to_imgmsg(canvas, encoding="bgr8")
             self.viz_pub.publish(img_msg)
         except Exception as e:
             rospy.logerr(f"Viz publish error: {e}")
+
+    def _drive_toward_center(self, error_x, error_y, dist_to_center, cmd):
+        """ Vector-based proportional drive with min speed as magnitude, not per-axis """
+        kp_lin = 1.3
+        vx = error_x * kp_lin
+        vy = error_y * kp_lin
+        speed = math.hypot(vx, vy)
+
+        # Apply minimum speed as vector magnitude to overcome friction
+        if speed < self.min_v and dist_to_center > 0.01:
+            factor = self.min_v / max(speed, 1e-6)
+            vx *= factor
+            vy *= factor
+            speed = self.min_v
+
+        # Clamp to max speed while preserving direction
+        if speed > self.max_speed:
+            factor = self.max_speed / speed
+            vx *= factor
+            vy *= factor
+
+        cmd.linear.x = vx
+        cmd.linear.y = vy
 
     def on_lidar(self, msg):
         # Convert ranges to numpy array and scale to meters
@@ -135,6 +181,7 @@ class GoHomeNode(AbstractNode):
 
         # Always compute wall lines and publish visualization
         h_err, wall_lines = self.get_heading_error(ranges)
+        self._h_err = h_err
         self._publish_room_viz(ranges, wall_lines)
 
         if not self.enabled:
@@ -157,6 +204,7 @@ class GoHomeNode(AbstractNode):
         error_x = (f - b) / 2.0
         error_y = (l - r) / 2.0
         dist_to_center = math.hypot(error_x, error_y)
+        self._dist_to_center = dist_to_center
         
         cmd = Twist()
 
@@ -169,19 +217,9 @@ class GoHomeNode(AbstractNode):
                 self.state = 1
                 return
             
-            # Proportional control with minimum speed to ensure movement
-            kp_lin = 1.3
-            vx = error_x * kp_lin
-            vy = error_y * kp_lin
-            
-            # Ensure minimum speed to prevent stalling
-            if abs(vx) < self.min_v: vx = self.min_v if vx > 0 else -self.min_v
-            if abs(vy) < self.min_v: vy = self.min_v if vy > 0 else -self.min_v
-            
-            cmd.linear.x = np.clip(vx, -self.max_speed, self.max_speed)
-            cmd.linear.y = np.clip(vy, -self.max_speed, self.max_speed)
+            self._drive_toward_center(error_x, error_y, dist_to_center, cmd)
 
-        # --- State 1: Wall alignment via LLS heading error ---
+        # --- State 1: Wall alignment via PCA heading error ---
         elif self.state == 1:
             if abs(h_err) < self.angle_tol:
                 rospy.loginfo(f"[GoHome] Alignment complete (Error: {h_err:.2f} deg). Switching to fine center.")
@@ -208,15 +246,7 @@ class GoHomeNode(AbstractNode):
                 self.state = 3
                 return
 
-            kp_lin = 1.3
-            vx = error_x * kp_lin
-            vy = error_y * kp_lin
-
-            if abs(vx) < self.min_v: vx = self.min_v if vx > 0 else -self.min_v
-            if abs(vy) < self.min_v: vy = self.min_v if vy > 0 else -self.min_v
-
-            cmd.linear.x = np.clip(vx, -self.max_speed, self.max_speed)
-            cmd.linear.y = np.clip(vy, -self.max_speed, self.max_speed)
+            self._drive_toward_center(error_x, error_y, dist_to_center, cmd)
 
         # --- State 3: Verify both alignment and centering ---
         elif self.state == 3:
