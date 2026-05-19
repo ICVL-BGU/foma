@@ -16,29 +16,25 @@ class GoHomeNode(AbstractNode):
         super().__init__('go_home', 'Go Home')
 
         # Control parameters
-        self.arrival_tol = 0.20
-        self.angle_tol = 3.0
+        self.arrival_tol = 0.22             
+        self.angle_tol = 2.5                # Parallel alignment target
         self.enabled = False
-        self.max_speed = 0.5
-        self.min_v = 0.25
-        self.min_ang_v = 0.16
-        self.state = 0              # 0 = coarse center, 1 = align, 2 = fine center, 3 = verify
+        self.max_speed = 0.35
+        self.min_v = 0.18                   # Overcomes floor friction smoothly
+        self.min_ang_v = 0.14               # Soft rotation minimum to absolutely eliminate overshoots
+        self.state = 0                      # 0 = coarse center, 1 = align, 2 = fine center, 3 = verify
 
         # Fine-centering and verification tolerances
         self.fine_tol = 0.08
-        self.verify_angle_tol = 4.0
+        self.verify_angle_tol = 3.5
         self.verify_dist_tol = 0.10
 
-        # Wall extraction parameters
-        self.wall_min_range = 0.60
-        self.wall_max_range = 12.0
-        self.wall_inlier_tol = 0.07
+        # RANSAC/LLS parameters
+        self.wall_inlier_tol = 0.05
         self.wall_min_inliers = 35
-        self.wall_ransac_iters = 180
-        self.wall_min_extent = 0.80
-        self.wall_min_centroid_dist = 0.60
+        self.wall_ransac_iters = 120
 
-        # Debug viz state
+        # Debug/Estimation tracking state
         self._dist_to_center = 0.0
         self._h_err = 0.0
 
@@ -65,23 +61,20 @@ class GoHomeNode(AbstractNode):
     def on_enable(self, req):
         self.enabled = bool(req.data)
         self.state = 0
+        self._h_err = 0.0
         self.publish_status()
-
         if not self.enabled:
             self.stop_robot()
-
         return SetBoolResponse(success=True, message=f"GoHome status: {self.enabled}")
 
     def _fit_pca_line(self, pts):
-        """Fit one 2D line using PCA."""
+        """Fit one 2D line using PCA (Linear Least Squares)."""
         centroid = pts.mean(axis=0)
         centered = pts - centroid
         cov = np.cov(centered.T)
-
         eigvals, eigvecs = np.linalg.eigh(cov)
         wall_dir = eigvecs[:, int(np.argmax(eigvals))]
         wall_dir = wall_dir / max(np.linalg.norm(wall_dir), 1e-9)
-
         return wall_dir, centroid
 
     def _line_distances(self, pts, wall_dir, centroid):
@@ -89,29 +82,8 @@ class GoHomeNode(AbstractNode):
         rel = pts - centroid
         return np.abs(rel[:, 0] * wall_dir[1] - rel[:, 1] * wall_dir[0])
 
-    def _line_extent(self, pts, wall_dir):
-        """Projected line length."""
-        proj = pts @ wall_dir
-        return float(np.max(proj) - np.min(proj))
-
-    def _valid_wall_candidate(self, pts, wall_dir, centroid):
-        """Reject robot-body artifacts."""
-        if len(pts) < self.wall_min_inliers:
-            return False
-
-        centroid_dist = float(np.linalg.norm(centroid))
-        extent = self._line_extent(pts, wall_dir)
-
-        if centroid_dist < self.wall_min_centroid_dist:
-            return False
-
-        if extent < self.wall_min_extent:
-            return False
-
-        return True
-
     def _extract_wall_lines(self, pts):
-        """Extract far dominant wall lines only."""
+        """Extract dominant wall lines from the full scan using RANSAC."""
         wall_lines = []
         remaining = pts.copy()
 
@@ -120,13 +92,11 @@ class GoHomeNode(AbstractNode):
                 break
 
             best_idx = None
-            best_score = 0.0
+            best_count = 0
 
             for _ in range(self.wall_ransac_iters):
                 ids = np.random.choice(len(remaining), 2, replace=False)
-                p1 = remaining[ids[0]]
-                p2 = remaining[ids[1]]
-
+                p1, p2 = remaining[ids[0]], remaining[ids[1]]
                 direction = p2 - p1
                 norm = np.linalg.norm(direction)
 
@@ -137,29 +107,16 @@ class GoHomeNode(AbstractNode):
                 dists = self._line_distances(remaining, direction, p1)
                 inliers = np.where(dists < self.wall_inlier_tol)[0]
 
-                if len(inliers) < self.wall_min_inliers:
-                    continue
-
-                inlier_pts = remaining[inliers]
-                wall_dir, centroid = self._fit_pca_line(inlier_pts)
-
-                if not self._valid_wall_candidate(inlier_pts, wall_dir, centroid):
-                    continue
-
-                extent = self._line_extent(inlier_pts, wall_dir)
-                score = len(inliers) * extent
-
-                if score > best_score:
-                    best_score = score
+                if len(inliers) > best_count:
+                    best_count = len(inliers)
                     best_idx = inliers
 
-            if best_idx is None:
+            if best_idx is None or best_count < self.wall_min_inliers:
                 break
 
             inlier_pts = remaining[best_idx]
             wall_dir, centroid = self._fit_pca_line(inlier_pts)
 
-            # Refine with PCA line.
             refined_dists = self._line_distances(remaining, wall_dir, centroid)
             refined_idx = np.where(refined_dists < self.wall_inlier_tol)[0]
 
@@ -168,134 +125,106 @@ class GoHomeNode(AbstractNode):
 
             inlier_pts = remaining[refined_idx]
             wall_dir, centroid = self._fit_pca_line(inlier_pts)
+            
+            # Save line properties along with its inlier strength for structural anchoring
+            wall_lines.append((wall_dir, centroid, len(refined_idx)))
 
-            if self._valid_wall_candidate(inlier_pts, wall_dir, centroid):
-                wall_lines.append((wall_dir, centroid, None))
-
-            # Remove used points either way.
             keep = np.ones(len(remaining), dtype=bool)
             keep[refined_idx] = False
             remaining = remaining[keep]
 
         return wall_lines
 
-    def get_heading_error(self, ranges):
-        """Calculate heading error from far room walls."""
-        wall_lines = []
-
+    def update_room_modeling(self, ranges):
+        """
+        Uses an anchor-based continuous tracking design to calculate heading error.
+        Locks onto the strongest physical wall to prevent the 45 to -45 degree bouncing trap.
+        """
         try:
-            n = len(ranges)
-
-            if n == 0:
-                return 0.0, wall_lines
-
-            angles_rad = np.deg2rad(np.arange(n))
-
-            # Ignore robot body and near artifacts.
-            valid = (
-                (ranges > self.wall_min_range) &
-                (ranges < self.wall_max_range) &
-                np.isfinite(ranges)
-            )
+            angles_rad = np.deg2rad(np.arange(len(ranges)))
+            valid = (ranges > 0.15) & (ranges < 12.0) & np.isfinite(ranges)
 
             if np.sum(valid) < self.wall_min_inliers:
-                return 0.0, wall_lines
+                return self._h_err, []
 
-            x_all = ranges[valid] * np.cos(angles_rad[valid])
-            y_all = ranges[valid] * np.sin(angles_rad[valid])
-            pts = np.column_stack([x_all, y_all])
+            x_rob = ranges[valid] * np.cos(angles_rad[valid])
+            y_rob = ranges[valid] * np.sin(angles_rad[valid])
+            pts_rob = np.column_stack([x_rob, y_rob])
 
-            wall_lines = self._extract_wall_lines(pts)
+            wall_lines = self._extract_wall_lines(pts_rob)
 
             if not wall_lines:
-                return 0.0, wall_lines
+                return self._h_err, []
 
-            errors = []
+            # Find the Anchor Wall: the absolute most solid/longest line detected by RANSAC
+            best_wall = max(wall_lines, key=lambda w: w[2])
+            anchor_dir = best_wall[0]
+            
+            # Continuous absolute angle of our structural anchor line
+            anchor_angle = np.rad2deg(np.arctan2(anchor_dir[1], anchor_dir[0])) % 360.0
 
-            for wall_dir, centroid, base in wall_lines:
-                wall_angle = np.rad2deg(np.arctan2(wall_dir[1], wall_dir[0]))
+            # Find orientation deviation to the nearest true clean global cardinal axis (0, 90, 180, 270)
+            # This logic avoids the discontinuous modulo 'jump zone' entirely!
+            cardinals = np.array([0.0, 90.0, 180.0, 270.0, 360.0])
+            diffs = anchor_angle - cardinals
+            closest_cardinal_idx = np.argmin(np.abs(diffs))
+            heading_err = float(diffs[closest_cardinal_idx])
 
-                # Error to nearest 90-degree room axis.
-                err = (wall_angle + 45.0) % 90.0 - 45.0
+            # Clamp minor edge cases where it could still try to sit exactly on 45
+            if abs(abs(heading_err) - 45.0) < 1.5:
+                heading_err = 45.0  # Asserts definitive rotation direction to break symmetry instantly
 
-                errors.append(err)
-
-            if not errors:
-                return 0.0, wall_lines
-
-            heading_err = float(np.median(errors))
             return heading_err, wall_lines
 
         except Exception as e:
-            rospy.logerr(f"LLS Error: {e}")
-            return 0.0, wall_lines
+            rospy.logerr(f"Modeling error: {e}")
+            return self._h_err, []
 
-    def _publish_room_viz(self, ranges, wall_lines):
-        """Render top-down LiDAR scan with fitted walls."""
+    def _publish_room_viz(self, ranges, heading_error, wall_lines):
+        """Renders the top-down environment ensuring walls lock to the room, not the robot."""
         viz_size = 400
         scale = viz_size / 24.0
         center = viz_size // 2
         canvas = np.zeros((viz_size, viz_size, 3), dtype=np.uint8)
 
+        # Draw LiDAR points
         angles_rad = np.deg2rad(np.arange(len(ranges)))
         xs = ranges * np.cos(angles_rad)
         ys = ranges * np.sin(angles_rad)
+        valid = (ranges > 0.15) & (ranges < 12.0) & np.isfinite(ranges)
 
-        valid = (
-            (ranges > 0.15) &
-            (ranges < self.wall_max_range) &
-            np.isfinite(ranges)
-        )
-
-        # Draw LiDAR points.
         for i in np.where(valid)[0]:
             px = int(center + xs[i] * scale)
             py = int(center - ys[i] * scale)
-
             if 0 <= px < viz_size and 0 <= py < viz_size:
-                cv2.circle(canvas, (px, py), 1, (200, 200, 200), -1)
+                canvas[py, px] = (130, 130, 130)
 
-        # Draw accepted wall lines.
-        for wall_dir, centroid, base_angle in wall_lines:
+        # Draw fitted wall lines 
+        for wall_dir, centroid, _ in wall_lines:
             t = 12.0
-
             p1 = centroid - t * wall_dir
             p2 = centroid + t * wall_dir
 
             pt1 = (int(center + p1[0] * scale), int(center - p1[1] * scale))
             pt2 = (int(center + p2[0] * scale), int(center - p2[1] * scale))
+            cv2.line(canvas, pt1, pt2, (0, 255, 0), 1, cv2.LINE_AA)
 
-            cv2.line(canvas, pt1, pt2, (0, 255, 0), 1)
-
-        # Draw robot center.
+        # Draw square robot boundary 
+        r_w = int(0.35 * scale)
+        cv2.rectangle(canvas, (center - r_w, center - r_w), (center + r_w, center + r_w), (255, 255, 255), 1)
         cv2.circle(canvas, (center, center), 4, (0, 0, 255), -1)
 
-        state_names = {
-            0: "COARSE_CENTER",
-            1: "ALIGN",
-            2: "FINE_CENTER",
-            3: "VERIFY",
-        }
-
+        state_names = {0: "COARSE_CENTER", 1: "ALIGN", 2: "FINE_CENTER", 3: "VERIFY"}
         info = [
             f"State: {self.state} ({state_names.get(self.state, '?')})",
             f"Enabled: {self.enabled}",
-            f"H_err: {self._h_err:.2f} deg",
+            f"H_err: {heading_error:.2f} deg",
             f"Dist: {self._dist_to_center:.3f} m",
-            f"Walls: {len(wall_lines)}/4",
+            f"Walls Modeled: {len(wall_lines)}/4"
         ]
 
         for i, txt in enumerate(info):
-            cv2.putText(
-                canvas,
-                txt,
-                (5, 15 + i * 18),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.45,
-                (0, 255, 255),
-                1,
-                cv2.LINE_AA,
-            )
+            cv2.putText(canvas, txt, (5, 15 + i * 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1, cv2.LINE_AA)
 
         cv2.imshow("GoHome Debug", canvas)
         cv2.waitKey(1)
@@ -306,57 +235,41 @@ class GoHomeNode(AbstractNode):
         except Exception as e:
             rospy.logerr(f"Viz publish error: {e}")
 
-    def _apply_axis_deadband(self, v):
-        """Compensate motor deadband per axis."""
-        if abs(v) < 1e-6:
-            return 0.0
-
-        if abs(v) < self.min_v:
-            return math.copysign(self.min_v, v)
-
-        return v
-
     def _drive_toward_center(self, error_x, error_y, dist_to_center, cmd):
-        """Proportional drive with strict per-axis minimum."""
+        """Vector proportional drive using safe linear velocity limits."""
+        if dist_to_center < 1e-4:
+            cmd.linear.x = 0.0
+            cmd.linear.y = 0.0
+            return
+
         kp_lin = 1.3
+        target_speed = dist_to_center * kp_lin
+        
+        if target_speed < self.min_v:
+            target_speed = self.min_v
 
-        vx = error_x * kp_lin
-        vy = error_y * kp_lin
+        target_speed = min(target_speed, self.max_speed)
 
-        vx = self._apply_axis_deadband(vx)
-        vy = self._apply_axis_deadband(vy)
-
-        speed = math.hypot(vx, vy)
-
-        if speed > self.max_speed:
-            factor = self.max_speed / speed
-            vx *= factor
-            vy *= factor
-
-        cmd.linear.x = vx
-        cmd.linear.y = vy
+        cmd.linear.x = (error_x / dist_to_center) * target_speed
+        cmd.linear.y = (error_y / dist_to_center) * target_speed
 
     def on_lidar(self, msg):
-        # Convert ranges to meters.
+        # Convert ranges to meters
         ranges = np.array(msg.ranges, dtype=np.float32) / 1000.0
 
-        h_err, wall_lines = self.get_heading_error(ranges)
+        # Real-time room modeling via continuous Anchor-RANSAC
+        h_err, wall_lines = self.update_room_modeling(ranges)
         self._h_err = h_err
-        self._publish_room_viz(ranges, wall_lines)
+        self._publish_room_viz(ranges, h_err, wall_lines)
 
         if not self.enabled:
             return
 
         def get_dist(angle_deg):
-            # Sample a small sector around target angle.
             idx = [(int(angle_deg) + i) % len(ranges) for i in range(-10, 10)]
             vals = ranges[idx]
             valid = vals[(vals > 0.1) & (vals < 15.0) & np.isfinite(vals)]
-
-            if len(valid) == 0:
-                return None
-
-            return float(np.median(valid))
+            return np.median(valid) if len(valid) > 0 else None
 
         f = get_dist(270)
         b = get_dist(90)
@@ -366,12 +279,8 @@ class GoHomeNode(AbstractNode):
         if None in [f, b, l, r]:
             return
 
-        # Positive error_x means front-back imbalance.
         error_x = (f - b) / 2.0
-
-        # Positive error_y means left-right imbalance.
         error_y = (l - r) / 2.0
-
         dist_to_center = math.hypot(error_x, error_y)
         self._dist_to_center = dist_to_center
 
@@ -382,7 +291,7 @@ class GoHomeNode(AbstractNode):
             if dist_to_center < self.arrival_tol:
                 rospy.loginfo("[GoHome] Coarse center reached. Switching to align mode.")
                 self.stop_robot()
-                rospy.sleep(0.6)
+                rospy.sleep(0.5)
                 self.state = 1
                 return
 
@@ -390,29 +299,41 @@ class GoHomeNode(AbstractNode):
 
         # --- State 1: Wall alignment ---
         elif self.state == 1:
+            # Active breakout for the 45-degree deadlock
+            if abs(h_err) == 45.0:
+                rospy.logwarn("[GoHome] Absolute symmetric lock broken! Enforcing spin breakout.")
+                cmd.angular.z = self.min_ang_v * 1.5
+                self.cmd_pub.publish(cmd)
+                return
+
             if abs(h_err) < self.angle_tol:
-                rospy.loginfo(
-                    f"[GoHome] Alignment complete (Error: {h_err:.2f} deg). Switching to fine center."
-                )
+                rospy.loginfo(f"[GoHome] Alignment complete (Error: {h_err:.2f} deg). Switching to fine center.")
                 self.stop_robot()
-                rospy.sleep(0.6)
+                rospy.sleep(0.5)
                 self.state = 2
                 return
 
-            kp_ang = 0.06
+            # Proportional controller with a lowered gain to ensure smooth approaching without oscillation
+            kp_ang = 0.045
             v_ang = h_err * kp_ang
 
             if abs(v_ang) < self.min_ang_v:
                 v_ang = self.min_ang_v if h_err > 0 else -self.min_ang_v
 
-            cmd.angular.z = float(np.clip(v_ang, -0.5, 0.5))
+            cmd.angular.z = np.clip(v_ang, -0.25, 0.25)
 
         # --- State 2: Fine centering ---
         elif self.state == 2:
+            if abs(h_err) > (self.angle_tol + 5.0):
+                rospy.loginfo(f"[GoHome] Structural drift detected ({h_err:.2f} deg). Resetting to align state.")
+                self.stop_robot()
+                self.state = 1
+                return
+
             if dist_to_center < self.fine_tol:
                 rospy.loginfo("[GoHome] Fine center reached. Switching to verify.")
                 self.stop_robot()
-                rospy.sleep(0.6)
+                rospy.sleep(0.5)
                 self.state = 3
                 return
 
@@ -424,21 +345,14 @@ class GoHomeNode(AbstractNode):
             center_ok = dist_to_center < self.verify_dist_tol
 
             if heading_ok and center_ok:
-                rospy.loginfo(
-                    f"[GoHome] Verified (h_err={h_err:.2f} deg, dist={dist_to_center:.3f} m)"
-                )
+                rospy.loginfo(f"[GoHome] Success! Pose completely modeled and verified (h_err={h_err:.2f} deg)")
                 self._finish()
                 return
 
             if not heading_ok:
-                rospy.loginfo(f"[GoHome] Heading drifted ({h_err:.2f} deg). Re-aligning.")
                 self.state = 1
                 return
-
             if not center_ok:
-                rospy.loginfo(
-                    f"[GoHome] Position drifted ({dist_to_center:.3f} m). Re-centering."
-                )
                 self.state = 2
                 return
 
@@ -457,7 +371,6 @@ class GoHomeNode(AbstractNode):
 
 if __name__ == "__main__":
     rospy.init_node("go_home_node")
-
     try:
         node = GoHomeNode()
         rospy.spin()
