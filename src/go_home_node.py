@@ -2,11 +2,13 @@
 import rospy
 import math
 import numpy as np
+import cv2
 from abstract_node import AbstractNode
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import LaserScan, Image
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Bool
 from std_srvs.srv import SetBool, SetBoolResponse
+from cv_bridge import CvBridge
 
 class GoHomeNode(AbstractNode):
     def __init__(self): 
@@ -19,11 +21,18 @@ class GoHomeNode(AbstractNode):
         self.max_speed = 0.5         
         self.min_v = 0.18            
         self.min_ang_v = 0.16        
-        self.state = 0              # 0 = moving to center, 1 = aligning to walls
+        self.state = 0              # 0 = coarse center, 1 = align, 2 = fine center, 3 = verify
+
+        # Fine-centering and verification tolerances
+        self.fine_tol = 0.08
+        self.verify_angle_tol = 4.0
+        self.verify_dist_tol = 0.10
         
         # Publishers
         self.cmd_pub = rospy.Publisher('motor_control/twist', Twist, queue_size=1, tcp_nodelay=True)
         self.pub_enabled = rospy.Publisher("go_home/enabled", Bool, queue_size=1, latch=True)
+        self.viz_pub = rospy.Publisher('go_home/room_viz', Image, queue_size=1)
+        self.cv_bridge = CvBridge()
         
         # Subscribers
         rospy.Subscriber("lidar/scans", LaserScan, self.on_lidar, queue_size=1, tcp_nodelay=True)
@@ -48,14 +57,15 @@ class GoHomeNode(AbstractNode):
         return SetBoolResponse(success=True, message=f"GoHome status: {self.enabled}")
 
     def get_heading_error(self, ranges):
-        """ Calculate heading error based on LLS with broad sampling for stability """
+        """ Calculate heading error via LLS; also return fitted wall lines for visualization """
+        wall_lines = []
         try:
             angles_rad = np.deg2rad(np.arange(len(ranges)))
             x_all = ranges * np.cos(angles_rad)
             y_all = ranges * np.sin(angles_rad)
             
             errors = []
-            # Sample around 4 main directions (0, 90, 180, 270) with a ±25 degree window to get stable wall angles
+            # Sample around 4 main directions with ±25 deg window for stable wall angles
             for base in [0, 90, 180, 270]:
                 idx = np.arange(base - 25, base + 25) % len(ranges)
                 mask = (ranges[idx] > 0.15) & (ranges[idx] < 12.0)
@@ -70,15 +80,54 @@ class GoHomeNode(AbstractNode):
                 if abs(denom) < 1e-5: continue
                 
                 m = (n * np.sum(x*y) - np.sum(x)*np.sum(y)) / denom
+                b = (np.sum(y) - m * np.sum(x)) / n
                 wall_angle = np.rad2deg(np.arctan(m))
                 
                 # Normalize error to [-45, 45] range
                 errors.append((wall_angle - base + 45) % 90 - 45)
+                wall_lines.append((m, b, base))
             
-            return np.mean(errors) if errors else 0
+            heading_err = np.mean(errors) if errors else 0
+            return heading_err, wall_lines
         except Exception as e:
             rospy.logerr(f"LLS Error: {e}")
-            return 0
+            return 0, wall_lines
+
+    def _publish_room_viz(self, ranges, wall_lines):
+        """ Render top-down LiDAR scan with LLS wall lines into an Image msg """
+        viz_size = 400
+        scale = viz_size / 24.0  # ~12m max range mapped to half the image
+        center = viz_size // 2
+        canvas = np.zeros((viz_size, viz_size, 3), dtype=np.uint8)
+
+        # Draw LiDAR points
+        angles_rad = np.deg2rad(np.arange(len(ranges)))
+        xs = ranges * np.cos(angles_rad)
+        ys = ranges * np.sin(angles_rad)
+        valid = (ranges > 0.15) & (ranges < 12.0)
+        for i in np.where(valid)[0]:
+            px = int(center + xs[i] * scale)
+            py = int(center - ys[i] * scale)
+            if 0 <= px < viz_size and 0 <= py < viz_size:
+                cv2.circle(canvas, (px, py), 1, (200, 200, 200), -1)
+
+        # Draw fitted wall lines
+        for m, b, base_angle in wall_lines:
+            # Sample two far-apart x values to draw the line
+            x1, x2 = -12.0, 12.0
+            y1_w, y2_w = m * x1 + b, m * x2 + b
+            p1 = (int(center + x1 * scale), int(center - y1_w * scale))
+            p2 = (int(center + x2 * scale), int(center - y2_w * scale))
+            cv2.line(canvas, p1, p2, (0, 255, 0), 1)
+
+        # Draw robot at center
+        cv2.circle(canvas, (center, center), 4, (0, 0, 255), -1)
+
+        try:
+            img_msg = self.cv_bridge.cv2_to_imgmsg(canvas, encoding="bgr8")
+            self.viz_pub.publish(img_msg)
+        except Exception as e:
+            rospy.logerr(f"Viz publish error: {e}")
 
     def on_lidar(self, msg):
         if not self.enabled:
@@ -107,38 +156,40 @@ class GoHomeNode(AbstractNode):
         
         cmd = Twist()
 
-        # Move towards center until within arrival tolerance, then switch to alignment mode
+        # --- State 0: Coarse centering ---
         if self.state == 0:
             if dist_to_center < self.arrival_tol:
-                rospy.loginfo("[GoHome] Center reached. Switching to align mode.")
+                rospy.loginfo("[GoHome] Coarse center reached. Switching to align mode.")
                 self.stop_robot()
                 rospy.sleep(0.6) 
                 self.state = 1
                 return
             
-            # Proportional control with minimum speed to ensure movement, but only if we have a significant error (to avoid oscillations near the target)
+            # Proportional control with minimum speed to ensure movement
             kp_lin = 1.3
             vx = error_x * kp_lin
             vy = error_y * kp_lin
             
-            # ensure minimum speed to prevent stalling, but only if we have a significant error (to avoid oscillations near the target)
+            # Ensure minimum speed to prevent stalling
             if abs(vx) < self.min_v: vx = self.min_v if vx > 0 else -self.min_v
             if abs(vy) < self.min_v: vy = self.min_v if vy > 0 else -self.min_v
             
             cmd.linear.x = np.clip(vx, -self.max_speed, self.max_speed)
             cmd.linear.y = np.clip(vy, -self.max_speed, self.max_speed)
 
-        # In alignment mode, we only rotate to minimize heading error. We rely on the fact that if we are close to the center, small rotations will not cause us to drift away significantly. The LLS-based heading error should guide us to align with the walls.
+        # --- State 1: Wall alignment via LLS heading error ---
         elif self.state == 1:
-            h_err = self.get_heading_error(ranges)
+            h_err, wall_lines = self.get_heading_error(ranges)
+            self._publish_room_viz(ranges, wall_lines)
             
-            # If the heading error is small enough, we consider ourselves aligned and stop the robot
             if abs(h_err) < self.angle_tol:
-                rospy.loginfo(f"[GoHome] Alignment complete (Error: {h_err:.2f} deg)")
-                self._finish()
+                rospy.loginfo(f"[GoHome] Alignment complete (Error: {h_err:.2f} deg). Switching to fine center.")
+                self.stop_robot()
+                rospy.sleep(0.6)
+                self.state = 2
                 return
 
-            # Proportional control for angular velocity with a minimum threshold to ensure we actually rotate, but only if we have a significant error (to avoid oscillations near the target)
+            # Proportional angular control with minimum threshold
             kp_ang = 0.06
             v_ang = h_err * kp_ang
             
@@ -146,6 +197,50 @@ class GoHomeNode(AbstractNode):
                 v_ang = self.min_ang_v if h_err > 0 else -self.min_ang_v
                 
             cmd.angular.z = np.clip(v_ang, -0.5, 0.5)
+
+        # --- State 2: Fine centering after alignment ---
+        elif self.state == 2:
+            if dist_to_center < self.fine_tol:
+                rospy.loginfo("[GoHome] Fine center reached. Switching to verify.")
+                self.stop_robot()
+                rospy.sleep(0.6)
+                self.state = 3
+                return
+
+            kp_lin = 1.3
+            vx = error_x * kp_lin
+            vy = error_y * kp_lin
+
+            if abs(vx) < self.min_v: vx = self.min_v if vx > 0 else -self.min_v
+            if abs(vy) < self.min_v: vy = self.min_v if vy > 0 else -self.min_v
+
+            cmd.linear.x = np.clip(vx, -self.max_speed, self.max_speed)
+            cmd.linear.y = np.clip(vy, -self.max_speed, self.max_speed)
+
+        # --- State 3: Verify both alignment and centering ---
+        elif self.state == 3:
+            h_err, wall_lines = self.get_heading_error(ranges)
+            self._publish_room_viz(ranges, wall_lines)
+
+            heading_ok = abs(h_err) < self.verify_angle_tol
+            center_ok = dist_to_center < self.verify_dist_tol
+
+            if heading_ok and center_ok:
+                rospy.loginfo(f"[GoHome] Verified (h_err={h_err:.2f} deg, dist={dist_to_center:.3f} m)")
+                self._finish()
+                return
+
+            # Re-enter alignment if heading drifted
+            if not heading_ok:
+                rospy.loginfo(f"[GoHome] Heading drifted ({h_err:.2f} deg). Re-aligning.")
+                self.state = 1
+                return
+
+            # Re-enter fine centering if position drifted
+            if not center_ok:
+                rospy.loginfo(f"[GoHome] Position drifted ({dist_to_center:.3f} m). Re-centering.")
+                self.state = 2
+                return
 
         self.cmd_pub.publish(cmd)
 

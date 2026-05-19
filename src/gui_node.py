@@ -90,6 +90,9 @@ class MainWindow(QMainWindow):
         self.__manual_control_window = None
         self.__feeding_load_window = None
 
+        # Rotation control
+        self.__rotate_timer = None
+
         # Motor Control
         self.__velocity = Twist()
         self.__foma_speed = Twist()
@@ -144,6 +147,7 @@ class MainWindow(QMainWindow):
         self.__BL_layout.addWidget(self.__feed_loading_button, 1, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__manual_control_button, 0, 2, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__go_home_button, 1, 2, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__rotate_button, 2, 2, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__show_fish_direction_cb, 0, 3, 1, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__show_foma_direction_cb, 1, 3, 1, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__room_display_group, 0, 4, 2, 1, alignment=Qt.AlignCenter)
@@ -255,6 +259,13 @@ class MainWindow(QMainWindow):
         self.__feed_loading_button.setMaximumHeight(50)
         self.__feed_loading_button.clicked.connect(self.__init_feeding_load_window)
         self.__feed_loading_button.setDisabled(True)
+
+        # Rotate button init
+        self.__rotate_button = QPushButton()
+        self.__rotate_button.setText("Rotate")
+        self.__rotate_button.setMaximumHeight(50)
+        self.__rotate_button.clicked.connect(self.__open_rotate_dialog)
+        self.__rotate_button.setDisabled(True)
 
         # Fish image init
         self.__left_image_frame = QLabel()
@@ -582,6 +593,54 @@ class MainWindow(QMainWindow):
                 self.__go_home_enable(True)
             except Exception as e:
                 self.logwarn(f"Failed to start GoHome: {e}")
+
+    def __open_rotate_dialog(self):
+        """Open dialog for selecting rotation angle."""
+        if self.__go_home_active:
+            self.logwarn("Cannot rotate while GoHome is active")
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select Rotation Angle")
+        dialog.setFixedSize(260, 120)
+        dialog.setWindowModality(Qt.ApplicationModal)
+
+        layout = QGridLayout()
+        for i, deg in enumerate([90, 180, 270, 360]):
+            btn = QPushButton(f"{deg}°")
+            btn.clicked.connect(lambda _, d=deg: (self.__execute_rotation(d), dialog.accept()))
+            layout.addWidget(btn, 0, i)
+        dialog.setLayout(layout)
+        dialog.exec_()
+
+    def __execute_rotation(self, degrees):
+        """Publish angular twist for the given rotation (open-loop timed)."""
+        # Approximate rotation rate (deg/s) at speed=1.0; tune on real hardware
+        ROTATION_RATE_DPS = 90.0
+        duration_sec = degrees / ROTATION_RATE_DPS
+        duration_ms = int(duration_sec * 1000)
+
+        # Disable rotate button during rotation
+        self.__rotate_button.setDisabled(True)
+        self.__log_event("rotation", f"Rotating {degrees} degrees")
+
+        # Publish clockwise angular command
+        twist = Twist()
+        twist.angular.z = 1.0
+        self.__motor_control_twist.publish(twist)
+
+        # Stop after the computed duration
+        self.__rotate_timer = QTimer(self)
+        self.__rotate_timer.setSingleShot(True)
+        self.__rotate_timer.timeout.connect(lambda: self.__finish_rotation(degrees))
+        self.__rotate_timer.start(duration_ms)
+
+    def __finish_rotation(self, degrees):
+        """Stop rotation and re-enable button."""
+        self.__motor_control_twist.publish(Twist())
+        self.__rotate_button.setDisabled(False)
+        self.__log_event("rotation", f"Rotation of {degrees} degrees completed")
+        self.loginfo(f"Rotation of {degrees} degrees completed")
 
     def __init_feeding_load_window(self):
         rospy.wait_for_service('fish_feeder/feed')
@@ -1041,10 +1100,12 @@ class MainWindow(QMainWindow):
         if self.__motor_control_system_check is None and motor_check_proxy is not None:
             self.loginfo("Manual control service available - enabling button")
             self.__manual_control_button.setDisabled(False)
+            self.__rotate_button.setDisabled(False)
             self.__motor_control_system_check = motor_check_proxy
         elif self.__motor_control_system_check is not None and motor_check_proxy is None:
             self.logerr("Manual control service unavailable - disabling button")
             self.__manual_control_button.setDisabled(True)
+            self.__rotate_button.setDisabled(True)
             self.__motor_control_system_check = None
 
         # 4) motor_control/bypass_lidar
