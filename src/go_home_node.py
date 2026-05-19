@@ -29,10 +29,14 @@ class GoHomeNode(AbstractNode):
         self.verify_angle_tol = 4.0
         self.verify_dist_tol = 0.10
 
-        # LLS/RANSAC parameters
+        # Wall extraction parameters
+        self.wall_min_range = 0.60
+        self.wall_max_range = 12.0
         self.wall_inlier_tol = 0.07
         self.wall_min_inliers = 35
-        self.wall_ransac_iters = 140
+        self.wall_ransac_iters = 180
+        self.wall_min_extent = 0.80
+        self.wall_min_centroid_dist = 0.60
 
         # Debug viz state
         self._dist_to_center = 0.0
@@ -62,8 +66,10 @@ class GoHomeNode(AbstractNode):
         self.enabled = bool(req.data)
         self.state = 0
         self.publish_status()
+
         if not self.enabled:
             self.stop_robot()
+
         return SetBoolResponse(success=True, message=f"GoHome status: {self.enabled}")
 
     def _fit_pca_line(self, pts):
@@ -71,9 +77,11 @@ class GoHomeNode(AbstractNode):
         centroid = pts.mean(axis=0)
         centered = pts - centroid
         cov = np.cov(centered.T)
+
         eigvals, eigvecs = np.linalg.eigh(cov)
         wall_dir = eigvecs[:, int(np.argmax(eigvals))]
         wall_dir = wall_dir / max(np.linalg.norm(wall_dir), 1e-9)
+
         return wall_dir, centroid
 
     def _line_distances(self, pts, wall_dir, centroid):
@@ -81,8 +89,29 @@ class GoHomeNode(AbstractNode):
         rel = pts - centroid
         return np.abs(rel[:, 0] * wall_dir[1] - rel[:, 1] * wall_dir[0])
 
+    def _line_extent(self, pts, wall_dir):
+        """Projected line length."""
+        proj = pts @ wall_dir
+        return float(np.max(proj) - np.min(proj))
+
+    def _valid_wall_candidate(self, pts, wall_dir, centroid):
+        """Reject robot-body artifacts."""
+        if len(pts) < self.wall_min_inliers:
+            return False
+
+        centroid_dist = float(np.linalg.norm(centroid))
+        extent = self._line_extent(pts, wall_dir)
+
+        if centroid_dist < self.wall_min_centroid_dist:
+            return False
+
+        if extent < self.wall_min_extent:
+            return False
+
+        return True
+
     def _extract_wall_lines(self, pts):
-        """Extract dominant wall lines from the full scan."""
+        """Extract far dominant wall lines only."""
         wall_lines = []
         remaining = pts.copy()
 
@@ -91,11 +120,13 @@ class GoHomeNode(AbstractNode):
                 break
 
             best_idx = None
-            best_count = 0
+            best_score = 0.0
 
             for _ in range(self.wall_ransac_iters):
                 ids = np.random.choice(len(remaining), 2, replace=False)
-                p1, p2 = remaining[ids[0]], remaining[ids[1]]
+                p1 = remaining[ids[0]]
+                p2 = remaining[ids[1]]
+
                 direction = p2 - p1
                 norm = np.linalg.norm(direction)
 
@@ -106,16 +137,29 @@ class GoHomeNode(AbstractNode):
                 dists = self._line_distances(remaining, direction, p1)
                 inliers = np.where(dists < self.wall_inlier_tol)[0]
 
-                if len(inliers) > best_count:
-                    best_count = len(inliers)
+                if len(inliers) < self.wall_min_inliers:
+                    continue
+
+                inlier_pts = remaining[inliers]
+                wall_dir, centroid = self._fit_pca_line(inlier_pts)
+
+                if not self._valid_wall_candidate(inlier_pts, wall_dir, centroid):
+                    continue
+
+                extent = self._line_extent(inlier_pts, wall_dir)
+                score = len(inliers) * extent
+
+                if score > best_score:
+                    best_score = score
                     best_idx = inliers
 
-            if best_idx is None or best_count < self.wall_min_inliers:
+            if best_idx is None:
                 break
 
             inlier_pts = remaining[best_idx]
             wall_dir, centroid = self._fit_pca_line(inlier_pts)
 
+            # Refine with PCA line.
             refined_dists = self._line_distances(remaining, wall_dir, centroid)
             refined_idx = np.where(refined_dists < self.wall_inlier_tol)[0]
 
@@ -124,8 +168,11 @@ class GoHomeNode(AbstractNode):
 
             inlier_pts = remaining[refined_idx]
             wall_dir, centroid = self._fit_pca_line(inlier_pts)
-            wall_lines.append((wall_dir, centroid, None))
 
+            if self._valid_wall_candidate(inlier_pts, wall_dir, centroid):
+                wall_lines.append((wall_dir, centroid, None))
+
+            # Remove used points either way.
             keep = np.ones(len(remaining), dtype=bool)
             keep[refined_idx] = False
             remaining = remaining[keep]
@@ -133,12 +180,23 @@ class GoHomeNode(AbstractNode):
         return wall_lines
 
     def get_heading_error(self, ranges):
-        """Calculate heading error from dominant scan-wide wall lines."""
+        """Calculate heading error from far room walls."""
         wall_lines = []
 
         try:
-            angles_rad = np.deg2rad(np.arange(len(ranges)))
-            valid = (ranges > 0.15) & (ranges < 12.0) & np.isfinite(ranges)
+            n = len(ranges)
+
+            if n == 0:
+                return 0.0, wall_lines
+
+            angles_rad = np.deg2rad(np.arange(n))
+
+            # Ignore robot body and near artifacts.
+            valid = (
+                (ranges > self.wall_min_range) &
+                (ranges < self.wall_max_range) &
+                np.isfinite(ranges)
+            )
 
             if np.sum(valid) < self.wall_min_inliers:
                 return 0.0, wall_lines
@@ -157,8 +215,9 @@ class GoHomeNode(AbstractNode):
             for wall_dir, centroid, base in wall_lines:
                 wall_angle = np.rad2deg(np.arctan2(wall_dir[1], wall_dir[0]))
 
-                # Error to nearest room axis.
+                # Error to nearest 90-degree room axis.
                 err = (wall_angle + 45.0) % 90.0 - 45.0
+
                 errors.append(err)
 
             if not errors:
@@ -178,12 +237,17 @@ class GoHomeNode(AbstractNode):
         center = viz_size // 2
         canvas = np.zeros((viz_size, viz_size, 3), dtype=np.uint8)
 
-        # Draw LiDAR points
         angles_rad = np.deg2rad(np.arange(len(ranges)))
         xs = ranges * np.cos(angles_rad)
         ys = ranges * np.sin(angles_rad)
-        valid = (ranges > 0.15) & (ranges < 12.0) & np.isfinite(ranges)
 
+        valid = (
+            (ranges > 0.15) &
+            (ranges < self.wall_max_range) &
+            np.isfinite(ranges)
+        )
+
+        # Draw LiDAR points.
         for i in np.where(valid)[0]:
             px = int(center + xs[i] * scale)
             py = int(center - ys[i] * scale)
@@ -191,9 +255,10 @@ class GoHomeNode(AbstractNode):
             if 0 <= px < viz_size and 0 <= py < viz_size:
                 cv2.circle(canvas, (px, py), 1, (200, 200, 200), -1)
 
-        # Draw fitted wall lines
+        # Draw accepted wall lines.
         for wall_dir, centroid, base_angle in wall_lines:
             t = 12.0
+
             p1 = centroid - t * wall_dir
             p2 = centroid + t * wall_dir
 
@@ -202,7 +267,7 @@ class GoHomeNode(AbstractNode):
 
             cv2.line(canvas, pt1, pt2, (0, 255, 0), 1)
 
-        # Draw robot at center
+        # Draw robot center.
         cv2.circle(canvas, (center, center), 4, (0, 0, 255), -1)
 
         state_names = {
@@ -272,7 +337,7 @@ class GoHomeNode(AbstractNode):
         cmd.linear.y = vy
 
     def on_lidar(self, msg):
-        # Convert ranges to meters
+        # Convert ranges to meters.
         ranges = np.array(msg.ranges, dtype=np.float32) / 1000.0
 
         h_err, wall_lines = self.get_heading_error(ranges)
@@ -283,11 +348,15 @@ class GoHomeNode(AbstractNode):
             return
 
         def get_dist(angle_deg):
-            # Sample a small sector around the target angle.
+            # Sample a small sector around target angle.
             idx = [(int(angle_deg) + i) % len(ranges) for i in range(-10, 10)]
             vals = ranges[idx]
             valid = vals[(vals > 0.1) & (vals < 15.0) & np.isfinite(vals)]
-            return np.median(valid) if len(valid) > 0 else None
+
+            if len(valid) == 0:
+                return None
+
+            return float(np.median(valid))
 
         f = get_dist(270)
         b = get_dist(90)
@@ -297,8 +366,12 @@ class GoHomeNode(AbstractNode):
         if None in [f, b, l, r]:
             return
 
+        # Positive error_x means front-back imbalance.
         error_x = (f - b) / 2.0
+
+        # Positive error_y means left-right imbalance.
         error_y = (l - r) / 2.0
+
         dist_to_center = math.hypot(error_x, error_y)
         self._dist_to_center = dist_to_center
 
@@ -332,7 +405,7 @@ class GoHomeNode(AbstractNode):
             if abs(v_ang) < self.min_ang_v:
                 v_ang = self.min_ang_v if h_err > 0 else -self.min_ang_v
 
-            cmd.angular.z = np.clip(v_ang, -0.5, 0.5)
+            cmd.angular.z = float(np.clip(v_ang, -0.5, 0.5))
 
         # --- State 2: Fine centering ---
         elif self.state == 2:
