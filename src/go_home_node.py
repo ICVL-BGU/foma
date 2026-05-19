@@ -83,8 +83,8 @@ class GoHomeNode(AbstractNode):
                 b = (np.sum(y) - m * np.sum(x)) / n
                 wall_angle = np.rad2deg(np.arctan(m))
                 
-                # Normalize error to [-45, 45] range
-                errors.append((wall_angle - base + 45) % 90 - 45)
+                # Normalize error: wall surface is perpendicular to scan direction
+                errors.append((wall_angle - base - 45) % 90 - 45)
                 wall_lines.append((m, b, base))
             
             heading_err = np.mean(errors) if errors else 0
@@ -130,12 +130,16 @@ class GoHomeNode(AbstractNode):
             rospy.logerr(f"Viz publish error: {e}")
 
     def on_lidar(self, msg):
+        # Convert ranges to numpy array and scale to meters
+        ranges = np.array(msg.ranges) / 1000.0
+
+        # Always compute wall lines and publish visualization
+        h_err, wall_lines = self.get_heading_error(ranges)
+        self._publish_room_viz(ranges, wall_lines)
+
         if not self.enabled:
             return
 
-        # Convert ranges to numpy array and scale to meters
-        ranges = np.array(msg.ranges) / 1000.0 
-        
         def get_dist(angle_deg):
             # Sample a ±10 degree window around the target angle for robustness
             idx = [(int(angle_deg) + i) % len(ranges) for i in range(-10, 10)]
@@ -179,9 +183,6 @@ class GoHomeNode(AbstractNode):
 
         # --- State 1: Wall alignment via LLS heading error ---
         elif self.state == 1:
-            h_err, wall_lines = self.get_heading_error(ranges)
-            self._publish_room_viz(ranges, wall_lines)
-            
             if abs(h_err) < self.angle_tol:
                 rospy.loginfo(f"[GoHome] Alignment complete (Error: {h_err:.2f} deg). Switching to fine center.")
                 self.stop_robot()
@@ -219,9 +220,6 @@ class GoHomeNode(AbstractNode):
 
         # --- State 3: Verify both alignment and centering ---
         elif self.state == 3:
-            h_err, wall_lines = self.get_heading_error(ranges)
-            self._publish_room_viz(ranges, wall_lines)
-
             heading_ok = abs(h_err) < self.verify_angle_tol
             center_ok = dist_to_center < self.verify_dist_tol
 
