@@ -38,6 +38,8 @@ from PyQt5.QtWidgets import (
 from geometry_msgs.msg import Twist, Vector3, TwistStamped
 from sensor_msgs.msg import Image, CompressedImage
 from std_msgs.msg import Float32, Int16MultiArray, Bool
+
+from std_msgs.msg import String as StringMsg
 from std_srvs.srv import Trigger, TriggerRequest, TriggerResponse, SetBool
 from cv_bridge import CvBridge, CvBridgeError
 from std_srvs.srv import SetBool
@@ -385,6 +387,7 @@ class MainWindow(QMainWindow):
         self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=1, tcp_nodelay=True)
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=1, tcp_nodelay=True)
         self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=1, tcp_nodelay=True)
+        self.__control_mode_pub = rospy.Publisher("control/mode", StringMsg, queue_size=1)
         
         # Writer services - one for each writer node
         self.__writer_services = [
@@ -1228,6 +1231,8 @@ class MainWindow(QMainWindow):
             # Cancelled
             return
         
+        self.__control_mode_pub.publish(StringMsg("trial"))
+        
         # Increment trial number
         trial_folder = os.path.join(self.__session_folder, f"trial_{self.__current_trial}")
         
@@ -1273,6 +1278,7 @@ class MainWindow(QMainWindow):
         self.__close_button.setDisabled(True)
 
         self.__ongoing_trial = True
+        self.__control_mode_pub.publish(StringMsg("trial"))
         
         # Log continue event
         self.__log_event("trial_continue", "Trial resumed by user")
@@ -1290,6 +1296,7 @@ class MainWindow(QMainWindow):
         self.__ongoing_trial = False
 
         self.__motor_set_mode("idle")
+        self.__control_mode_pub.publish(StringMsg("idle"))
         self.__motor_set_speed(0.0)
 
         self.__motor_control_vector.publish(Vector3(0, 0, 0))
@@ -1308,6 +1315,7 @@ class MainWindow(QMainWindow):
         self.__start_button.clicked.connect(self.__on_start_click)
 
         self.__ongoing_trial = False
+        self.__control_mode_pub.publish(StringMsg("idle"))
 
         self.__dim_lights(0)
         self.__log_event("light_control", f"Brightness set to 0/255")
