@@ -24,7 +24,7 @@ class FishDetectionNode(AbstractNode):
         self.no_fish_count = 0
         self.direction = Twist(linear=Vector3(0, 0, 0))
         self.prediction = None
-        self.point_b, self.point_a = 0, 3
+        self.point_b, self.point_a = 0, 1 # default to head(0) and tail(3), neck is (1)
 
         self.image_sub = rospy.Subscriber('fish_camera/image', CompressedImage, self.read_image, queue_size=1, buff_size=2**20, tcp_nodelay=True)
         self.fish_state_pub = rospy.Publisher('fish_detection/state', TwistStamped, queue_size=10, tcp_nodelay=True)
@@ -50,7 +50,7 @@ class FishDetectionNode(AbstractNode):
         
         if kps.shape[1] == 0:
             self.no_fish_count += 1
-            if self.no_fish_count >= 5:
+            if self.no_fish_count >= 10:
                 self.fish_state_pub.publish(TwistStamped(twist = Twist(linear=Vector3(0, 0, 0)), header = Header(stamp = timestamp)))  # fish not detected for 5 frames
             else:
                 self.fish_state_pub.publish(TwistStamped(twist = self.direction, header = Header(stamp = timestamp)))  # send previous direction

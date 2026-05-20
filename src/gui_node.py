@@ -391,6 +391,7 @@ class MainWindow(QMainWindow):
             rospy.ServiceProxy('csv_writer_foma_location/write', Write),
             rospy.ServiceProxy('csv_writer_fish_location/write', Write),
             rospy.ServiceProxy('csv_writer_foma_speed/write', Write),
+            rospy.ServiceProxy('csv_writer_lidar/write', Write),
             rospy.ServiceProxy('video_writer_room/write', Write),
             rospy.ServiceProxy('video_writer_foma/write', Write),
             rospy.ServiceProxy('video_writer_room_map/write', Write),
@@ -1091,7 +1092,7 @@ class MainWindow(QMainWindow):
         if self.__feed is not None:
             self.__feed()
             self.__log_event("feeding", "Manual feed triggered")
-            self.__times_fed_value_label.setText(str(int(self.__times_fed_value_label.text()) + 1))
+            # self.__times_fed_value_label.setText(str(int(self.__times_fed_value_label.text()) + 1))
 
     def __on_lights_change(self, val):
         """Wrapper for lights change to log event"""
