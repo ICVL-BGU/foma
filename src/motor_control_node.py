@@ -29,7 +29,6 @@ class MotorControlNode(AbstractNode):
 
         rospy.Service('motor_control/bypass_lidar', SetBool, self.__bypass_lidar)
         rospy.Service('motor_control/set_speed', Float, self.__set_speed)
-        rospy.Service('motor_control/set_mode', String, self.__set_mode)
 
         try:
             self.__motor_control = MotorControl(resetPins = (MOTOR_TOP_BOTTOM_RESET, MOTOR_RIGHT_LEFT_RESET)
