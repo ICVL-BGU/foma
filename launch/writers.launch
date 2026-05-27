@@ -48,7 +48,7 @@
         <param name="filename" value="room_video.mp4" />
         <param name="fourcc" value="X264" />
         <param name="fps" value="25" />
-        <rosparam param="frame_shape">[1280, 1280]</rosparam>
+        <rosparam param="frame_shape">[640, 640]</rosparam>
         <param name="video_type" value="standard" />
         <param name="enable_reframe_worker" value="false" />
     </node>

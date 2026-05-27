@@ -552,6 +552,7 @@ class MainWindow(QMainWindow):
                 times_fed = int(self.__times_fed_value_label.text()) if self.__times_fed_value_label.text() != "N/A" else 0
                 times_fed += 1
                 self.__times_fed_value_label.setText(str(times_fed))
+                self.__log_event("feeder_fed", f"feeder_fed. Total times fed: {times_fed}")
             except ValueError:
                 self.logwarn("Received invalid times fed value from feeder status update")
         else:
@@ -1279,6 +1280,7 @@ class MainWindow(QMainWindow):
 
         self.__ongoing_trial = True
         self.__control_mode_pub.publish(StringMsg("trial"))
+        self.__motor_set_mode("trial")
         
         # Log continue event
         self.__log_event("trial_continue", "Trial resumed by user")
@@ -1321,7 +1323,7 @@ class MainWindow(QMainWindow):
         self.__log_event("light_control", f"Brightness set to 0/255")
         self.__lights_slider.setValue(0)
 
-        #self.__motor_set_mode("idle")
+        self.__motor_set_mode("idle")
         self.__motor_set_speed(1.0)
         
         # Log stop event

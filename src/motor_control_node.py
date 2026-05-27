@@ -11,7 +11,7 @@ from etc.MotorControl import *
 from gpiozero import BadPinFactory
 import numpy as np
 from std_srvs.srv import SetBool, SetBoolRequest, SetBoolResponse
-from foma.srv import Float, FloatRequest, FloatResponse
+from foma.srv import Float, FloatRequest, FloatResponse, String
 import math
 
 class MotorControlNode(AbstractNode):
@@ -29,6 +29,7 @@ class MotorControlNode(AbstractNode):
 
         rospy.Service('motor_control/bypass_lidar', SetBool, self.__bypass_lidar)
         rospy.Service('motor_control/set_speed', Float, self.__set_speed)
+        rospy.Service('motor_control/set_mode', String, self.__set_mode)
 
         try:
             self.__motor_control = MotorControl(resetPins = (MOTOR_TOP_BOTTOM_RESET, MOTOR_RIGHT_LEFT_RESET)
@@ -116,6 +117,10 @@ class MotorControlNode(AbstractNode):
     def __set_speed(self, request:FloatRequest):
         self.__speed = request.data
         return FloatResponse(result = True)
+
+    def __set_mode(self, request:String):
+        self._mode = request.data
+        return String(result = f"Mode set to {self._mode}")
 
     def __move_by_components(self, h_component, v_component):
         if self.__movement != 'linear':
