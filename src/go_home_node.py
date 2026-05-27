@@ -16,7 +16,7 @@ class GoHomeNode(AbstractNode):
         self.arrival_tol = 0.15     
         self.angle_tol = 3.0        
         self.enabled = False
-        self.max_speed = 0.5         
+        self.max_speed = 0.55         
         self.min_v = 0.18            
         self.min_ang_v = 0.16        
         self.state = 0              # 0 = moving to center, 1 = aligning to walls
