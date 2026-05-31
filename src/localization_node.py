@@ -8,13 +8,12 @@ os.environ['NO_ALBUMENTATIONS_UPDATE'] = '1'
 import rospy
 from sensor_msgs.msg import CompressedImage
 from abstract_node import AbstractNode
-from cv_bridge import CvBridge, CvBridgeError
+from etc import jpeg
 from foma.msg import FomaLocation
 from geometry_msgs.msg import Point
 from ultralytics import YOLO
 import json
 import numpy as np
-from etc.settings import *
 
 LIDAR_TAG = 1
 
@@ -31,13 +30,14 @@ class LocalizationNode(AbstractNode):
         self.image_sub = rospy.Subscriber('ceiling_camera/image', CompressedImage, self.read_image, queue_size=1, buff_size=2**21, tcp_nodelay=True)
         self.location_pub = rospy.Publisher('localization/location', FomaLocation, queue_size=10, tcp_nodelay=True)
         self.location = FomaLocation()
-        self.bridge = CvBridge()
+        self.__camera_native_shape = tuple(rospy.get_param('/ROOM_CAMERA_NATIVE_SHAPE'))
+        self.__floor_map_shape = tuple(rospy.get_param('/ROOM_FLOOR_MAP_SHAPE'))
         
     def read_image(self, img_msg: CompressedImage):
         try:
-            self.img = self.bridge.compressed_imgmsg_to_cv2(img_msg)
+            self.img = jpeg.decode(img_msg.data)
             self.process_image()
-        except CvBridgeError as e:
+        except Exception as e:
             self.logerr(f"Error converting image: {e}")
 
     def process_image(self):
@@ -48,10 +48,10 @@ class LocalizationNode(AbstractNode):
         if result is not None:
             x_i, y_i = result
             
-            x_w, y_w = self._map(x_i * ROOM_CAMERA_NATIVE_SHAPE[1], y_i * ROOM_CAMERA_NATIVE_SHAPE[0])
+            x_w, y_w = self._map(x_i * self.__camera_native_shape[1], y_i * self.__camera_native_shape[0])
 
             self.location.image = Point(x_i, y_i, 0)
-            self.location.world = Point(x_w / ROOM_FLOOR_MAP_SHAPE[1], y_w / ROOM_FLOOR_MAP_SHAPE[0], 0)
+            self.location.world = Point(x_w / self.__floor_map_shape[1], y_w / self.__floor_map_shape[0], 0)
         
         self.location_pub.publish(self.location)
 

@@ -4,13 +4,13 @@ import cv2
 from foma.srv import Write, WriteRequest, WriteResponse
 from sensor_msgs.msg import Image, CompressedImage
 from cv_bridge import CvBridge
+from etc import jpeg
 from abstract_node import AbstractNode
 import datetime
 import os
 import numpy as np
 from geometry_msgs.msg import Vector3
 from foma.msg import FomaLocation
-from etc.settings import *
 import sys
 import subprocess
 import threading
@@ -88,12 +88,29 @@ class VideoWriterNode(AbstractNode):
             self.logerr(f"Trial folder does not exist: {self.__folder}")
             return
 
-        # Create video writer
+        # Create video writer. Try fully-GPU NVENC pipeline first:
+        # nvvideoconvert moves the BGR→NV12 conversion onto the GPU (NVMM
+        # memory) so the only CPU touch is the appsrc upload itself.
+        # Fall back to cv2 FourCC if NVIDIA gst plugins missing.
         filepath = os.path.join(self.__folder, self.__filename)
-        fourcc = cv2.VideoWriter_fourcc(*self.__fourcc)
-        
-        self.__video_writer = cv2.VideoWriter(filepath, fourcc, self.__fps, self.__frame_shape)
-        self.loginfo(f"Created video writer at {filepath}")
+        w, h = self.__frame_shape
+        gst = (
+            f"appsrc is-live=true do-timestamp=true format=time "
+            f"caps=video/x-raw,format=BGR,width={w},height={h},framerate={int(self.__fps)}/1 ! "
+            f"nvvideoconvert ! video/x-raw(memory:NVMM),format=NV12 ! "
+            f"nvh264enc preset=low-latency-hp rc-mode=cbr-ld-hq ! "
+            f"h264parse ! mp4mux ! filesink location={filepath}"
+        )
+        self.__video_writer = cv2.VideoWriter(
+            gst, cv2.CAP_GSTREAMER, 0, float(self.__fps), (w, h), True
+        )
+        if self.__video_writer.isOpened():
+            self.loginfo(f"Created NVENC video writer at {filepath}")
+        else:
+            self.logwarn("NVENC pipeline unavailable, falling back to cv2 FourCC writer.")
+            fourcc = cv2.VideoWriter_fourcc(*self.__fourcc)
+            self.__video_writer = cv2.VideoWriter(filepath, fourcc, self.__fps, self.__frame_shape)
+            self.loginfo(f"Created video writer at {filepath}")
         
         # Initialize trajectory map if needed
         if self.__video_type == 'trajectory_map':
@@ -240,10 +257,9 @@ class VideoWriterNode(AbstractNode):
         """Write CompressedImage message to video"""
         if not self.__write or self.__video_writer is None or self.__frame_queue is None:
             return
-        
-        # Convert and queue frame (fast operation)
-        img = self.bridge.compressed_imgmsg_to_cv2(img_msg)
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+
+        # turbojpeg returns BGR directly; no extra cvtColor needed.
+        img = jpeg.decode(img_msg.data)
         
         try:
             self.__frame_queue.put(img, block=True, timeout=0.5)

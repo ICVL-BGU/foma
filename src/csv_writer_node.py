@@ -9,7 +9,6 @@ from geometry_msgs.msg import Twist, Vector3, TwistStamped
 from sensor_msgs.msg import LaserScan
 from foma.msg import FomaLocation
 import math
-from etc.settings import *
 
 class CSVWriterNode(AbstractNode):
     def __init__(self):
@@ -41,6 +40,8 @@ class CSVWriterNode(AbstractNode):
         self.__csv_writer = None
         self.__folder = ""
         self.__subscriber = None
+        self.__room_camera_frame_shape = tuple(rospy.get_param('/ROOM_CAMERA_FRAME_SHAPE'))
+        self.__room_map_frame_shape    = tuple(rospy.get_param('/ROOM_MAP_FRAME_SHAPE'))
 
     def __create_subscriber(self):
         """Create subscriber for configured topic. Called on start_trial."""
@@ -130,13 +131,13 @@ class CSVWriterNode(AbstractNode):
             return
         
         foma_img_location = Vector3(
-            location.image.x * ROOM_CAMERA_FRAME_SHAPE[1],
-            location.image.y * ROOM_CAMERA_FRAME_SHAPE[0],
+            location.image.x * self.__room_camera_frame_shape[1],
+            location.image.y * self.__room_camera_frame_shape[0],
             0
         )
         foma_world_location = Vector3(
-            location.world.x * ROOM_MAP_FRAME_SHAPE[0],
-            location.world.y * ROOM_MAP_FRAME_SHAPE[1],
+            location.world.x * self.__room_map_frame_shape[0],
+            location.world.y * self.__room_map_frame_shape[1],
             0
         )
         
