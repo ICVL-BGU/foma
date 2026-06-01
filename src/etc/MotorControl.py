@@ -35,8 +35,11 @@ class MotorControl(Serial):
         self.speed = speed
         self.punishment_factor = 0.85
         # proportional encoder-balance gain (stopgap heading hold)
-        self.balance_kp = 0.002   # tune: raise till tight, back off ~30%
+        self.balance_kp = 0.05    # tune: raise till tight, back off ~30%
         self.balance_clip = 0.30  # max fractional correction per pair
+        # prev cumulative counts -> per-cycle rate (avoid saturating on totals)
+        self._prev_top = self._prev_bottom = 0
+        self._prev_left = self._prev_right = 0
 
         #set controllers to different IDs to avoid collision due to daisy-chain connection
         self.motorTopBottom.turnOn()
@@ -91,16 +94,26 @@ class MotorControl(Serial):
         left_speed   = horizontal_component * speed
         right_speed  = -horizontal_component * speed
 
+        # per-cycle rate = delta since last call (bounded, no saturation)
+        t, b = self.encoderTop.steps, self.encoderBottom.steps
+        l, r = self.encoderLeft.steps, self.encoderRight.steps
+        d_top    = abs(t - self._prev_top)
+        d_bottom = abs(b - self._prev_bottom)
+        d_left   = abs(l - self._prev_left)
+        d_right  = abs(r - self._prev_right)
+        self._prev_top, self._prev_bottom = t, b
+        self._prev_left, self._prev_right = l, r
+
         # vertical axis = Top/Bottom pair
         if abs(vertical_component) > 1e-6:
-            err = abs(self.encoderTop.steps) - abs(self.encoderBottom.steps)  # +ve => top leads
+            err = d_top - d_bottom  # +ve => top spinning faster this cycle
             corr = np.clip(self.balance_kp * err, -self.balance_clip, self.balance_clip)
             top_speed    *= (1 - corr)  # slow leader
             bottom_speed *= (1 + corr)  # speed laggard
 
         # horizontal axis = Right/Left pair
         if abs(horizontal_component) > 1e-6:
-            err = abs(self.encoderRight.steps) - abs(self.encoderLeft.steps)  # +ve => right leads
+            err = d_right - d_left  # +ve => right spinning faster this cycle
             corr = np.clip(self.balance_kp * err, -self.balance_clip, self.balance_clip)
             right_speed *= (1 - corr)
             left_speed  *= (1 + corr)
@@ -139,3 +152,5 @@ class MotorControl(Serial):
         self.encoderBottom.steps = 0
         self.encoderLeft.steps = 0
         self.encoderRight.steps = 0
+        self._prev_top = self._prev_bottom = 0
+        self._prev_left = self._prev_right = 0
