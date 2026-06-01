@@ -109,6 +109,7 @@ class MotorControl(Serial):
 
         db = self.balance_deadband
 
+        # boost laggard only, never cut leader => heavy axis won't stall
         # vertical axis = Top/Bottom pair
         if abs(vertical_component) > 1e-6:
             err = d_top - d_bottom  # +ve => top spinning faster this cycle
@@ -116,8 +117,8 @@ class MotorControl(Serial):
                 err = 0
             corr = np.clip(self.balance_sign_v * self.balance_kp * err,
                            -self.balance_clip, self.balance_clip)
-            top_speed    *= (1 - corr)  # slow leader
-            bottom_speed *= (1 + corr)  # speed laggard
+            if corr > 0:    bottom_speed *= (1 + corr)  # top leads -> boost bottom
+            elif corr < 0:  top_speed    *= (1 - corr)  # bottom leads -> boost top
 
         # horizontal axis = Right/Left pair
         if abs(horizontal_component) > 1e-6:
@@ -126,14 +127,15 @@ class MotorControl(Serial):
                 err = 0
             corr = np.clip(self.balance_sign_h * self.balance_kp * err,
                            -self.balance_clip, self.balance_clip)
-            right_speed *= (1 - corr)
-            left_speed  *= (1 + corr)
+            if corr > 0:    left_speed  *= (1 + corr)  # right leads -> boost left
+            elif corr < 0:  right_speed *= (1 - corr)  # left leads -> boost right
 
-        # round (not int truncate) => no directional bias
-        top_speed    = int(round(top_speed))
-        bottom_speed = int(round(bottom_speed))
-        left_speed   = int(round(left_speed))
-        right_speed  = int(round(right_speed))
+        # clamp to driver range (boost may overshoot), round (no trunc bias)
+        lim = abs(speed)
+        top_speed    = int(round(np.clip(top_speed,    -lim, lim)))
+        bottom_speed = int(round(np.clip(bottom_speed, -lim, lim)))
+        left_speed   = int(round(np.clip(left_speed,   -lim, lim)))
+        right_speed  = int(round(np.clip(right_speed,  -lim, lim)))
 
         self.motorRightLeft.setSpeeds(right_speed,  left_speed)
         self.motorTopBottom.setSpeeds(top_speed,   bottom_speed)
