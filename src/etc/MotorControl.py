@@ -37,6 +37,9 @@ class MotorControl(Serial):
         # proportional encoder-balance gain (stopgap heading hold)
         self.balance_kp = 0.05    # tune: raise till tight, back off ~30%
         self.balance_clip = 0.30  # max fractional correction per pair
+        self.balance_deadband = 2  # ignore rate err <= this (encoder noise)
+        self.balance_sign_v = 1   # flip to -1 if vertical linear curves wrong way
+        self.balance_sign_h = 1   # flip to -1 if horizontal linear curves wrong way
         # prev cumulative counts -> per-cycle rate (avoid saturating on totals)
         self._prev_top = self._prev_bottom = 0
         self._prev_left = self._prev_right = 0
@@ -104,17 +107,25 @@ class MotorControl(Serial):
         self._prev_top, self._prev_bottom = t, b
         self._prev_left, self._prev_right = l, r
 
+        db = self.balance_deadband
+
         # vertical axis = Top/Bottom pair
         if abs(vertical_component) > 1e-6:
             err = d_top - d_bottom  # +ve => top spinning faster this cycle
-            corr = np.clip(self.balance_kp * err, -self.balance_clip, self.balance_clip)
+            if abs(err) <= db:
+                err = 0
+            corr = np.clip(self.balance_sign_v * self.balance_kp * err,
+                           -self.balance_clip, self.balance_clip)
             top_speed    *= (1 - corr)  # slow leader
             bottom_speed *= (1 + corr)  # speed laggard
 
         # horizontal axis = Right/Left pair
         if abs(horizontal_component) > 1e-6:
             err = d_right - d_left  # +ve => right spinning faster this cycle
-            corr = np.clip(self.balance_kp * err, -self.balance_clip, self.balance_clip)
+            if abs(err) <= db:
+                err = 0
+            corr = np.clip(self.balance_sign_h * self.balance_kp * err,
+                           -self.balance_clip, self.balance_clip)
             right_speed *= (1 - corr)
             left_speed  *= (1 + corr)
 
