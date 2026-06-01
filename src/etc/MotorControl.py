@@ -34,6 +34,9 @@ class MotorControl(Serial):
         
         self.speed = speed
         self.punishment_factor = 0.85
+        # proportional encoder-balance gain (stopgap heading hold)
+        self.balance_kp = 0.002   # tune: raise till tight, back off ~30%
+        self.balance_clip = 0.30  # max fractional correction per pair
 
         #set controllers to different IDs to avoid collision due to daisy-chain connection
         self.motorTopBottom.turnOn()
@@ -68,12 +71,17 @@ class MotorControl(Serial):
         speed: float = None
     ):
         """
-        Simple error‐based slowdown:
-        - compute base_top/bottom/left/right
-        - if top+bottom>0, top is faster → top = 90% of base_top
-          if top+bottom<0, bottom is faster → bottom = 90% of base_bottom
-        - same for left/right
-        - uses round() instead of int() for speed calculations
+        Proportional encoder-balance heading hold (stopgap).
+
+        Each axis driven by a wheel pair spinning equal+opposite. Unequal
+        encoder counts => chassis yaw. Correction proportional to count
+        mismatch, slow leader + speed laggard symmetrically, clipped.
+
+        Replaces fixed-factor bang-bang `punishment_factor` (oscillated,
+        cumulative-lag, int() truncation bias).
+
+        Note: encoders measure wheel spin, not chassis yaw. Slip still
+        drifts. Stopgap slows drift, not eliminate. Real fix = lidar/IMU.
         """
         if speed is None:
             speed = self.speed
@@ -83,57 +91,25 @@ class MotorControl(Serial):
         left_speed   = horizontal_component * speed
         right_speed  = -horizontal_component * speed
 
-        if vertical_component > 0: # Moving Right
-            if self.encoderTop.steps > 0:
-                if abs(self.encoderTop.steps) >  abs(self.encoderBottom.steps):  # top is running faster
-                    bottom_speed = bottom_speed * self.punishment_factor
-                elif abs(self.encoderTop.steps) <  abs(self.encoderBottom.steps):  # bottom is running faster
-                    top_speed = top_speed * self.punishment_factor
-            elif self.encoderTop.steps < 0:
-                if abs(self.encoderTop.steps) >  abs(self.encoderBottom.steps):  # top is running faster
-                    top_speed = top_speed * self.punishment_factor
-                elif abs(self.encoderTop.steps) <  abs(self.encoderBottom.steps):  # bottom is running faster
-                    bottom_speed = bottom_speed * self.punishment_factor
-        elif vertical_component < 0: # Moving Left
-            if self.encoderTop.steps > 0:
-                if abs(self.encoderTop.steps) >  abs(self.encoderBottom.steps):  # top is running faster
-                    top_speed = top_speed * self.punishment_factor
-                elif abs(self.encoderTop.steps) <  abs(self.encoderBottom.steps):  # bottom is running faster
-                    bottom_speed = bottom_speed * self.punishment_factor
-            elif self.encoderTop.steps < 0:
-                if abs(self.encoderTop.steps) >  abs(self.encoderBottom.steps):  # top is running faster
-                    bottom_speed = bottom_speed * self.punishment_factor
-                elif abs(self.encoderTop.steps) <  abs(self.encoderBottom.steps):  # bottom is running faster
-                    top_speed = top_speed * self.punishment_factor
-        
-        if horizontal_component > 0:  # Moving Forward
-            if self.encoderRight.steps > 0:
-                if abs(self.encoderRight.steps) >  abs(self.encoderLeft.steps):  # top is running faster
-                    right_speed = right_speed * self.punishment_factor
-                elif abs(self.encoderRight.steps) <  abs(self.encoderLeft.steps):  # bottom is running faster
-                    left_speed = left_speed * self.punishment_factor
-            elif self.encoderRight.steps < 0:
-                if abs(self.encoderRight.steps) >  abs(self.encoderLeft.steps):  # top is running faster
-                    left_speed = left_speed * self.punishment_factor
-                elif abs(self.encoderRight.steps) <  abs(self.encoderLeft.steps):  # bottom is running faster
-                    right_speed = right_speed * self.punishment_factor
-        elif horizontal_component < 0: # Moving Backward
-            if self.encoderRight.steps > 0:
-                if abs(self.encoderRight.steps) >  abs(self.encoderLeft.steps):  # top is running faster
-                    left_speed = left_speed * self.punishment_factor
-                elif abs(self.encoderRight.steps) <  abs(self.encoderLeft.steps):  # bottom is running faster
-                    right_speed = right_speed * self.punishment_factor
-            elif self.encoderRight.steps < 0:
-                if abs(self.encoderRight.steps) >  abs(self.encoderLeft.steps):  # top is running faster
-                    right_speed = right_speed * self.punishment_factor
-                elif abs(self.encoderRight.steps) <  abs(self.encoderLeft.steps):  # bottom is running faster
-                    left_speed = left_speed * self.punishment_factor
+        # vertical axis = Top/Bottom pair
+        if abs(vertical_component) > 1e-6:
+            err = abs(self.encoderTop.steps) - abs(self.encoderBottom.steps)  # +ve => top leads
+            corr = np.clip(self.balance_kp * err, -self.balance_clip, self.balance_clip)
+            top_speed    *= (1 - corr)  # slow leader
+            bottom_speed *= (1 + corr)  # speed laggard
 
-        # Round speeds to nearest integer
-        top_speed = int(top_speed)
-        bottom_speed = int(bottom_speed)
-        left_speed = int(left_speed)
-        right_speed = int(right_speed) 
+        # horizontal axis = Right/Left pair
+        if abs(horizontal_component) > 1e-6:
+            err = abs(self.encoderRight.steps) - abs(self.encoderLeft.steps)  # +ve => right leads
+            corr = np.clip(self.balance_kp * err, -self.balance_clip, self.balance_clip)
+            right_speed *= (1 - corr)
+            left_speed  *= (1 + corr)
+
+        # round (not int truncate) => no directional bias
+        top_speed    = int(round(top_speed))
+        bottom_speed = int(round(bottom_speed))
+        left_speed   = int(round(left_speed))
+        right_speed  = int(round(right_speed))
 
         self.motorRightLeft.setSpeeds(right_speed,  left_speed)
         self.motorTopBottom.setSpeeds(top_speed,   bottom_speed)
