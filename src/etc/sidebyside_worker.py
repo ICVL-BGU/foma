@@ -107,7 +107,7 @@ def main():
             '-filter_complex', filter_complex,
             '-map', '[v]',
             '-c:v', 'h264_nvenc' if use_nvenc else 'libx264',
-            '-preset', 'p4' if use_nvenc else 'veryfast',
+            '-preset', 'fast' if use_nvenc else 'veryfast',
             '-pix_fmt', 'yuv420p',
             '-r', str(F),
             '-vsync', 'cfr',

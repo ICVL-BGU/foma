@@ -1329,7 +1329,10 @@ class MainWindow(QMainWindow):
         log  = os.path.join(folder, "sidebyside.log")
 
         worker = os.path.join(os.path.dirname(__file__), "etc", "sidebyside_worker.py")
-        cmd = [sys.executable, worker, room, foma, out, "--log", log]
+        # nice/ionice so the transcode (esp. libx264 fallback) never starves the
+        # live room feed, which decodes on CPU. Children (ffmpeg) inherit it.
+        cmd = ["nice", "-n", "15", "ionice", "-c", "3",
+               sys.executable, worker, room, foma, out, "--log", log]
 
         logf = open(log, "a")
         p = subprocess.Popen(cmd, stdout=logf, stderr=logf,

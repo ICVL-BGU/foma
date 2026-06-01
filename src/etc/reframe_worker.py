@@ -158,21 +158,22 @@ def reframe_single_file(vf, start_s, stop_s, logger, force_reencode=False, try_f
             os.close(fd)
             tmp_files.append(tmpout)
             fps_arg = f"{new_fps:.6f}"
-            # use -r before -i to force input interpretation, and -r after to set output fps
-            cmd = [
-                ffmpeg_path,
-                "-y",
-                "-r", fps_arg,
-                "-i", vf,
-                "-c:v", "libx264",
-                "-preset", "veryfast",
-                "-crf", "23",
-                "-r", fps_arg,
-                "-c:a", "copy",
-                tmpout
-            ]
-            logger.info(f"running ffmpeg (fast) for {os.path.basename(vf)} ...")
-            p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            # use -r before -i to force input interpretation, and -r after to set output fps.
+            # Prefer GPU NVENC encode; fall back to libx264 if NVENC unavailable.
+            def _reframe_cmd(use_nvenc):
+                base = [ffmpeg_path, "-y", "-r", fps_arg, "-i", vf]
+                if use_nvenc:
+                    base += ["-c:v", "h264_nvenc", "-preset", "fast", "-cq", "23"]
+                else:
+                    base += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
+                base += ["-r", fps_arg, "-c:a", "copy", tmpout]
+                return base
+
+            logger.info(f"running ffmpeg (NVENC) for {os.path.basename(vf)} ...")
+            p = subprocess.run(_reframe_cmd(True), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if p.returncode != 0:
+                logger.warning(f"NVENC reframe failed for {os.path.basename(vf)}; retrying libx264.")
+                p = subprocess.run(_reframe_cmd(False), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if p.returncode == 0:
                 out_dur = ffprobe_duration(tmpout, ffprobe_path)
                 if out_dur is None or abs(out_dur - duration) <= duration_tolerance_s:

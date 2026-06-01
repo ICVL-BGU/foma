@@ -15,6 +15,70 @@ import sys
 import subprocess
 import threading
 import queue
+import shutil
+
+
+class FFmpegNVENCWriter:
+    """Drop-in replacement for cv2.VideoWriter that pipes raw BGR frames to
+    ffmpeg's GPU NVENC encoder (h264_nvenc). Exposes isOpened()/write()/release()
+    so callers can swap it for cv2.VideoWriter transparently."""
+
+    _nvenc_ok = None  # cached encoder-availability probe
+
+    @classmethod
+    def nvenc_available(cls):
+        if cls._nvenc_ok is None:
+            try:
+                out = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"],
+                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                cls._nvenc_ok = b"h264_nvenc" in out.stdout
+            except Exception:
+                cls._nvenc_ok = False
+        return cls._nvenc_ok
+
+    def __init__(self, filepath, fps, size):
+        w, h = size
+        self.__p = None
+        if shutil.which("ffmpeg") is None or not self.nvenc_available():
+            return
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "rawvideo", "-pix_fmt", "bgr24",
+            "-s", f"{w}x{h}", "-r", str(int(fps)),
+            "-i", "pipe:0",
+            "-c:v", "h264_nvenc", "-preset", "fast", "-cq", "23",
+            "-pix_fmt", "yuv420p", filepath,
+        ]
+        try:
+            self.__p = subprocess.Popen(cmd, stdin=subprocess.PIPE,
+                                        stdout=subprocess.DEVNULL,
+                                        stderr=subprocess.DEVNULL)
+        except Exception:
+            self.__p = None
+
+    def isOpened(self):
+        return self.__p is not None and self.__p.poll() is None
+
+    def write(self, frame):
+        if self.__p is not None and self.__p.stdin is not None:
+            try:
+                self.__p.stdin.write(frame.tobytes())
+            except (BrokenPipeError, ValueError):
+                pass
+
+    def release(self):
+        if self.__p is not None:
+            try:
+                if self.__p.stdin is not None:
+                    self.__p.stdin.close()
+            except Exception:
+                pass
+            try:
+                self.__p.wait(timeout=30)
+            except Exception:
+                self.__p.kill()
+            self.__p = None
+
 
 class VideoWriterNode(AbstractNode):
     def __init__(self):
@@ -88,22 +152,10 @@ class VideoWriterNode(AbstractNode):
             self.logerr(f"Trial folder does not exist: {self.__folder}")
             return
 
-        # Create video writer. Try fully-GPU NVENC pipeline first:
-        # nvvideoconvert moves the BGR→NV12 conversion onto the GPU (NVMM
-        # memory) so the only CPU touch is the appsrc upload itself.
-        # Fall back to cv2 FourCC if NVIDIA gst plugins missing.
+        # Create video writer. Prefer GPU NVENC via ffmpeg (raw BGR piped to
+        # h264_nvenc); fall back to cv2 FourCC (CPU) if NVENC unavailable.
         filepath = os.path.join(self.__folder, self.__filename)
-        w, h = self.__frame_shape
-        gst = (
-            f"appsrc is-live=true do-timestamp=true format=time "
-            f"caps=video/x-raw,format=BGR,width={w},height={h},framerate={int(self.__fps)}/1 ! "
-            f"nvvideoconvert ! video/x-raw(memory:NVMM),format=NV12 ! "
-            f"nvh264enc preset=low-latency-hp rc-mode=cbr-ld-hq ! "
-            f"h264parse ! mp4mux ! filesink location={filepath}"
-        )
-        self.__video_writer = cv2.VideoWriter(
-            gst, cv2.CAP_GSTREAMER, 0, float(self.__fps), (w, h), True
-        )
+        self.__video_writer = FFmpegNVENCWriter(filepath, self.__fps, self.__frame_shape)
         if self.__video_writer.isOpened():
             self.loginfo(f"Created NVENC video writer at {filepath}")
         else:
@@ -193,6 +245,7 @@ class VideoWriterNode(AbstractNode):
         logpath = os.path.join(folder, f"reframe.log")
         
         cmd = [
+            "nice", "-n", "15", "ionice", "-c", "3",  # don't starve live feeds
             sys.executable,  # Uses same Python interpreter
             worker_path,
             str(start_s),
