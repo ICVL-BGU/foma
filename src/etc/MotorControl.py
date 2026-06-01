@@ -35,9 +35,9 @@ class MotorControl(Serial):
         self.speed = speed
         self.punishment_factor = 0.85
         # proportional encoder-balance gain (stopgap heading hold)
-        self.balance_kp = 0.05    # tune: raise till tight, back off ~30%
+        self.balance_kp = 0.08    # tune: raise till tight, back off ~30%
         self.balance_clip = 0.30  # max fractional correction per pair
-        self.balance_deadband = 2  # ignore rate err <= this (encoder noise)
+        self.balance_deadband = 1  # ignore rate err <= this (encoder noise)
         self.balance_sign_v = 1   # flip to -1 if vertical linear curves wrong way
         self.balance_sign_h = 1   # flip to -1 if horizontal linear curves wrong way
         # prev cumulative counts -> per-cycle rate (avoid saturating on totals)
