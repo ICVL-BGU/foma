@@ -32,19 +32,24 @@ class FishDetectionNode(AbstractNode):
     def read_image(self, img_msg: CompressedImage):
         try:
             self.img = self.bridge.compressed_imgmsg_to_cv2(img_msg)
-            self.process_image()
+            # Stamp with the image CAPTURE time, not Time.now() after inference.
+            # model.track adds tens-hundreds ms; using now() would tag the fish
+            # state with capture_time + inference_latency, so downstream overlays
+            # (sidebyside_worker) render the fish direction lagging the video.
+            stamp = img_msg.header.stamp
+            if stamp.to_sec() == 0.0:
+                stamp = rospy.Time.now()
+            self.process_image(stamp)
         except CvBridgeError as e:
             self.logerr(f"Error converting image: {e}")
 
-    def process_image(self):
+    def process_image(self, timestamp):
         prediction = self.model.track(self.img, verbose=False)[0]
         img_h, img_w = self.img.shape[:2]
         img_center = (img_w / 2, img_h / 2)
 
         best_kp = None
         min_dist = float('inf')
-
-        timestamp = rospy.Time.now()
 
         kps = prediction.keypoints
         

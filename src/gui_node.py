@@ -1332,8 +1332,10 @@ class MainWindow(QMainWindow):
         worker = os.path.join(os.path.dirname(__file__), "etc", "sidebyside_worker.py")
         # nice/ionice so the transcode (esp. libx264 fallback) never starves the
         # live room feed, which decodes on CPU. Children (ffmpeg) inherit it.
+        cam_w, cam_h = self.__room_camera_frame_shape[1], self.__room_camera_frame_shape[0]
         cmd = ["nice", "-n", "15", "ionice", "-c", "3",
-               sys.executable, worker, room, foma, out, "--log", log]
+               sys.executable, worker, room, foma, out, "--log", log,
+               "--room-cam-shape", f"{cam_w}x{cam_h}"]
 
         logf = open(log, "a")
         p = subprocess.Popen(cmd, stdout=logf, stderr=logf,

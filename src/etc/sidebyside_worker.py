@@ -136,7 +136,67 @@ def _draw_foma_overlay(frame, speed_row, w, h):
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 
 
-def annotate_foma_video(in_path, out_path, fish_csv, speed_csv, swap_rb=False):
+def _draw_foma_location_overlay(frame, loc_row, sx, sy):
+    """loc_row: [time, x_w, y_w, x_i, y_i]. x_i,y_i are pixels in the
+    ROOM_CAMERA_FRAME_SHAPE space; sx,sy scale them to the room video size.
+    Mirrors gui_node __update_foma_location dot on the room camera."""
+    if loc_row is None:
+        return
+    try:
+        px = int(loc_row[3] * sx); py = int(loc_row[4] * sy)
+    except (IndexError, ValueError):
+        return
+    cv2.circle(frame, (px, py), 14, (0, 255, 0), -1)
+    cv2.putText(frame, "FOMA", (px + 18, py - 18),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3, cv2.LINE_AA)
+
+
+def annotate_room_video(in_path, out_path, foma_loc_csv, cam_shape, swap_rb=False):
+    """Draw the FOMA room location dot on the room (ceiling) video. foma_location
+    is stamped with ceiling-camera capture time == room video frame time, so
+    index it by its own elapsed time mapped to frame time (idx/fps)."""
+    loc = _read_csv(foma_loc_csv)
+    if not loc:
+        print('room overlay: no foma_location csv data; skipping')
+        return False
+    cap = cv2.VideoCapture(in_path)
+    if not cap.isOpened():
+        print(f'room overlay: cannot open {in_path}')
+        return False
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    shape_w, shape_h = cam_shape
+    sx = w / shape_w if shape_w else 1.0
+    sy = h / shape_h if shape_h else 1.0
+
+    loc_t = [r[0] - loc[0][0] for r in loc]
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(out_path, fourcc, fps, (w, h))
+    if not out.isOpened():
+        cap.release()
+        print(f'room overlay: cannot open writer {out_path}')
+        return False
+
+    idx = 0
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        if swap_rb:
+            frame = frame[:, :, ::-1].copy()
+        t = idx / fps
+        _draw_foma_location_overlay(frame, _nearest(loc, loc_t, t), sx, sy)
+        out.write(frame)
+        idx += 1
+    cap.release(); out.release()
+    print(f'room overlay: wrote {idx} annotated frames -> {out_path}')
+    return True
+
+
+def annotate_foma_video(in_path, out_path, fish_csv, speed_csv, foma_loc_csv,
+                        swap_rb=False):
     cap = cv2.VideoCapture(in_path)
     if not cap.isOpened():
         print(f'overlay: cannot open {in_path}')
@@ -151,9 +211,16 @@ def annotate_foma_video(in_path, out_path, fish_csv, speed_csv, swap_rb=False):
         cap.release()
         print('overlay: no fish/speed csv data; skipping annotation')
         return False
-    fish_t = [r[0] for r in fish] if fish else []
-    speed_t = [r[0] for r in speed] if speed else []
-    t0 = min(([fish_t[0]] if fish_t else []) + ([speed_t[0]] if speed_t else []))
+    # Clock anchoring: foma_location and fish_detection both stamp in wall-clock
+    # time, and foma_location starts at video t=0 (it tracks the foma video, its
+    # span == video duration). So foma_location[0] is the wall-clock instant of
+    # the first video frame -> map fish to video time via fish_stamp - loc0.
+    # foma_speed stamps in a DIFFERENT clock (ROS/sim time) but also starts at
+    # trial start, so it's anchored by its own first sample.
+    foma_loc = _read_csv(foma_loc_csv)
+    loc0 = foma_loc[0][0] if foma_loc else (fish[0][0] if fish else 0.0)
+    fish_t = [r[0] - loc0 for r in fish] if fish else []
+    speed_t = [r[0] - speed[0][0] for r in speed] if speed else []
 
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(out_path, fourcc, fps, (w, h))
@@ -170,7 +237,7 @@ def annotate_foma_video(in_path, out_path, fish_csv, speed_csv, swap_rb=False):
         if swap_rb:
             # Swap R<->B before drawing so the overlay colors render correctly.
             frame = frame[:, :, ::-1].copy()
-        t = t0 + idx / fps
+        t = idx / fps
         _draw_fish_overlay(frame, _nearest(fish, fish_t, t))
         _draw_foma_overlay(frame, _nearest(speed, speed_t, t), w, h)
         out.write(frame)
@@ -191,8 +258,17 @@ def main():
                     help='Swap R<->B channels of the foma video (fixes pre-fix recordings).')
     ap.add_argument('--swap-room', action='store_true',
                     help='Swap R<->B channels of the room video.')
+    ap.add_argument('--room-cam-shape', default='1280x1280',
+                    help='ROOM_CAMERA_FRAME_SHAPE WxH, for scaling the foma '
+                         'location dot onto the room video resolution.')
     ap.add_argument('--log', default=None)
     args = ap.parse_args()
+
+    try:
+        _sw, _sh = args.room_cam_shape.lower().split('x')
+        room_cam_shape = (int(_sw), int(_sh))
+    except (ValueError, AttributeError):
+        room_cam_shape = (1280, 1280)
 
     if args.log:
         sys.stdout = open(args.log, 'a', buffering=1)
@@ -215,9 +291,10 @@ def main():
     tmp_annotated = tempfile.mktemp(suffix='_annotated.mp4', dir=csv_folder)
     fish_csv = os.path.join(csv_folder, 'fish_location.csv')
     speed_csv = os.path.join(csv_folder, 'foma_speed.csv')
+    foma_loc_csv = os.path.join(csv_folder, 'foma_location.csv')
     foma_swapped_in_annotation = False
     if annotate_foma_video(args.foma, tmp_annotated, fish_csv, speed_csv,
-                           swap_rb=args.swap_foma):
+                           foma_loc_csv, swap_rb=args.swap_foma):
         foma_input = tmp_annotated
         foma_swapped_in_annotation = args.swap_foma
     else:
@@ -228,8 +305,24 @@ def main():
             pass
         tmp_annotated = None
 
+    # Room overlay pass: draw the FOMA location dot on the room (ceiling) video.
+    room_input = args.room
+    tmp_room = tempfile.mktemp(suffix='_room_annotated.mp4', dir=csv_folder)
+    room_swapped_in_annotation = False
+    if annotate_room_video(args.room, tmp_room, foma_loc_csv, room_cam_shape,
+                           swap_rb=args.swap_room):
+        room_input = tmp_room
+        room_swapped_in_annotation = args.swap_room
+    else:
+        print('room overlay: annotation skipped; using raw room video')
+        try:
+            os.unlink(tmp_room)
+        except OSError:
+            pass
+        tmp_room = None
+
     try:
-        h_room, fps_room = probe_stream(args.room)
+        h_room, fps_room = probe_stream(room_input)
         h_foma, fps_foma = probe_stream(foma_input)
     except Exception as e:
         print(f'ffprobe failed: {e}')
@@ -243,7 +336,7 @@ def main():
 
         # R<->B swap via colorchannelmixer (matrix sets new_R=old_B, new_B=old_R).
         SWAP = 'colorchannelmixer=0:0:1:0:0:1:0:0:1:0:0:0,'
-        room_pre = SWAP if args.swap_room else ''
+        room_pre = SWAP if (args.swap_room and not room_swapped_in_annotation) else ''
         # foma input might already be swapped during annotation; only ffmpeg-swap
         # when annotation skipped AND user requested swap.
         foma_pre = SWAP if (args.swap_foma and not foma_swapped_in_annotation) else ''
@@ -257,10 +350,10 @@ def main():
         def build_cmd(use_nvenc):
             base = ['ffmpeg', '-y']
             if use_nvenc:
-                base += ['-hwaccel', 'cuda', '-c:v', 'h264_cuvid', '-i', args.room,
+                base += ['-hwaccel', 'cuda', '-c:v', 'h264_cuvid', '-i', room_input,
                          '-hwaccel', 'cuda', '-c:v', 'h264_cuvid', '-i', foma_input]
             else:
-                base += ['-i', args.room, '-i', foma_input]
+                base += ['-i', room_input, '-i', foma_input]
             base += [
                 '-filter_complex', filter_complex,
                 '-map', '[v]',
@@ -284,11 +377,12 @@ def main():
             rc = subprocess.call(cmd)
         print(f'ffmpeg exit code: {rc}')
 
-    if tmp_annotated is not None:
-        try:
-            os.unlink(tmp_annotated)
-        except OSError:
-            pass
+    for tmp in (tmp_annotated, tmp_room):
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
     return rc
 

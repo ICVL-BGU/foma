@@ -36,12 +36,16 @@ class LocalizationNode(AbstractNode):
     def read_image(self, img_msg: CompressedImage):
         try:
             self.img = jpeg.decode(img_msg.data)
-            self.process_image()
+            # Use image CAPTURE time, not Time.now() after detection, so the
+            # logged foma location aligns with the room video frame it came from.
+            stamp = img_msg.header.stamp
+            if stamp.to_sec() == 0.0:
+                stamp = rospy.Time.now()
+            self.process_image(stamp)
         except Exception as e:
             self.logerr(f"Error converting image: {e}")
 
-    def process_image(self):
-        timestamp = rospy.Time.now()
+    def process_image(self, timestamp):
         self.location.header.stamp = timestamp
         result = self.__detect_lidar()
         
