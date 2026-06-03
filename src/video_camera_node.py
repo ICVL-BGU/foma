@@ -46,6 +46,11 @@ class VideoCameraNode(AbstractNode):
                 # Rotate 270° (k=3) to match your previous behavior.
                 frame = np.rot90(frame, k=3)
 
+                # Picamera2's "BGR888" format on this build returns RGB-ordered
+                # bytes; cvtColor here so the published JPEG is canonical BGR
+                # (what cv2/turbojpeg and ffmpeg -pix_fmt bgr24 expect).
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
                 ok, buf = cv2.imencode(".jpg", frame, self._jpeg_params)
                 if not ok:
                     self.logwarn("JPEG encode failed; skipping frame.")

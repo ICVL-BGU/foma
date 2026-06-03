@@ -747,7 +747,8 @@ class MainWindow(QMainWindow):
 
     def __update_fish_image(self, img_msg: CompressedImage):
         try:
-            self.__fish_image = jpeg.decode(img_msg.data)
+            bgr = jpeg.decode(img_msg.data)
+            self.__fish_image = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
             # No emit/copy here — display timer reads __latest_fish and
             # discards backlog by definition.
             self.__latest_fish = self.__fish_image
