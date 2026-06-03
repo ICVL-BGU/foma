@@ -747,8 +747,7 @@ class MainWindow(QMainWindow):
 
     def __update_fish_image(self, img_msg: CompressedImage):
         try:
-            bgr = jpeg.decode(img_msg.data)
-            self.__fish_image = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            self.__fish_image = jpeg.decode(img_msg.data)
             # No emit/copy here — display timer reads __latest_fish and
             # discards backlog by definition.
             self.__latest_fish = self.__fish_image
@@ -1308,7 +1307,9 @@ class MainWindow(QMainWindow):
             except rospy.ServiceException as e:
                 rospy.logerr(f"Writer service call failed: {e}")
 
-        self.__spawn_sidebyside_worker()
+        # Side-by-side videos are no longer built per trial (that thrashes the
+        # box when several trials end together). A single batch worker builds
+        # them all at GUI close (see __on_close_click / __spawn_sidebyside_batch).
 
         if self.__go_home_enable is not None:
             try:
@@ -1316,31 +1317,30 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.logwarn(f"Failed disabling go_home: {e}")
 
-    def __spawn_sidebyside_worker(self):
-        """Spawn detached ffmpeg-based worker that builds a side-by-side video
-        from room_video.mp4 + foma_video.mp4 in the trial folder."""
-        folder = getattr(self, '_MainWindow__trial_folder', None)  # name-mangled access
-        if not folder or not os.path.isdir(folder):
-            rospy.logwarn("sidebyside: no trial folder; skipping")
+    def __spawn_sidebyside_batch(self):
+        """Spawn one detached batch worker at GUI close that builds side-by-side
+        videos for every trial of today's sessions under TRIAL_ROOT, using a
+        bounded pool of concurrent workers. Replaces per-trial spawning."""
+        root = "/home/icvl/trial_output"
+        if not os.path.isdir(root):
+            rospy.logwarn(f"sidebyside batch: root {root} missing; skipping")
             return
 
-        room = os.path.join(folder, "room_video.mp4")
-        foma = os.path.join(folder, "foma_video.mp4")
-        out  = os.path.join(folder, "side_by_side.mp4")
-        log  = os.path.join(folder, "sidebyside.log")
-
-        worker = os.path.join(os.path.dirname(__file__), "etc", "sidebyside_worker.py")
-        # nice/ionice so the transcode (esp. libx264 fallback) never starves the
-        # live room feed, which decodes on CPU. Children (ffmpeg) inherit it.
+        worker = os.path.join(os.path.dirname(__file__), "etc", "sidebyside_batch_worker.py")
+        log = os.path.join(root, "sidebyside_batch.log")
         cam_w, cam_h = self.__room_camera_frame_shape[1], self.__room_camera_frame_shape[0]
+        # nice/ionice so the batch never starves anything still live. Children
+        # (sidebyside_worker -> ffmpeg) inherit it.
         cmd = ["nice", "-n", "15", "ionice", "-c", "3",
-               sys.executable, worker, room, foma, out, "--log", log,
-               "--room-cam-shape", f"{cam_w}x{cam_h}"]
+               sys.executable, worker, root,
+               "--jobs", "2",
+               "--room-cam-shape", f"{cam_w}x{cam_h}",
+               "--log", log]
 
         logf = open(log, "a")
         p = subprocess.Popen(cmd, stdout=logf, stderr=logf,
                              start_new_session=True, close_fds=True)
-        rospy.loginfo(f"Spawned sidebyside worker pid={p.pid} log={log}")
+        rospy.loginfo(f"Spawned sidebyside batch worker pid={p.pid} log={log}")
 
     def __on_close_click(self, event):
         if self.__ongoing_trial:
@@ -1354,8 +1354,8 @@ class MainWindow(QMainWindow):
             except rospy.ServiceException as e:
                 rospy.logerr(f"Writer service call failed: {e}")
 
-        self.__spawn_sidebyside_worker()
-        
+        self.__spawn_sidebyside_batch()
+
         QApplication.quit()
         rospy.signal_shutdown("Closing GUI")
 

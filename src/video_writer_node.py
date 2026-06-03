@@ -94,7 +94,7 @@ class VideoWriterNode(AbstractNode):
         self.__fps = rospy.get_param('~fps', 25)
         self.__frame_shape = tuple(rospy.get_param('~frame_shape', [640, 480]))
         self.__video_type = rospy.get_param('~video_type', 'standard')  # standard or trajectory_map
-        
+
         # Reframe worker settings (only for this node)
         self.__enable_reframe_worker = rospy.get_param('~enable_reframe_worker', False)
         self.__reframe_worker_script = rospy.get_param('~reframe_worker_script', 'etc/reframe_worker.py')
@@ -311,9 +311,12 @@ class VideoWriterNode(AbstractNode):
         if not self.__write or self.__video_writer is None or self.__frame_queue is None:
             return
 
-        # turbojpeg returns BGR directly; no extra cvtColor needed.
-        img = jpeg.decode(img_msg.data)
-        
+        # fish_camera/image is published RGB-ordered (the GUI shows its raw
+        # decode and it looks right). jpeg.decode returns those bytes as-is and
+        # the ffmpeg writer is fed -pix_fmt bgr24, so without a swap the saved
+        # file has R<->B reversed vs the GUI. Swap here so disk matches display.
+        img = jpeg.decode(img_msg.data)[:, :, ::-1].copy()
+
         try:
             self.__frame_queue.put(img, block=True, timeout=0.5)
         except queue.Full:

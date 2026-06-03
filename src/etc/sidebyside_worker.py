@@ -92,6 +92,23 @@ def _nearest(rows, times, t):
     return rows[i - 1] if (t - times[i - 1]) <= (times[i] - t) else rows[i]
 
 
+def _anchor_times(rows, t0, video_dur):
+    """Map a stream's absolute timestamps to video time. The station clocks are
+    NTP-synced, so absolute stamps across machines ARE comparable: anchor to the
+    shared t0 (video t=0) so a late-starting stream (e.g. fish detector warmup)
+    lands at its true offset. Guard: if the stream's first stamp sits outside the
+    video window (legacy recording with unsynced clocks, >video_dur skew), fall
+    back to self-anchor so the overlay still animates instead of freezing."""
+    if not rows:
+        return []
+    first = rows[0][0]
+    if first < t0 - 2.0 or first > t0 + video_dur + 2.0:
+        base = first  # clock skew -> self-anchor
+    else:
+        base = t0
+    return [r[0] - base for r in rows]
+
+
 # ----------------------------- overlay --------------------------------------
 
 def _draw_fish_overlay(frame, fish_row):
@@ -211,16 +228,17 @@ def annotate_foma_video(in_path, out_path, fish_csv, speed_csv, foma_loc_csv,
         cap.release()
         print('overlay: no fish/speed csv data; skipping annotation')
         return False
-    # Clock anchoring: foma_location and fish_detection both stamp in wall-clock
-    # time, and foma_location starts at video t=0 (it tracks the foma video, its
-    # span == video duration). So foma_location[0] is the wall-clock instant of
-    # the first video frame -> map fish to video time via fish_stamp - loc0.
-    # foma_speed stamps in a DIFFERENT clock (ROS/sim time) but also starts at
-    # trial start, so it's anchored by its own first sample.
+    # Shared video t=0 = earliest first-sample across the streams that start at
+    # trial start (foma_location, foma_speed). Stamps are NTP-synced across the
+    # robot + station, so fish/speed map onto video time absolutely; a stream
+    # whose first stamp lands outside the video window (legacy unsynced clocks)
+    # self-anchors instead (see _anchor_times).
     foma_loc = _read_csv(foma_loc_csv)
-    loc0 = foma_loc[0][0] if foma_loc else (fish[0][0] if fish else 0.0)
-    fish_t = [r[0] - loc0 for r in fish] if fish else []
-    speed_t = [r[0] - speed[0][0] for r in speed] if speed else []
+    firsts = [r[0][0] for r in (foma_loc, speed, fish) if r]
+    t0 = min(firsts) if firsts else 0.0
+    video_dur = (int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0) / fps) if fps else 0.0
+    fish_t = _anchor_times(fish, t0, video_dur)
+    speed_t = _anchor_times(speed, t0, video_dur)
 
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(out_path, fourcc, fps, (w, h))
@@ -341,17 +359,33 @@ def main():
         # when annotation skipped AND user requested swap.
         foma_pre = SWAP if (args.swap_foma and not foma_swapped_in_annotation) else ''
 
+        # hstack needs both streams at the same fps. The cameras record at
+        # different real rates (e.g. room 25, foma 19.7), so the slower stream
+        # must be brought up to F. Plain fps= duplicates frames -> visible
+        # judder on that half. minterpolate synthesizes motion-compensated
+        # in-between frames instead, so the upsampled side stays smooth. Only
+        # interpolate a stream that is meaningfully below F (the faster one just
+        # passes through fps=).
+        def retime(src_fps):
+            if F - src_fps > 0.5:
+                return f"minterpolate=fps={F}:mi_mode=mci:mc_mode=aobmc,"
+            return f"fps={F},"
+
         filter_complex = (
-            f'[0:v]{room_pre}fps={F},scale=trunc(oh*a/2)*2:{H},setsar=1[a];'
-            f'[1:v]{foma_pre}fps={F},scale=trunc(oh*a/2)*2:{H},setsar=1[b];'
+            f'[0:v]{room_pre}{retime(fps_room)}scale=trunc(oh*a/2)*2:{H},setsar=1[a];'
+            f'[1:v]{foma_pre}{retime(fps_foma)}scale=trunc(oh*a/2)*2:{H},setsar=1[b];'
             f'[a][b]hstack=inputs=2[v]'
         )
 
         def build_cmd(use_nvenc):
             base = ['ffmpeg', '-y']
             if use_nvenc:
-                base += ['-hwaccel', 'cuda', '-c:v', 'h264_cuvid', '-i', room_input,
-                         '-hwaccel', 'cuda', '-c:v', 'h264_cuvid', '-i', foma_input]
+                # No explicit -c:v cuvid: the annotated inputs are OpenCV mp4v
+                # (MPEG-4 Part 2), not h264, so forcing h264_cuvid spews
+                # "Invalid NAL unit 0" and fails the whole GPU pass. -hwaccel
+                # cuda lets ffmpeg pick the right decoder per input codec.
+                base += ['-hwaccel', 'cuda', '-i', room_input,
+                         '-hwaccel', 'cuda', '-i', foma_input]
             else:
                 base += ['-i', room_input, '-i', foma_input]
             base += [
