@@ -5,7 +5,6 @@ from abstract_node import AbstractNode
 import numpy as np
 import cv2
 from picamera2 import Picamera2
-from etc.settings import *
 from concurrent.futures import TimeoutError
 
 class VideoCameraNode(AbstractNode):
@@ -37,7 +36,7 @@ class VideoCameraNode(AbstractNode):
         rospy.on_shutdown(self._on_shutdown)
 
     def run(self):
-        rate = rospy.Rate(FOMA_CAMERA_FPS)
+        rate = rospy.Rate(rospy.get_param('/FOMA_CAMERA_FPS'))
         while not rospy.is_shutdown():
             try:
                 # Non-blocking read from the *lores* stream so the loop never deadlocks.

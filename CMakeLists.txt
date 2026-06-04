@@ -53,6 +53,7 @@ add_message_files(
   FILES
   FishState.msg
   FomaLocation.msg
+  TrialEvent.msg
 )
 
 ## Generate services in the 'srv' folder

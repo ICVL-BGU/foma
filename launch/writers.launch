@@ -1,82 +1,23 @@
-<!-- Launch file for multiple writer node instances -->
-<!-- This replaces the functionality of the original writer_node.py -->
+<!-- Launch file for writer node instances.
+     All per-node params live in config/foma_params.yaml under top-level keys
+     matching each node name; loading the YAML globally populates each node's
+     private namespace (~param) automatically. -->
 <launch>
-    <!-- CSV Writer Nodes - 3 instances -->
-    
-    <!-- CSV Writer 1: FOMA Location -->
-    <node name="csv_writer_foma_location" pkg="foma" type="csv_writer_node.py" output="screen">
-        <param name="topic" value="localization/location" />
-        <param name="msg_type" value="FomaLocation" />
-        <param name="filename" value="foma_location.csv" />
-        <param name="data_type" value="foma_location" />
-        <rosparam param="fields">["time", "x_w", "y_w", "x_i", "y_i"]</rosparam>
-    </node>
+    <rosparam command="load" file="$(find foma)/config/foma_params.yaml" />
 
-    <!-- CSV Writer 2: Fish Location/State -->
-    <node name="csv_writer_fish_location" pkg="foma" type="csv_writer_node.py" output="screen">
-        <param name="topic" value="fish_detection/state" />
-        <param name="msg_type" value="TwistStamped" />
-        <param name="filename" value="fish_location.csv" />
-        <param name="data_type" value="fish_state" />
-        <rosparam param="fields">["time", "x", "y", "angle"]</rosparam>
-    </node>
+    <!-- CSV Writers -->
+    <node name="csv_writer_foma_location" pkg="foma" type="csv_writer_node.py" output="screen"/>
+    <node name="csv_writer_fish_location" pkg="foma" type="csv_writer_node.py" output="screen"/>
+    <node name="csv_writer_foma_speed"    pkg="foma" type="csv_writer_node.py" output="screen"/>
+    <node name="csv_writer_lidar"         pkg="foma" type="csv_writer_node.py" output="screen"/>
 
-    <!-- CSV Writer 3: FOMA Speed -->
-    <node name="csv_writer_foma_speed" pkg="foma" type="csv_writer_node.py" output="screen">
-        <param name="topic" value="motor_control/speed" />
-        <param name="msg_type" value="TwistStamped" />
-        <param name="filename" value="foma_speed.csv" />
-        <param name="data_type" value="foma_speed" />
-        <rosparam param="fields">["time", "v", "h", "r"]</rosparam>
-    </node>
+    <!-- Event Writer -->
+    <node name="event_writer" pkg="foma" type="event_writer_node.py" output="screen"/>
 
-    <!-- CSV Writer 4: LIDAR Scans -->
-    <node name="csv_writer_lidar" pkg="foma" type="csv_writer_node.py" output="screen">
-        <param name="topic" value="lidar/scans" />
-        <param name="msg_type" value="LaserScan" />
-        <param name="filename" value="lidar_scans.csv" />
-        <param name="data_type" value="lidar" />
-        <rosparam param="fields">["time"]</rosparam>
-    </node>
+    <!-- Room camera: record native H.264 directly from RTSP, bypassing ROS image topics. -->
+    <node name="room_recorder"         pkg="foma" type="room_recorder_node.py" output="screen"/>
 
-    <!-- Video Writer Nodes - 3 instances -->
-    
-    <!-- Video Writer 1: Room Video -->
-    <node name="video_writer_room" pkg="foma" type="video_writer_node.py" output="screen">
-        <param name="topic" value="ceiling_camera/image" />
-        <param name="msg_type" value="CompressedImage" />
-        <param name="filename" value="room_video.mp4" />
-        <param name="fourcc" value="X264" />
-        <param name="fps" value="25" />
-        <rosparam param="frame_shape">[640, 640]</rosparam>
-        <param name="video_type" value="standard" />
-        <param name="enable_reframe_worker" value="false" />
-    </node>
-
-    <!-- Video Writer 2: FOMA Video -->
-    <node name="video_writer_foma" pkg="foma" type="video_writer_node.py" output="screen">
-        <param name="topic" value="fish_camera/image" />
-        <param name="msg_type" value="CompressedImage" />
-        <param name="filename" value="foma_video.mp4" />
-        <param name="fourcc" value="X264" />
-        <param name="fps" value="20" />
-        <rosparam param="frame_shape">[640, 640]</rosparam>
-        <param name="video_type" value="standard" />
-        <param name="enable_reframe_worker" value="false" />
-    </node>
-
-    <!-- Video Writer 3: Room Map (Trajectory) -->
-    <node name="video_writer_room_map" pkg="foma" type="video_writer_node.py" output="screen">
-        <param name="topic" value="localization/location" />
-        <param name="msg_type" value="FomaLocation" />
-        <param name="filename" value="room_map.mp4" />
-        <param name="fourcc" value="X264" />
-        <param name="fps" value="25" />
-        <rosparam param="frame_shape">[1000, 1000]</rosparam>
-        <param name="video_type" value="trajectory_map" />
-        <param name="enable_reframe_worker" value="true" />
-        <param name="reframe_worker_script" value="etc/reframe_worker.py" />
-        <param name="reframe_force" value="false" />
-        <param name="reframe_no_ffmpeg" value="false" />
-    </node>
+    <!-- Video Writers -->
+    <node name="video_writer_foma"     pkg="foma" type="video_writer_node.py" output="screen"/>
+    <node name="video_writer_room_map" pkg="foma" type="video_writer_node.py" output="screen"/>
 </launch>
