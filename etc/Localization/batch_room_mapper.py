@@ -15,19 +15,33 @@ _MODEL = None
 _MAPPER = None
 
 
+def _theta(r_d, model: str):
+    """Map radial distance r_d to incidence angle theta per distortion model."""
+    if model == "equisolid":
+        return 2 * np.arcsin(np.clip(r_d / 2, -1.0, 1.0))
+    if model == "equidistant":
+        return r_d
+    if model == "stereographic":
+        return 2 * np.arctan(r_d / 2)
+    if model == "orthographic":
+        return np.arcsin(np.clip(r_d, -1.0, 1.0))
+    raise ValueError(f"Unknown fisheye model: {model}")
+
+
 def _map_point(x: float, y: float, mapper_params: dict) -> tuple[float, float]:
     """Map a single image point (x, y) to world coordinates using the mapper JSON."""
-    cx = mapper_params["cx"]
-    cy = mapper_params["cy"]
-    f = mapper_params["f"]
+    # Nested schema: undistorter holds intrinsics + model name (not hardcoded).
+    u = mapper_params["undistorter"]
+    cx = u["cx"]
+    cy = u["cy"]
+    f = u["f"]
 
-    # Undistort (equisolid fisheye)
+    # Undistort (model read from JSON)
     x_d = (x - cx) / f
     y_d = (y - cy) / f
     r_d = np.sqrt(x_d ** 2 + y_d ** 2)
 
-    arg = np.clip(r_d / 2, -1.0, 1.0)
-    theta = 2 * np.arcsin(arg)
+    theta = _theta(r_d, u["model"])
 
     scale = np.tan(theta) / r_d if r_d > 1e-9 else 1.0
     x_u = x_d * scale
@@ -74,7 +88,8 @@ def _init_models(model_path: str, mapper_path: str):
         _MODEL = YOLO(model_path, verbose=False)
     if _MAPPER is None:
         with open(mapper_path, "r") as f:
-            _MAPPER = json.load(f)
+            # Merged JSON holds both mappers; batch tool uses the LIDAR one.
+            _MAPPER = json.load(f)["lidar"]
 
 
 def _process_video(folder: Path, model_path: str, mapper_path: str, grid_size_px: int) -> tuple[Path, bool, str | None]:
