@@ -15,13 +15,42 @@ Invocation:
 Run via subprocess.Popen(start_new_session=True) so it outlives the GUI.
 """
 import argparse
+import collections
 import datetime
 import os
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+import time
 
 WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sidebyside_worker.py")
+
+# reframe_worker prints this as its final log line.
+REFRAME_DONE_SENTINEL = "reframe_worker done."
+
+# How long a job may stay blocked before we force-dispatch it anyway, so a
+# stuck/never-finishing reframe can never starve a job forever.
+JOB_BLOCK_DEADLINE_S = 1200.0
+
+# When every remaining job is blocked, workers sleep this long before retrying.
+ALL_BLOCKED_SLEEP_S = 2.0
+
+
+def reframe_state(trial_dir):
+    """Return 'done', 'blocked' or 'absent' for a trial folder.
+
+    - 'absent' : no reframe.log -> reframe not running/disabled -> safe to go.
+    - 'blocked': reframe.log exists but no done-sentinel yet -> still rewriting.
+    - 'done'   : reframe.log contains the done-sentinel.
+    """
+    log = os.path.join(trial_dir, "reframe.log")
+    if not os.path.exists(log):
+        return "absent"
+    try:
+        with open(log, "r") as f:
+            return "done" if REFRAME_DONE_SENTINEL in f.read() else "blocked"
+    except OSError:
+        return "blocked"
 
 
 def find_trials(root, date_prefix, force):
@@ -47,11 +76,44 @@ def build_one(trial_dir, room_cam_shape):
     foma = os.path.join(trial_dir, "foma_video.mp4")
     out = os.path.join(trial_dir, "side_by_side.mp4")
     log = os.path.join(trial_dir, "sidebyside.log")
+    reframe_log = os.path.join(trial_dir, "reframe.log")
     cmd = ["nice", "-n", "15", "ionice", "-c", "3",
            sys.executable, WORKER, room, foma, out,
-           "--log", log, "--room-cam-shape", room_cam_shape]
+           "--log", log, "--reframe-log", reframe_log,
+           "--room-cam-shape", room_cam_shape]
     rc = subprocess.call(cmd)
     return trial_dir, rc
+
+
+def worker_loop(wid, jobs, lock, deadlines, room_cam_shape, results):
+    """Pop a job; if its videos are still being rewritten by reframe_worker
+    (blocked) put it back at the END of the pool and try a different job.
+    Only idle-sleep when every remaining job is blocked."""
+    while True:
+        trial = None
+        all_blocked = False
+        with lock:
+            if not jobs:
+                return  # pool drained
+            for _ in range(len(jobs)):
+                cand = jobs.popleft()
+                if reframe_state(cand) == "blocked" and time.time() < deadlines.get(cand, 0.0):
+                    jobs.append(cand)  # send to back, try another
+                    continue
+                trial = cand
+                break
+            else:
+                all_blocked = True  # nothing ready right now
+
+        if trial is None:
+            if all_blocked:
+                time.sleep(ALL_BLOCKED_SLEEP_S)
+            continue
+
+        trial_dir, rc = build_one(trial, room_cam_shape)
+        print(f'batch: {"OK" if rc == 0 else f"FAIL({rc})"} {trial_dir}', flush=True)
+        with lock:
+            results.append(rc)
 
 
 def main():
@@ -77,15 +139,23 @@ def main():
         print('batch: nothing to build; done.')
         return 0
 
-    jobs = max(1, args.jobs)
-    failures = 0
-    with ThreadPoolExecutor(max_workers=jobs) as ex:
-        futs = {ex.submit(build_one, t, args.room_cam_shape): t for t in trials}
-        for fut in as_completed(futs):
-            trial_dir, rc = fut.result()
-            print(f'batch: {"OK" if rc == 0 else f"FAIL({rc})"} {trial_dir}')
-            failures += (rc != 0)
-    print(f'batch: done. built={len(trials) - failures} failed={failures}')
+    nworkers = max(1, min(args.jobs, len(trials)))
+    jobs_q = collections.deque(trials)
+    deadlines = {t: time.time() + JOB_BLOCK_DEADLINE_S for t in trials}
+    lock = threading.Lock()
+    results = []
+
+    threads = [threading.Thread(target=worker_loop,
+                                args=(i, jobs_q, lock, deadlines, args.room_cam_shape, results),
+                                daemon=True)
+               for i in range(nworkers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    failures = sum(1 for rc in results if rc != 0)
+    print(f'batch: done. built={len(results) - failures} failed={failures}')
     return 1 if failures else 0
 
 

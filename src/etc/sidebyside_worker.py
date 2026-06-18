@@ -65,6 +65,45 @@ def wait_for_file(path, timeout_s=10.0):
     return os.path.exists(path) and os.path.getsize(path) > 0
 
 
+REFRAME_DONE_SENTINEL = "reframe_worker done."
+
+
+def wait_for_reframe(log_path, appear_timeout_s=30.0, done_timeout_s=900.0):
+    """Block until reframe_worker finishes rewriting the videos on disk.
+
+    reframe_worker prints REFRAME_DONE_SENTINEL as its last log line. We wait
+    for that line so we never read foma_video.mp4 mid-rewrite (it re-encodes
+    the file in place).
+
+    If the log never appears within appear_timeout_s we assume reframe is not
+    running (disabled) and proceed. Returns True if it's safe to proceed.
+    """
+    if not log_path:
+        return True
+    # Wait for the log to appear (reframe spawns roughly when we do).
+    end_appear = time.time() + appear_timeout_s
+    while time.time() < end_appear:
+        if os.path.exists(log_path):
+            break
+        time.sleep(0.5)
+    if not os.path.exists(log_path):
+        print(f'reframe log never appeared ({log_path}); assuming disabled, proceeding.')
+        return True
+    # Log exists; wait for the done sentinel.
+    end_done = time.time() + done_timeout_s
+    while time.time() < end_done:
+        try:
+            with open(log_path, 'r') as f:
+                if REFRAME_DONE_SENTINEL in f.read():
+                    print('reframe_worker finished; proceeding.')
+                    return True
+        except OSError:
+            pass
+        time.sleep(1.0)
+    print(f'timed out waiting for reframe to finish ({log_path}); proceeding anyway.')
+    return True
+
+
 def _read_csv(path):
     rows = []
     if not os.path.isfile(path):
@@ -113,32 +152,35 @@ def _anchor_times(rows, t0, video_dur):
 
 def _draw_fish_overlay(frame, fish_row):
     """fish_row: [time, x, y, angle_deg]. Mirrors gui_node __update_left_display
-    fish-direction block."""
+    fish-direction block. Draws shapes (they rotate with the frame) and returns
+    deferred text items [(x, y, text, scale, thickness), ...] drawn upright
+    after the frame is rotated, anchored at the pre-rotation point."""
     if fish_row is None:
-        return
+        return []
     try:
         px = int(fish_row[1]); py = int(fish_row[2]); angle = float(fish_row[3])
     except (IndexError, ValueError):
-        return
+        return []
     cv2.circle(frame, (px, py), 5, (0, 0, 255), -1)
-    cv2.putText(frame, f"Dir: {angle:.1f}", (px + 10, py - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
     L = 30
     ex = px + int(L * math.cos(math.radians(angle)))
     ey = py - int(L * math.sin(math.radians(angle)))
     cv2.arrowedLine(frame, (px, py), (ex, ey), (0, 255, 0), 2, tipLength=0.3)
+    return [(px + 10, py - 10, f"Dir: {angle:.1f}", 0.5, 1)]
 
 
 def _draw_foma_overlay(frame, speed_row, w, h):
     """speed_row: [time, v, h, r] where v=linear.x, h=linear.y, r=angular.z.
-    Mirrors gui_node __update_left_display FOMA-direction block."""
+    Mirrors gui_node __update_left_display FOMA-direction block. See
+    _draw_fish_overlay for the shape/text split."""
     if speed_row is None:
-        return
+        return []
     try:
         vx = float(speed_row[1]); vy = float(speed_row[2]); rz = float(speed_row[3])
     except (IndexError, ValueError):
-        return
+        return []
     cx, cy = w // 2, h // 2
+    texts = []
     linear = math.hypot(vx, vy)
     if linear > 0:
         angle = math.degrees(math.atan2(vy, vx))
@@ -146,11 +188,10 @@ def _draw_foma_overlay(frame, speed_row, w, h):
         ex = int(cx + L * math.cos(math.radians(angle)))
         ey = int(cy - L * math.sin(math.radians(angle)))
         cv2.arrowedLine(frame, (cx, cy), (ex, ey), (0, 255, 255), 2, tipLength=0.3)
-        cv2.putText(frame, f"{linear:.2f}", (ex + 10, ey - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        texts.append((ex + 10, ey - 10, f"{linear:.2f}", 0.5, 1))
     if abs(rz) > 1e-6:
-        cv2.putText(frame, f"w={rz:.2f}", (cx + 20, cy + 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        texts.append((cx + 20, cy + 20, f"w={rz:.2f}", 0.5, 1))
+    return texts
 
 
 def _draw_foma_location_overlay(frame, loc_row, sx, sy):
@@ -240,8 +281,9 @@ def annotate_foma_video(in_path, out_path, fish_csv, speed_csv, foma_loc_csv,
     fish_t = _anchor_times(fish, t0, video_dur)
     speed_t = _anchor_times(speed, t0, video_dur)
 
+    # Output is rotated 90 deg CW, so the writer frame size is (h, w) swapped.
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(out_path, fourcc, fps, (w, h))
+    out = cv2.VideoWriter(out_path, fourcc, fps, (h, w))
     if not out.isOpened():
         cap.release()
         print(f'overlay: cannot open writer {out_path}')
@@ -256,8 +298,18 @@ def annotate_foma_video(in_path, out_path, fish_csv, speed_csv, foma_loc_csv,
             # Swap R<->B before drawing so the overlay colors render correctly.
             frame = frame[:, :, ::-1].copy()
         t = idx / fps
-        _draw_fish_overlay(frame, _nearest(fish, fish_t, t))
-        _draw_foma_overlay(frame, _nearest(speed, speed_t, t), w, h)
+        # Draw vector shapes in the native (un-rotated) frame so the math
+        # matches the GUI/CSV coords, then rotate the whole frame 90 deg CW so
+        # the vectors rotate together with the video. Text is deferred and
+        # drawn upright after rotation (rotating it would make it unreadable).
+        texts = _draw_fish_overlay(frame, _nearest(fish, fish_t, t))
+        texts += _draw_foma_overlay(frame, _nearest(speed, speed_t, t), w, h)
+        frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        # 90 CW point map: (x, y) -> (h - 1 - y, x), h = pre-rotation height.
+        for tx, ty, s, scale, thick in texts:
+            rx, ry = h - 1 - ty, tx
+            cv2.putText(frame, s, (rx, ry), cv2.FONT_HERSHEY_SIMPLEX, scale,
+                        (255, 255, 255), thick, cv2.LINE_AA)
         out.write(frame)
         idx += 1
     cap.release(); out.release()
@@ -280,6 +332,9 @@ def main():
                     help='ROOM_CAMERA_FRAME_SHAPE WxH, for scaling the foma '
                          'location dot onto the room video resolution.')
     ap.add_argument('--log', default=None)
+    ap.add_argument('--reframe-log', default=None,
+                    help='Path to reframe.log; wait until reframe_worker finishes '
+                         'rewriting videos on disk before processing.')
     args = ap.parse_args()
 
     try:
@@ -295,6 +350,10 @@ def main():
     if shutil.which('ffmpeg') is None or shutil.which('ffprobe') is None:
         print('ffmpeg/ffprobe not found on PATH; aborting.')
         return 2
+
+    # Serialize against reframe_worker: it re-encodes foma_video.mp4 in
+    # place, so we must not read inputs until it has finished.
+    wait_for_reframe(args.reframe_log)
 
     for p in (args.room, args.foma):
         if not wait_for_file(p):

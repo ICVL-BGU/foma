@@ -98,9 +98,12 @@ def has_audio(path, ffprobe_path):
         return False
 
 
-def reframe_single_file(vf, start_s, stop_s, logger, force_reencode=False, try_ffmpeg_first=True, duration_tolerance_s=None):
+def reframe_single_file(vf, start_s, stop_s, logger, force_reencode=False, try_ffmpeg_first=True, duration_tolerance_s=None, rotate_ccw=False):
     """
     Re-encode one file. Returns a tuple (success: bool, message: str, new_fps: float or None, frames: int or None)
+
+    If rotate_ccw is True the video is rotated 90 degrees counter-clockwise and
+    written back to disk (used for foma_video.mp4 from video_camera_node).
     """
     ffmpeg_path = shutil.which("ffmpeg")
     ffprobe_path = shutil.which("ffprobe")
@@ -162,6 +165,9 @@ def reframe_single_file(vf, start_s, stop_s, logger, force_reencode=False, try_f
             # Prefer GPU NVENC encode; fall back to libx264 if NVENC unavailable.
             def _reframe_cmd(use_nvenc):
                 base = [ffmpeg_path, "-y", "-r", fps_arg, "-i", vf]
+                # transpose=2 -> rotate 90 degrees counter-clockwise
+                if rotate_ccw:
+                    base += ["-vf", "transpose=2"]
                 if use_nvenc:
                     base += ["-c:v", "h264_nvenc", "-preset", "fast", "-cq", "23"]
                 else:
@@ -224,8 +230,10 @@ def reframe_single_file(vf, start_s, stop_s, logger, force_reencode=False, try_f
                 h, w = frame.shape[0], frame.shape[1]
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
+            # When rotating 90 deg the output frame dimensions are swapped
+            out_w, out_h = (h, w) if rotate_ccw else (w, h)
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            out = cv2.VideoWriter(tmp_video, fourcc, new_fps, (w, h))
+            out = cv2.VideoWriter(tmp_video, fourcc, new_fps, (out_w, out_h))
             if not out.isOpened():
                 cap.release()
                 try:
@@ -246,6 +254,8 @@ def reframe_single_file(vf, start_s, stop_s, logger, force_reencode=False, try_f
                     frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
                 elif frame.shape[2] == 4:
                     frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                if rotate_ccw:
+                    frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
                 out.write(frame)
                 written += 1
             cap.release()
@@ -370,13 +380,15 @@ def main():
         os.path.join(args.output_folder, "foma_video.mp4"),
     ]
     for vf in files:
+        # foma_video.mp4 rotation now happens in sidebyside_worker after the
+        # overlays are drawn, so vectors rotate together with the frame.
         ok, msg, new_fps, frames = reframe_single_file(
             vf,
             args.start_s,
             args.stop_s,
             logger,
             force_reencode=args.force or args.no_ffmpeg,
-            try_ffmpeg_first=not args.no_ffmpeg
+            try_ffmpeg_first=not args.no_ffmpeg,
         )
         short = os.path.basename(vf)
         if ok:

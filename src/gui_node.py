@@ -92,6 +92,10 @@ class MainWindow(QMainWindow):
         self.__display_timer.timeout.connect(self.__pump_displays)
         self.__display_timer.start(40)  # 25 Hz display refresh
 
+        # Trial timer: ticks once per second while a trial is running
+        self.__trial_timer = QTimer(self)
+        self.__trial_timer.timeout.connect(self.__update_trial_timer)
+
     def __pump_displays(self):
         fish = self.__latest_fish
         if fish is not None:
@@ -137,6 +141,13 @@ class MainWindow(QMainWindow):
         self.__ongoing_trial = False
         self.__session_folder = None
         self.__current_trial = 0
+
+        # Trial timer
+        self.__trial_cap_default = 600  # default trial cap = 10 minutes
+        self.__trial_cap_seconds = self.__trial_cap_default
+        self.__trial_start_time = None
+        self.__trial_cap_reached = False
+        self.__trial_popup = None
 
     def __init_layouts(self):
         # Top-Left (Fish Camera)
@@ -184,12 +195,14 @@ class MainWindow(QMainWindow):
         self.__BC_layout.addWidget(self.__subject_id_value_label, 0, 1, alignment=Qt.AlignCenter)
         self.__BC_layout.addWidget(self.__trial_num_text_label, 1, 0, alignment=Qt.AlignCenter)
         self.__BC_layout.addWidget(self.__trial_num_value_label, 1, 1, alignment=Qt.AlignCenter)
-        self.__BC_layout.addWidget(self.__times_fed_text_label, 2, 0, alignment=Qt.AlignCenter)
-        self.__BC_layout.addWidget(self.__times_fed_value_label, 2, 1, alignment=Qt.AlignCenter)
-        self.__BC_layout.addWidget(self.__foma_img_position_text_label, 3, 0, alignment=Qt.AlignCenter)
-        self.__BC_layout.addWidget(self.__foma_img_position_value_label, 3, 1, alignment=Qt.AlignCenter)
-        self.__BC_layout.addWidget(self.__foma_room_position_text_label, 4, 0, alignment=Qt.AlignCenter)
-        self.__BC_layout.addWidget(self.__foma_room_position_value_label, 4, 1, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__trial_timer_text_label, 2, 0, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__trial_timer_value_label, 2, 1, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__times_fed_text_label, 3, 0, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__times_fed_value_label, 3, 1, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__foma_img_position_text_label, 4, 0, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__foma_img_position_value_label, 4, 1, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__foma_room_position_text_label, 5, 0, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__foma_room_position_value_label, 5, 1, alignment=Qt.AlignCenter)
         
         self.__BC_widget = QFrame()
         self.__BC_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
@@ -339,6 +352,13 @@ class MainWindow(QMainWindow):
 
         self.__trial_num_value_label = QLabel("N/A")
         self.__trial_num_value_label.setAlignment(Qt.AlignHCenter)
+
+        # Trial timer label init
+        self.__trial_timer_text_label = QLabel("Trial Time:")
+        self.__trial_timer_text_label.setAlignment(Qt.AlignHCenter)
+
+        self.__trial_timer_value_label = QLabel("00:00")
+        self.__trial_timer_value_label.setAlignment(Qt.AlignHCenter)
 
         # Times fed label init
         self.__times_fed_text_label = QLabel("Times Fed:")
@@ -717,6 +737,46 @@ class MainWindow(QMainWindow):
         """Publish an event to event_writer_node, which writes it to the trial CSV."""
         msg = TrialEvent(stamp=rospy.Time.now(), event_type=event_type, details=details)
         self.__event_pub.publish(msg)
+
+    def __update_trial_timer(self):
+        """Tick the trial timer display; pop the cap-reached dialog once."""
+        if self.__trial_start_time is None:
+            return
+        elapsed = int(time.time() - self.__trial_start_time)
+        m, s = divmod(elapsed, 60)
+        self.__trial_timer_value_label.setText(f"{m:02d}:{s:02d}")
+        if not self.__trial_cap_reached and elapsed >= self.__trial_cap_seconds:
+            self.__trial_cap_reached = True
+            self.__log_event("trial_time_up",
+                             f"Trial cap of {self.__trial_cap_seconds}s reached")
+            self.__show_trial_up_popup()
+
+    def __show_trial_up_popup(self):
+        """Non-modal popup; trial and timer keep running while operator decides."""
+        if self.__trial_popup is not None:
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Trial Time Up")
+        box.setIcon(QMessageBox.Warning)
+        box.setText("Trial time is up.\nThe trial and timer keep running until you choose.")
+        reset_btn = box.addButton("Reset", QMessageBox.AcceptRole)
+        snooze_btn = box.addButton("Snooze +1 min", QMessageBox.RejectRole)
+        box.setWindowModality(Qt.NonModal)
+
+        def handle(btn):
+            self.__trial_popup = None
+            if btn == reset_btn:
+                self.__log_event("trial_time_up_reset", "Operator reset trial from cap dialog")
+                self.__on_reset_click()
+            elif btn == snooze_btn:
+                self.__trial_cap_seconds += 60
+                self.__trial_cap_reached = False
+                self.__log_event("trial_time_up_snooze",
+                                 f"Snoozed; new cap {self.__trial_cap_seconds}s")
+
+        box.buttonClicked.connect(handle)
+        self.__trial_popup = box
+        box.show()
 
     def __update_velocity(self, is_pressed: bool, direction: int = 0):
         """
@@ -1237,6 +1297,13 @@ class MainWindow(QMainWindow):
         # Now that event_writer is subscribed, log the trial-start event
         self.__log_event("trial_start", f"Trial {self.__current_trial} started")
 
+        # Start trial timer
+        self.__trial_cap_seconds = self.__trial_cap_default
+        self.__trial_cap_reached = False
+        self.__trial_start_time = time.time()
+        self.__trial_timer_value_label.setText("00:00")
+        self.__trial_timer.start(1000)
+
         self.__log_event("light_control", f"Brightness set to 255/255")
         self.__lights_slider.setValue(self.__lights_slider.maximum())
         self.__motor_set_mode("trial")
@@ -1288,6 +1355,16 @@ class MainWindow(QMainWindow):
 
         self.__ongoing_trial = False
         self.__control_mode_pub.publish(StringMsg("idle"))
+
+        # Stop and reset trial timer
+        self.__trial_timer.stop()
+        self.__trial_start_time = None
+        self.__trial_cap_reached = False
+        self.__trial_cap_seconds = self.__trial_cap_default
+        self.__trial_timer_value_label.setText("00:00")
+        if self.__trial_popup is not None:
+            self.__trial_popup.close()
+            self.__trial_popup = None
 
         self.__dim_lights(0)
         self.__log_event("light_control", f"Brightness set to 0/255")
