@@ -4,6 +4,15 @@ import os
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['NO_ALBUMENTATIONS_UPDATE'] = '1'
+# Per-node Ultralytics config dir: avoids settings.json write race between
+# concurrent YOLO nodes (room/fish/localization) that triggers a spurious
+# "settings reset to default values" warning. Ultralytics appends an
+# 'Ultralytics' subdir, so the dir below must exist and be writable.
+_yolo_cfg = os.path.expanduser('~/.config/yolo_fish')
+os.makedirs(_yolo_cfg, exist_ok=True)
+os.environ.setdefault('YOLO_CONFIG_DIR', _yolo_cfg)
+# Silence Ultralytics import-time INFO (e.g. "Creating new Settings file").
+os.environ.setdefault('YOLO_VERBOSE', 'False')
 
 import rospy
 from sensor_msgs.msg import CompressedImage
@@ -18,6 +27,7 @@ class FishDetectionNode(AbstractNode):
         super().__init__('fish_detection', 'Fish detection')
 
         model_path = rospy.get_param('~model_path')
+        self.tracker = rospy.get_param('~tracker_path', 'ocsort.yaml')
         self.model = YOLO(model_path)
         self.img = None
         self.bridge = CvBridge()
@@ -44,7 +54,7 @@ class FishDetectionNode(AbstractNode):
             self.logerr(f"Error converting image: {e}")
 
     def process_image(self, timestamp):
-        prediction = self.model.track(self.img, verbose=False)[0]
+        prediction = self.model.track(self.img, tracker=self.tracker, persist=True, verbose=False)[0]
         img_h, img_w = self.img.shape[:2]
         img_center = (img_w / 2, img_h / 2)
 
