@@ -6,7 +6,6 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Float32, Header
 from geometry_msgs.msg import Twist, TwistStamped, Vector3
 from abstract_node import AbstractNode
-from etc.settings import *
 from etc.MotorControl import *
 from gpiozero import BadPinFactory
 import numpy as np
@@ -30,16 +29,22 @@ class MotorControlNode(AbstractNode):
         rospy.Service('motor_control/bypass_lidar', SetBool, self.__bypass_lidar)
         rospy.Service('motor_control/set_speed', Float, self.__set_speed)
 
+        g = rospy.get_param
+        self.__foma_camera_frame_shape = tuple(g('/FOMA_CAMERA_FRAME_SHAPE'))
+        self.__direction_epsilon = g('/DIRECTION_EPSILON')
+        _safety_distance = g('/SAFETY_DISTANCE')
+        self.__safety_distance_vector = _safety_distance / np.cos(np.abs(np.arange(-45, 45) * np.pi / 180))
+
         try:
-            self.__motor_control = MotorControl(resetPins = (MOTOR_TOP_BOTTOM_RESET, MOTOR_RIGHT_LEFT_RESET)
-                                            ,encoderChannels = ((MOTOR_TOP_CHA, MOTOR_TOP_CHB),
-                                                               (MOTOR_BOTTOM_CHA, MOTOR_BOTTOM_CHB),
-                                                               (MOTOR_LEFT_CHA, MOTOR_LEFT_CHB),
-                                                               (MOTOR_RIGHT_CHA, MOTOR_RIGHT_CHB))
+            self.__motor_control = MotorControl(resetPins = (g('/MOTOR_TOP_BOTTOM_RESET'), g('/MOTOR_RIGHT_LEFT_RESET'))
+                                            ,encoderChannels = ((g('/MOTOR_TOP_CHA'),    g('/MOTOR_TOP_CHB')),
+                                                               (g('/MOTOR_BOTTOM_CHA'), g('/MOTOR_BOTTOM_CHB')),
+                                                               (g('/MOTOR_LEFT_CHA'),   g('/MOTOR_LEFT_CHB')),
+                                                               (g('/MOTOR_RIGHT_CHA'),  g('/MOTOR_RIGHT_CHB')))
                                             ,accl = 5
                                             ,brake = 0
-                                            ,port = MOTOR_PORT
-                                            ,speed = MOTOR_SPEED)
+                                            ,port = g('/MOTOR_PORT')
+                                            ,speed = g('/MOTOR_SPEED'))
         except BadPinFactory as e:
             self.logerr("MotorControlNode: "+e.msg)
 
@@ -160,7 +165,7 @@ class MotorControlNode(AbstractNode):
         fish_y = msg.twist.linear.y
 
         # Calculate the vector from the image center to the fish location
-        height, width = FOMA_CAMERA_FRAME_SHAPE
+        height, width = self.__foma_camera_frame_shape
         center_x = width // 2
         center_y = height // 2
         # 1. compute the pixel‐offset with y inverted
@@ -177,7 +182,7 @@ class MotorControlNode(AbstractNode):
 
         diff = (direction_angle - center_to_fish_angle + 180) % 360 - 180
 
-        if abs(diff) <= DIRECTION_EPSILON:
+        if abs(diff) <= self.__direction_epsilon:
             self.__handle_angle(Float32(direction_angle))
         else:
             self.__handle_vector(Vector3(0, 0, 0))
@@ -223,7 +228,7 @@ class MotorControlNode(AbstractNode):
 
     def __is_sector_blocked(self, sector):
         filtered_scans = np.array(self.__scans)[sector] 
-        distance_checks = filtered_scans < SAFETY_DISTANCE_VECTOR[45-len(sector)//2:45+len(sector)//2]
+        distance_checks = filtered_scans < self.__safety_distance_vector[45-len(sector)//2:45+len(sector)//2]
         return np.any(distance_checks)
     
     def __is_direction_blocked(self, heading_deg: float) -> bool:

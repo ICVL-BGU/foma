@@ -1,12 +1,16 @@
-<launch>   
+<launch>
+    <rosparam command="load" file="$(find foma)/config/foma_params.yaml" />
+
     <!-- Node 1 -->
-    <node pkg="foma" type="ceiling_camera_node.py" name="ceiling_camera" output="screen">
-        <param name="rtsp_url" value="rtsp://admin:icvl2023@1.1.2.103:554"/>
-    </node>
+    <node pkg="foma" type="ceiling_camera_node.py" name="ceiling_camera" output="screen"/>
+    <!-- rtsp_url moved to /ROOM_RTSP_URL in config/foma_params.yaml so the
+         recorder shares the same URL. -->
+
 
     <!-- Node 2 -->
     <node pkg="foma" type="fish_detection_node.py" name="fish_detection_node" output="screen">
         <param name="model_path" value="/home/icvl/ros_ws/src/foma/models/fish_detection.pt"/>
+        <param name="tracker_path" value="ocsort.yaml"/>
     </node>
 
     <!-- Node 3 -->
@@ -16,6 +20,7 @@
     <node pkg="foma" type="localization_node.py" name="localization_node" output="screen">
         <param name="detection_model_path" value="/home/icvl/ros_ws/src/foma/models/foma_detection.pt"/>
         <param name="mapper_path" value="/home/icvl/ros_ws/src/foma/models/image_world_mapper.json"/>
+        <param name="tracker_path" value="/home/icvl/ros_ws/src/foma/models/tracker_room.yaml"/>
     </node>
 
     <!-- Node 5 -->

@@ -12,7 +12,6 @@ import numpy as np
 from geometry_msgs.msg import Twist, Vector3, TwistStamped
 from foma.msg import FomaLocation
 import math
-from etc.settings import *
 import shutil
 import tempfile
 import subprocess
@@ -68,13 +67,18 @@ class WriterNode(AbstractNode):
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # MP4 format
 
+        g = rospy.get_param
+        self.__room_camera_frame_shape = tuple(g('/ROOM_CAMERA_FRAME_SHAPE'))
+        self.__room_map_frame_shape    = tuple(g('/ROOM_MAP_FRAME_SHAPE'))
+        _foma_camera_frame_shape       = tuple(g('/FOMA_CAMERA_FRAME_SHAPE'))
+
         # Writers
-        self.__room_video_writer = cv2.VideoWriter(room_video_filename, fourcc, ROOM_CAMERA_FPS, ROOM_CAMERA_FRAME_SHAPE)
-        
-        self.__room_map = np.ones((ROOM_MAP_FRAME_SHAPE[1], ROOM_MAP_FRAME_SHAPE[0], 3), dtype=np.uint8) * 255
-        self.__room_map_writer = cv2.VideoWriter(room_map_filename, fourcc, ROOM_MAP_FPS, ROOM_MAP_FRAME_SHAPE)
-        
-        self.__foma_video_writer = cv2.VideoWriter(foma_video_filename, fourcc, FOMA_CAMERA_FPS, FOMA_CAMERA_FRAME_SHAPE)
+        self.__room_video_writer = cv2.VideoWriter(room_video_filename, fourcc, g('/ROOM_CAMERA_FPS'), self.__room_camera_frame_shape)
+
+        self.__room_map = np.ones((self.__room_map_frame_shape[1], self.__room_map_frame_shape[0], 3), dtype=np.uint8) * 255
+        self.__room_map_writer = cv2.VideoWriter(room_map_filename, fourcc, g('/ROOM_MAP_FPS'), self.__room_map_frame_shape)
+
+        self.__foma_video_writer = cv2.VideoWriter(foma_video_filename, fourcc, g('/FOMA_CAMERA_FPS'), _foma_camera_frame_shape)
 
         self.__foma_location_file = open(foma_location_filename, 'a', newline='')
         self.__foma_location_csv_writer = csv.writer(self.__foma_location_file)
@@ -189,19 +193,19 @@ class WriterNode(AbstractNode):
         if not self.__write:
             return
         foma_img_location = Vector3(
-            location.image.x * ROOM_CAMERA_FRAME_SHAPE[1],
-            location.image.y * ROOM_CAMERA_FRAME_SHAPE[0],
+            location.image.x * self.__room_camera_frame_shape[1],
+            location.image.y * self.__room_camera_frame_shape[0],
             0
         )
         foma_world_location = Vector3(
-            location.world.x * ROOM_MAP_FRAME_SHAPE[0],
-            location.world.y * ROOM_MAP_FRAME_SHAPE[1],
+            location.world.x * self.__room_map_frame_shape[0],
+            location.world.y * self.__room_map_frame_shape[1],
             0
         )
         
         # Ensure coordinates stay within bounds
-        x = np.clip(foma_world_location.x, 0, ROOM_CAMERA_FRAME_SHAPE[1] - 1).astype(int)
-        y = np.clip(foma_world_location.y, 0, ROOM_CAMERA_FRAME_SHAPE[0] - 1).astype(int)
+        x = np.clip(foma_world_location.x, 0, self.__room_camera_frame_shape[1] - 1).astype(int)
+        y = np.clip(foma_world_location.y, 0, self.__room_camera_frame_shape[0] - 1).astype(int)
         cv2.circle(self.__room_map, (x, y), 5, (0, 255, 0), -1)
 
         row = [

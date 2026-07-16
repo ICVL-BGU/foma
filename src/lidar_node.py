@@ -7,7 +7,6 @@ from adafruit_rplidar import RPLidar, RPLidarException
 import numpy as np
 import threading
 from std_msgs.msg import Int16MultiArray
-from etc.settings import LIDAR_PORT, LIDAR_PORT_SPEED, LIDAR_OFFSET, SAFETY_DISTANCE_VECTOR
 
 class LIDARNode(AbstractNode):
     def __init__(self):
@@ -15,9 +14,14 @@ class LIDARNode(AbstractNode):
         self.__lidar_pub = rospy.Publisher('lidar/scans', LaserScan, queue_size=1, tcp_nodelay=True)
         self.__blocked_pub = rospy.Publisher('lidar/blocked', Int16MultiArray, queue_size=1, tcp_nodelay=True)
 
+        self.__lidar_offset = rospy.get_param('/LIDAR_OFFSET')
+        safety_distance = rospy.get_param('/SAFETY_DISTANCE')
+        self.__safety_distance_vector = safety_distance / np.cos(np.abs(np.arange(-45, 45) * np.pi / 180))
+
         self.__stop_event = threading.Event()
         try:
-            self.lidar = RPLidar(None, LIDAR_PORT, baudrate = LIDAR_PORT_SPEED, timeout = 3)
+            self.lidar = RPLidar(None, rospy.get_param('/LIDAR_PORT'),
+                                 baudrate=rospy.get_param('/LIDAR_PORT_SPEED'), timeout=3)
             self.lidar.stop()
             rospy.sleep(0.1)
             self.lidar.start()
@@ -45,7 +49,7 @@ class LIDARNode(AbstractNode):
                     if quality > 0:
                         if distance < 30:
                             continue
-                        angle = 359 - round(angle + LIDAR_OFFSET) % 360
+                        angle = 359 - round(angle + self.__lidar_offset) % 360
                         self.scan_msg.ranges[angle] = distance
 
             except RPLidarException as e:
@@ -77,7 +81,7 @@ class LIDARNode(AbstractNode):
     def publish_blocked(self):
         # Reshape scans into (4, 90) to match safety_vec shape for elementwise comparison
         scans_reshaped = self.scan_msg.ranges.reshape(4, 90)
-        distance_checks = (scans_reshaped < SAFETY_DISTANCE_VECTOR)
+        distance_checks = (scans_reshaped < self.__safety_distance_vector)
         distance_checks = distance_checks.reshape(-1)  # back to 360‐length
 
         blocked_indices = np.where(distance_checks)[0]
