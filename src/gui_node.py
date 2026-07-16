@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
     # frame at the display rate; older frames are discarded by construction.
     services_updated = pyqtSignal(dict)
     go_home_state_signal = pyqtSignal(bool)
+    rotation_active_signal = pyqtSignal(bool)
 
     def __init__(self):
         super(MainWindow, self).__init__()
@@ -80,12 +81,15 @@ class MainWindow(QMainWindow):
     def __init_signals(self):
         self.services_updated.connect(self.__update_services)
         self.go_home_state_signal.connect(self.__update_go_home_state)
+        self.rotation_active_signal.connect(self.__update_rotation_state)
 
         # Latest-frame refs; written by ROS subscriber threads, read by the
         # display timer on the GUI thread. ndarray ref assignment is atomic
         # under the GIL, so no lock is needed.
         self.__latest_fish = None
         self.__latest_room = None
+        # Latest top-down room-model frame from go_home/room_view.
+        self.__latest_room_view = None
 
         self.__display_timer = QTimer(self)
         self.__display_timer.setTimerType(Qt.PreciseTimer)
@@ -103,6 +107,10 @@ class MainWindow(QMainWindow):
         room = self.__latest_room
         if room is not None:
             self.__update_right_display(room)
+        # Push the latest room-model frame into the popup if it is open.
+        view = self.__latest_room_view
+        if view is not None and self.__room_view_label is not None:
+            self.__update_room_view_display(view)
 
     def __init_attributes(self):
         self.__room_camera_frame_shape = tuple(rospy.get_param('/ROOM_CAMERA_FRAME_SHAPE'))
@@ -136,6 +144,13 @@ class MainWindow(QMainWindow):
         self.__go_home_active = False
         self.__motor_set_speed = None
         self.__motor_set_mode = None
+
+        # Precise rotation (rotation_node) + room-model view
+        self.__rotation_spin = None
+        self.__rotation_stop = None
+        self.__rotation_active = False
+        self.__room_view_window = None
+        self.__room_view_label = None
 
         # Trial Control
         self.__ongoing_trial = False
@@ -288,6 +303,7 @@ class MainWindow(QMainWindow):
         self.__go_home_button.clicked.connect(self.__start_go_home)
         self.__go_home_button.setDisabled(True)
 
+
         self.__feed_loading_button = QPushButton()
         self.__feed_loading_button.setText("Load Feeder")
         self.__feed_loading_button.setMaximumHeight(50)
@@ -422,6 +438,8 @@ class MainWindow(QMainWindow):
         rospy.Subscriber('lidar/blocked', Int16MultiArray, self.__update_blocked_directions, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('motor_control/speed', TwistStamped, self.__update_foma_speed, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('go_home/enabled', Bool, self.__on_go_home_state, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('go_home/room_view', CompressedImage, self.__update_room_view, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('rotation/active', Bool, self.__on_rotation_state, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('fish_feeder/feed_inc', TriggerResponse, self.__update_feeder_status, queue_size=1, tcp_nodelay=True)
         self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=1, tcp_nodelay=True)
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=1, tcp_nodelay=True)
@@ -458,7 +476,7 @@ class MainWindow(QMainWindow):
 
         self.__manual_control_window = QDialog(self)
         self.__manual_control_window.setWindowTitle("Manual Robot Control")
-        self.__manual_control_window.setFixedSize(300, 300)
+        self.__manual_control_window.setFixedSize(360, 480)
         self.__manual_control_window.setWindowModality(Qt.ApplicationModal)
 
         def on_close(event):
@@ -556,6 +574,43 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(speed_control_textbox, 4, 2)
         control_layout.addWidget(speed_control_button, 4, 3)
 
+        # Precise (closed-loop) rotation controls. Presets + custom angle spin
+        # in place via rotation_node (LiDAR feedback). No hold-to-spin here -
+        # the arrow cw/ccw buttons above remain for continuous manual jog.
+        from PyQt5.QtWidgets import QComboBox
+        rotation_label = QLabel("Precise Rotation")
+        rotation_dir = QComboBox()
+        rotation_dir.addItems(["CCW (+)", "CW (-)"])
+        custom_angle = QLineEdit()
+        custom_angle.setPlaceholderText("angle")
+        custom_angle.setValidator(QDoubleValidator(0.0, 3600.0, 1))
+        rotate_custom_button = QPushButton("Rotate")
+
+        def signed(deg):
+            return deg if rotation_dir.currentIndex() == 0 else -deg
+
+        def rotate_custom():
+            try:
+                self.__request_spin(signed(float(custom_angle.text())))
+            except ValueError:
+                self.logwarn("Invalid rotation angle")
+
+        rotate_custom_button.clicked.connect(rotate_custom)
+
+        preset_layout = QGridLayout()
+        for col, deg in enumerate((90, 180, 270, 360)):
+            b = QPushButton(f"{deg}\u00b0")
+            b.clicked.connect(lambda _=False, d=deg: self.__request_spin(signed(d)))
+            preset_layout.addWidget(b, 0, col)
+        preset_widget = QWidget()
+        preset_widget.setLayout(preset_layout)
+
+        control_layout.addWidget(rotation_label, 5, 0, 1, 2)
+        control_layout.addWidget(rotation_dir, 5, 2, 1, 2)
+        control_layout.addWidget(preset_widget, 6, 0, 1, 4)
+        control_layout.addWidget(custom_angle, 7, 0, 1, 2)
+        control_layout.addWidget(rotate_custom_button, 7, 2, 1, 2)
+
         forward_button.pressed.connect(lambda: self.__update_velocity(True,0))
         forward_button.released.connect(lambda: self.__update_velocity(False))
         backward_button.pressed.connect(lambda: self.__update_velocity(True, 180))
@@ -603,8 +658,82 @@ class MainWindow(QMainWindow):
         self.go_home_state_signal.emit(bool(msg.data))
 
     def __update_go_home_state(self, active: bool):
+        was_active = self.__go_home_active
         self.__go_home_active = active
         self.__go_home_button.setText("Stop Go Home" if active else "Go Home")
+
+        # Show the top-down room model while centering/aligning is happening.
+        if active:
+            self.__open_room_view_window()
+
+    def __update_rotation_state(self, active: bool):
+        self.__rotation_active = active
+        if active:
+            self.__open_room_view_window()
+
+    def __on_rotation_state(self, msg: Bool):
+        self.rotation_active_signal.emit(bool(msg.data))
+
+    def __request_spin(self, degrees: float):
+        """Ask rotation_node for a precise, LiDAR-closed-loop spin (deg, signed:
+        positive = CCW, negative = CW). Non-blocking: the service returns
+        immediately and /rotation/active reports completion."""
+        if self.__rotation_spin is None:
+            self.logwarn("Rotation service not available")
+            return False
+        # Manual override / rotation always cancels GoHome first.
+        if self.__go_home_active and self.__go_home_enable is not None:
+            try:
+                self.__go_home_enable(False)
+            except Exception:
+                pass
+        try:
+            if self.__motor_set_speed is not None:
+                self.__motor_set_speed(1.0)
+            self.__rotation_spin(float(degrees))
+            self.__log_event("rotation", f"Precise spin requested: {degrees:+.1f} deg")
+            return True
+        except Exception as e:
+            self.logwarn(f"Failed to request spin: {e}")
+            return False
+
+    # ------------------------------------------------------------------ #
+    #  Room-model view popup (LiDAR dots on modelled walls, robot pose).   #
+    # ------------------------------------------------------------------ #
+    def __update_room_view(self, img_msg: CompressedImage):
+        try:
+            arr = np.frombuffer(img_msg.data, dtype=np.uint8)
+            bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            if bgr is not None:
+                self.__latest_room_view = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        except Exception as e:
+            self.logwarn(f"room_view decode failed: {e}")
+
+    def __open_room_view_window(self):
+        if self.__room_view_window is not None:
+            return
+        self.__room_view_window = QDialog(self)
+        self.__room_view_window.setWindowTitle("Room Model (robot view)")
+        self.__room_view_window.setFixedSize(500, 540)
+        layout = QVBoxLayout()
+        self.__room_view_label = QLabel("Waiting for room model...")
+        self.__room_view_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.__room_view_label)
+
+        def on_close(event):
+            self.__room_view_label = None
+            self.__room_view_window = None
+            event.accept()
+
+        self.__room_view_window.closeEvent = on_close
+        self.__room_view_window.setLayout(layout)
+        self.__room_view_window.show()
+
+    def __update_room_view_display(self, frame: np.ndarray):
+        from PyQt5.QtGui import QImage, QPixmap
+        h, w, ch = frame.shape
+        img = QImage(frame.data, w, h, ch * w, QImage.Format_RGB888)
+        self.__room_view_label.setPixmap(QPixmap.fromImage(img))
 
     def __start_go_home(self):
         """Toggle go home — starts if idle, stops if already running."""
@@ -712,6 +841,8 @@ class MainWindow(QMainWindow):
                 ('__motor_set_mode',         'motor_control/set_mode',  String),
                 ('__bypass_lidar',            'motor_control/bypass_lidar', SetBool),
                 ('__go_home_enable', 'go_home/enable', SetBool),
+                ('__rotation_spin', 'rotation/spin', Float),
+                ('__rotation_stop', 'rotation/stop', SetBool),
             ]
             while not rospy.is_shutdown():
                 status = {}
@@ -1120,6 +1251,22 @@ class MainWindow(QMainWindow):
         elif self.__motor_set_mode is not None and motor_set_mode_proxy is None:
             self.logerr("Motor set mode service unavailable")
             self.__motor_set_mode = None
+
+        # Precise-rotation services (rotation_node).
+        rotation_spin_proxy = status.get('__rotation_spin')
+        if self.__rotation_spin is None and rotation_spin_proxy is not None:
+            self.loginfo("Rotation spin service available")
+            self.__rotation_spin = rotation_spin_proxy
+        elif self.__rotation_spin is not None and rotation_spin_proxy is None:
+            self.logerr("Rotation spin service unavailable")
+            self.__rotation_spin = None
+
+        rotation_stop_proxy = status.get('__rotation_stop')
+        if self.__rotation_stop is None and rotation_stop_proxy is not None:
+            self.__rotation_stop = rotation_stop_proxy
+        elif self.__rotation_stop is not None and rotation_stop_proxy is None:
+            self.__rotation_stop = None
+
 
     def __on_feed_click(self):
         """Wrapper for feed action to log event"""

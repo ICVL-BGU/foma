@@ -10,6 +10,7 @@
     <!-- Node 2 -->
     <node pkg="foma" type="fish_detection_node.py" name="fish_detection_node" output="screen">
         <param name="model_path" value="/home/icvl/ros_ws/src/foma/models/fish_detection.pt"/>
+        <param name="tracker_path" value="ocsort.yaml"/>
     </node>
 
     <!-- Node 3 -->
@@ -19,6 +20,7 @@
     <node pkg="foma" type="localization_node.py" name="localization_node" output="screen">
         <param name="detection_model_path" value="/home/icvl/ros_ws/src/foma/models/foma_detection.pt"/>
         <param name="mapper_path" value="/home/icvl/ros_ws/src/foma/models/image_world_mapper.json"/>
+        <param name="tracker_path" value="/home/icvl/ros_ws/src/foma/models/tracker_room.yaml"/>
     </node>
 
     <!-- Node 5 -->
@@ -33,6 +35,7 @@
         <param name="goal_y" value="0.5"/>
         <param name="arrival_tol" value="0.03"/>
     </node>
+
 
     <!-- Joystick to Motor-->
     <node pkg="foma" type="joystick_node.py" name="joystick_node" output="screen"/>
