@@ -10,10 +10,11 @@ import os
 import datetime
 import math
 import threading, time
+import subprocess
 
 # PyQt5 imports
 from PyQt5.QtCore import Qt, QTimer, QEvent, pyqtSignal
-from PyQt5.QtGui import QPixmap, QImage, QDoubleValidator
+from PyQt5.QtGui import QDoubleValidator
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -41,18 +42,22 @@ from std_msgs.msg import Float32, Int16MultiArray, Bool
 
 from std_msgs.msg import String as StringMsg
 from std_srvs.srv import Trigger, TriggerRequest, TriggerResponse, SetBool
-from cv_bridge import CvBridge, CvBridgeError
 from std_srvs.srv import SetBool
 
 
 # Custom ROS messages
 from foma.srv import Check, Write, Float, String
-from foma.msg import FomaLocation
-from etc.settings import *
+from foma.msg import FomaLocation, TrialEvent
+from etc import jpeg
+from etc.gl_image_widget import GLImageWidget
 
 class MainWindow(QMainWindow):
-    fish_frame_ready = pyqtSignal(np.ndarray)
-    room_frame_ready = pyqtSignal(np.ndarray)
+    # Frame delivery uses shared latest-frame refs polled by a QTimer instead
+    # of pyqtSignal.emit per ROS callback. Reason: pyqtSignal is FIFO with no
+    # coalescing, so producers faster than the painter (fish 25 fps, room 25 fps
+    # camera + 25 Hz redraws from foma_location) build an unbounded backlog,
+    # giving a growing real-time lag in the GUI. The timer pulls the latest
+    # frame at the display rate; older frames are discarded by construction.
     services_updated = pyqtSignal(dict)
     go_home_state_signal = pyqtSignal(bool)
 
@@ -61,7 +66,6 @@ class MainWindow(QMainWindow):
 
         # Rospy configs
         self.__init_subscriptions_and_services()
-        self.bridge = CvBridge()
 
         self.setWindowTitle("FOMA Trial control")
         self.drag_start = self.pos()
@@ -74,17 +78,42 @@ class MainWindow(QMainWindow):
         self.__init_service_checker()
 
     def __init_signals(self):
-        self.fish_frame_ready.connect(self.__update_left_display)
-        self.room_frame_ready.connect(self.__update_right_display)
         self.services_updated.connect(self.__update_services)
         self.go_home_state_signal.connect(self.__update_go_home_state)
 
+        # Latest-frame refs; written by ROS subscriber threads, read by the
+        # display timer on the GUI thread. ndarray ref assignment is atomic
+        # under the GIL, so no lock is needed.
+        self.__latest_fish = None
+        self.__latest_room = None
+
+        self.__display_timer = QTimer(self)
+        self.__display_timer.setTimerType(Qt.PreciseTimer)
+        self.__display_timer.timeout.connect(self.__pump_displays)
+        self.__display_timer.start(40)  # 25 Hz display refresh
+
+        # Trial timer: ticks once per second while a trial is running
+        self.__trial_timer = QTimer(self)
+        self.__trial_timer.timeout.connect(self.__update_trial_timer)
+
+    def __pump_displays(self):
+        fish = self.__latest_fish
+        if fish is not None:
+            self.__update_left_display(fish)
+        room = self.__latest_room
+        if room is not None:
+            self.__update_right_display(room)
+
     def __init_attributes(self):
+        self.__room_camera_frame_shape = tuple(rospy.get_param('/ROOM_CAMERA_FRAME_SHAPE'))
+        self.__room_floor_map_shape    = tuple(rospy.get_param('/ROOM_FLOOR_MAP_SHAPE'))
+        self.__room_map_frame_shape    = tuple(rospy.get_param('/ROOM_MAP_FRAME_SHAPE'))
+
         # Images and locations
         self.__foma_img_location = None
         self.__foma_world_location = None
         self.__room_image = None
-        self.__room_map = np.ones((ROOM_MAP_FRAME_SHAPE[1], ROOM_MAP_FRAME_SHAPE[0], 3), dtype=np.uint8) * 255
+        self.__room_map = np.ones((self.__room_map_frame_shape[1], self.__room_map_frame_shape[0], 3), dtype=np.uint8) * 255
         self.__fish_state = None
         self.__fish_image = None
 
@@ -112,8 +141,13 @@ class MainWindow(QMainWindow):
         self.__ongoing_trial = False
         self.__session_folder = None
         self.__current_trial = 0
-        self.__event_log_file = None
-        self.__event_log_writer = None
+
+        # Trial timer
+        self.__trial_cap_default = 600  # default trial cap = 10 minutes
+        self.__trial_cap_seconds = self.__trial_cap_default
+        self.__trial_start_time = None
+        self.__trial_cap_reached = False
+        self.__trial_popup = None
 
     def __init_layouts(self):
         # Top-Left (Fish Camera)
@@ -161,12 +195,14 @@ class MainWindow(QMainWindow):
         self.__BC_layout.addWidget(self.__subject_id_value_label, 0, 1, alignment=Qt.AlignCenter)
         self.__BC_layout.addWidget(self.__trial_num_text_label, 1, 0, alignment=Qt.AlignCenter)
         self.__BC_layout.addWidget(self.__trial_num_value_label, 1, 1, alignment=Qt.AlignCenter)
-        self.__BC_layout.addWidget(self.__times_fed_text_label, 2, 0, alignment=Qt.AlignCenter)
-        self.__BC_layout.addWidget(self.__times_fed_value_label, 2, 1, alignment=Qt.AlignCenter)
-        self.__BC_layout.addWidget(self.__foma_img_position_text_label, 3, 0, alignment=Qt.AlignCenter)
-        self.__BC_layout.addWidget(self.__foma_img_position_value_label, 3, 1, alignment=Qt.AlignCenter)
-        self.__BC_layout.addWidget(self.__foma_room_position_text_label, 4, 0, alignment=Qt.AlignCenter)
-        self.__BC_layout.addWidget(self.__foma_room_position_value_label, 4, 1, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__trial_timer_text_label, 2, 0, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__trial_timer_value_label, 2, 1, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__times_fed_text_label, 3, 0, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__times_fed_value_label, 3, 1, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__foma_img_position_text_label, 4, 0, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__foma_img_position_value_label, 4, 1, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__foma_room_position_text_label, 5, 0, alignment=Qt.AlignCenter)
+        self.__BC_layout.addWidget(self.__foma_room_position_value_label, 5, 1, alignment=Qt.AlignCenter)
         
         self.__BC_widget = QFrame()
         self.__BC_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
@@ -258,10 +294,8 @@ class MainWindow(QMainWindow):
         self.__feed_loading_button.clicked.connect(self.__init_feeding_load_window)
         self.__feed_loading_button.setDisabled(True)
 
-        # Fish image init
-        self.__left_image_frame = QLabel()
-        self.__left_image_frame.setScaledContents(True)
-        self.__left_image_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # Fish image init — OpenGL surface; Qt does GPU blit + scale on repaint.
+        self.__left_image_frame = GLImageWidget()
         
         # Fish image label init
         self.__fish_image_label = QLabel("Fish Camera")
@@ -271,10 +305,8 @@ class MainWindow(QMainWindow):
         self.__fish_image_label.setAlignment(Qt.AlignHCenter)
         self.__left_image_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        # Room image init
-        self.__top_right_image = QLabel() #TODO : add resize+update
-        self.__top_right_image.setScaledContents(True)
-        self.__top_right_image.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # Room image init — OpenGL surface; Qt does GPU blit + scale on repaint.
+        self.__top_right_image = GLImageWidget()
         
         # Room image label init
         self.__room_image_label = QLabel("Room Camera")
@@ -320,6 +352,13 @@ class MainWindow(QMainWindow):
 
         self.__trial_num_value_label = QLabel("N/A")
         self.__trial_num_value_label.setAlignment(Qt.AlignHCenter)
+
+        # Trial timer label init
+        self.__trial_timer_text_label = QLabel("Trial Time:")
+        self.__trial_timer_text_label.setAlignment(Qt.AlignHCenter)
+
+        self.__trial_timer_value_label = QLabel("00:00")
+        self.__trial_timer_value_label.setAlignment(Qt.AlignHCenter)
 
         # Times fed label init
         self.__times_fed_text_label = QLabel("Times Fed:")
@@ -388,6 +427,7 @@ class MainWindow(QMainWindow):
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=1, tcp_nodelay=True)
         self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=1, tcp_nodelay=True)
         self.__control_mode_pub = rospy.Publisher("control/mode", StringMsg, queue_size=1)
+        self.__event_pub = rospy.Publisher('trial_events', TrialEvent, queue_size=100)
         
         # Writer services - one for each writer node
         self.__writer_services = [
@@ -395,9 +435,10 @@ class MainWindow(QMainWindow):
             rospy.ServiceProxy('csv_writer_fish_location/write', Write),
             rospy.ServiceProxy('csv_writer_foma_speed/write', Write),
             rospy.ServiceProxy('csv_writer_lidar/write', Write),
-            rospy.ServiceProxy('video_writer_room/write', Write),
+            rospy.ServiceProxy('room_recorder/write', Write),
             rospy.ServiceProxy('video_writer_foma/write', Write),
             rospy.ServiceProxy('video_writer_room_map/write', Write),
+            rospy.ServiceProxy('event_writer/write', Write),
         ]
         
     def __init_manual_control_window(self):
@@ -552,7 +593,7 @@ class MainWindow(QMainWindow):
                 times_fed = int(self.__times_fed_value_label.text()) if self.__times_fed_value_label.text() != "N/A" else 0
                 times_fed += 1
                 self.__times_fed_value_label.setText(str(times_fed))
-                self.__log_event("feeder_fed", f"feeder_fed. Total times fed: {times_fed}")
+                self.__log_event("feeder_fed", f"Feeder fed. Total times fed: {times_fed}")
             except ValueError:
                 self.logwarn("Received invalid times fed value from feeder status update")
         else:
@@ -688,35 +729,54 @@ class MainWindow(QMainWindow):
         t = threading.Thread(target=checker_loop, daemon=True)
         t.start()
 
-    def __init_event_log(self, trial_folder):
-        """Initialize event log CSV file for the trial"""
-        event_log_path = os.path.join(trial_folder, "trial_events.csv")
-        self.__event_log_file = open(event_log_path, 'w', newline='')
-        self.__event_log_writer = csv.writer(self.__event_log_file)
-        self.__event_log_writer.writerow(["timestamp", "event_type", "details"])
-        self.__event_log_file.flush()
-        rospy.loginfo(f"Created event log: {event_log_path}")
-
     def __on_times_fed_edited(self):
         """Log when the times fed counter is manually edited."""
         self.__log_event("times_fed_edited", f"Times fed manually set to {self.__times_fed_value_label.text()}")
 
     def __log_event(self, event_type, details=""):
-        """Log an event to the trial events CSV"""
-        if self.__event_log_writer is None:
-            return
-        
-        timestamp = rospy.Time.now().to_sec()
-        self.__event_log_writer.writerow([timestamp, event_type, details])
-        self.__event_log_file.flush()
-        self.loginfo(f"Event logged: {event_type} - {details}")
+        """Publish an event to event_writer_node, which writes it to the trial CSV."""
+        msg = TrialEvent(stamp=rospy.Time.now(), event_type=event_type, details=details)
+        self.__event_pub.publish(msg)
 
-    def __close_event_log(self):
-        """Close the event log file"""
-        if self.__event_log_file is not None:
-            self.__event_log_file.close()
-            self.__event_log_file = None
-            self.__event_log_writer = None
+    def __update_trial_timer(self):
+        """Tick the trial timer display; pop the cap-reached dialog once."""
+        if self.__trial_start_time is None:
+            return
+        elapsed = int(time.time() - self.__trial_start_time)
+        m, s = divmod(elapsed, 60)
+        self.__trial_timer_value_label.setText(f"{m:02d}:{s:02d}")
+        if not self.__trial_cap_reached and elapsed >= self.__trial_cap_seconds:
+            self.__trial_cap_reached = True
+            self.__log_event("trial_time_up",
+                             f"Trial cap of {self.__trial_cap_seconds}s reached")
+            self.__show_trial_up_popup()
+
+    def __show_trial_up_popup(self):
+        """Non-modal popup; trial and timer keep running while operator decides."""
+        if self.__trial_popup is not None:
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Trial Time Up")
+        box.setIcon(QMessageBox.Warning)
+        box.setText("Trial time is up.\nThe trial and timer keep running until you choose.")
+        reset_btn = box.addButton("Reset", QMessageBox.AcceptRole)
+        snooze_btn = box.addButton("Snooze +1 min", QMessageBox.RejectRole)
+        box.setWindowModality(Qt.NonModal)
+
+        def handle(btn):
+            self.__trial_popup = None
+            if btn == reset_btn:
+                self.__log_event("trial_time_up_reset", "Operator reset trial from cap dialog")
+                self.__on_reset_click()
+            elif btn == snooze_btn:
+                self.__trial_cap_seconds += 60
+                self.__trial_cap_reached = False
+                self.__log_event("trial_time_up_snooze",
+                                 f"Snoozed; new cap {self.__trial_cap_seconds}s")
+
+        box.buttonClicked.connect(handle)
+        self.__trial_popup = box
+        box.show()
 
     def __update_velocity(self, is_pressed: bool, direction: int = 0):
         """
@@ -747,9 +807,11 @@ class MainWindow(QMainWindow):
 
     def __update_fish_image(self, img_msg: CompressedImage):
         try:
-            self.__fish_image = self.bridge.compressed_imgmsg_to_cv2(img_msg)
-            self.fish_frame_ready.emit(self.__fish_image.copy())
-        except CvBridgeError as e:
+            self.__fish_image = jpeg.decode(img_msg.data)
+            # No emit/copy here — display timer reads __latest_fish and
+            # discards backlog by definition.
+            self.__latest_fish = self.__fish_image
+        except Exception as e:
             self.logwarn(e)
 
     def __update_fish_state(self, state_msg: TwistStamped):
@@ -761,39 +823,38 @@ class MainWindow(QMainWindow):
 
     def __update_room_image(self, img_msg: CompressedImage):
         try:
-            self.__room_image = self.bridge.compressed_imgmsg_to_cv2(img_msg, desired_encoding="rgb8")
-            self.room_frame_ready.emit(self.__room_image.copy())
-        except CvBridgeError as e:
-            self.logwarn(f"Error converting image message: {e}")
+            bgr = jpeg.decode(img_msg.data)
+            self.__room_image = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            self.__latest_room = self.__room_image
         except Exception as e:
             self.logwarn(f"Unexpected error in update_room_image: {e}")
 
     def __update_foma_location(self, location: FomaLocation):
         # Convert normalized locations (0..1) to pixel coordinates
         self.__foma_img_location = Vector3(
-            location.image.x * ROOM_CAMERA_FRAME_SHAPE[1],
-            location.image.y * ROOM_CAMERA_FRAME_SHAPE[0],
+            location.image.x * self.__room_camera_frame_shape[1],
+            location.image.y * self.__room_camera_frame_shape[0],
             0
         )
         self.__foma_world_location = Vector3(
-            location.world.x * ROOM_MAP_FRAME_SHAPE[1],
-            location.world.y * ROOM_MAP_FRAME_SHAPE[0],
+            location.world.x * self.__room_map_frame_shape[1],
+            location.world.y * self.__room_map_frame_shape[0],
             0
         )
         
         if self.__room_map is not None:
             # Ensure coordinates stay within bounds
-            x = np.clip(self.__foma_world_location.x, 0, ROOM_MAP_FRAME_SHAPE[1] - 1).astype(int)
-            y = np.clip(self.__foma_world_location.y, 0, ROOM_MAP_FRAME_SHAPE[0] - 1).astype(int)
+            x = np.clip(self.__foma_world_location.x, 0, self.__room_map_frame_shape[1] - 1).astype(int)
+            y = np.clip(self.__foma_world_location.y, 0, self.__room_map_frame_shape[0] - 1).astype(int)
             cv2.circle(self.__room_map, (x, y), 2, (0, 255, 0), -1)
 
         # Update the FOMA room position label
-        self.__foma_room_position_value_label.setText(f"({round(location.world.x * ROOM_FLOOR_MAP_SHAPE[1])}, {round(location.world.y * ROOM_FLOOR_MAP_SHAPE[0])})")
+        self.__foma_room_position_value_label.setText(f"({round(location.world.x * self.__room_floor_map_shape[1])}, {round(location.world.y * self.__room_floor_map_shape[0])})")
         self.__foma_img_position_value_label.setText(f"({round(self.__foma_img_location.x)}, {round(self.__foma_img_location.y)})")
 
-        # Re-emit the latest room frame so the dot redraws at the new position without waiting for the next frame
-        if self.__room_image is not None:
-            self.room_frame_ready.emit(self.__room_image.copy())
+        # Display timer already redraws at 25 Hz; no need to push another
+        # frame here. The dot will appear on the next paint with no growing
+        # backlog.
 
     def __update_foma_speed(self, speed: TwistStamped):
         self.__foma_speed = speed.twist
@@ -945,55 +1006,24 @@ class MainWindow(QMainWindow):
                         1,
                         cv2.LINE_AA)
                 
-        bytes_per_line = ch * w
-        qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
-
-        # 5) scale & display
-        pix = QPixmap.fromImage(qimg).scaled(
-            self.__left_image_frame.width(),
-            self.__left_image_frame.height(),
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation
-        )
-        self.__left_image_frame.setPixmap(pix)
+        self.__left_image_frame.setFrame(frame)
 
     def __update_right_display(self, frame: np.ndarray):
-        """
-        Callback to update the room camera image on the GUI only ATM.
-        """
+        """Update room camera / trajectory map. GLImageWidget handles GPU
+        blit + scale; we just hand it the latest frame."""
         if self.__room_camera_display_rb.isChecked() and frame is not None:
-            height, width, channel = frame.shape
-            bytes_per_line = 3 * width
-            # Draw the FOMA location dot on the camera frame at current location
             if self.__foma_img_location is not None:
                 cx = int(self.__foma_img_location.x)
                 cy = int(self.__foma_img_location.y)
                 cv2.circle(frame, (cx, cy), 5, (0, 255, 0), -1)
-            frame = frame.data
-
+            self.__top_right_image.setFrame(frame)
         elif self.__map_display_rb.isChecked() and self.__room_map is not None:
-            height, width, channel = self.__room_map.shape
-            bytes_per_line = 3 * width
-            map_frame = self.__room_map.copy()
-            # Ensure coordinates stay within bounds
+            src = self.__room_map.copy()
             if self.__foma_world_location is not None:
-                x = np.clip(self.__foma_world_location.x, 0, ROOM_MAP_FRAME_SHAPE[1] - 1).astype(int)
-                y = np.clip(self.__foma_world_location.y, 0, ROOM_MAP_FRAME_SHAPE[0] - 1).astype(int)
-                cv2.circle(map_frame, (x, y), 2, (0, 0, 255), -1)
-            frame = map_frame.data
-
-        if frame is not None:
-            q_image = QImage(frame, width, height, bytes_per_line, QImage.Format_RGB888)             
-            # Scale the image to fit the QLabel
-            pixmap = QPixmap.fromImage(q_image)
-            scaled_pixmap = pixmap.scaled(
-                self.__top_right_image.size(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            
-            # Update the QLabel with the scaled QPixmap
-            self.__top_right_image.setPixmap(scaled_pixmap)
+                x = np.clip(self.__foma_world_location.x, 0, self.__room_map_frame_shape[1] - 1).astype(int)
+                y = np.clip(self.__foma_world_location.y, 0, self.__room_map_frame_shape[0] - 1).astype(int)
+                cv2.circle(src, (x, y), 2, (0, 0, 255), -1)
+            self.__top_right_image.setFrame(src)
 
     def __update_services(self, status: dict):
         """
@@ -1236,16 +1266,13 @@ class MainWindow(QMainWindow):
         
         # Increment trial number
         trial_folder = os.path.join(self.__session_folder, f"trial_{self.__current_trial}")
-        
+        self.__trial_folder = trial_folder
+
         if not os.path.exists(trial_folder):
             os.makedirs(trial_folder)
             rospy.loginfo(f"Created trial folder: {trial_folder}")
         
-        # Initialize event log
-        self.__init_event_log(trial_folder)
-        self.__log_event("trial_start", f"Trial {self.__current_trial} started")
-        
-        self.__room_map = np.ones((ROOM_MAP_FRAME_SHAPE[1], ROOM_MAP_FRAME_SHAPE[0], 3), dtype=np.uint8) * 255
+        self.__room_map = np.ones((self.__room_map_frame_shape[1], self.__room_map_frame_shape[0], 3), dtype=np.uint8) * 255
         
         self.__start_button.setDisabled(True)
         self.__pause_button.setDisabled(False)
@@ -1266,6 +1293,16 @@ class MainWindow(QMainWindow):
                 writer_service("start", trial_folder, rospy.Time.now())
             except rospy.ServiceException as e:
                 rospy.logerr(f"Writer service call failed: {e}")
+
+        # Now that event_writer is subscribed, log the trial-start event
+        self.__log_event("trial_start", f"Trial {self.__current_trial} started")
+
+        # Start trial timer
+        self.__trial_cap_seconds = self.__trial_cap_default
+        self.__trial_cap_reached = False
+        self.__trial_start_time = time.time()
+        self.__trial_timer_value_label.setText("00:00")
+        self.__trial_timer.start(1000)
 
         self.__log_event("light_control", f"Brightness set to 255/255")
         self.__lights_slider.setValue(self.__lights_slider.maximum())
@@ -1319,6 +1356,16 @@ class MainWindow(QMainWindow):
         self.__ongoing_trial = False
         self.__control_mode_pub.publish(StringMsg("idle"))
 
+        # Stop and reset trial timer
+        self.__trial_timer.stop()
+        self.__trial_start_time = None
+        self.__trial_cap_reached = False
+        self.__trial_cap_seconds = self.__trial_cap_default
+        self.__trial_timer_value_label.setText("00:00")
+        if self.__trial_popup is not None:
+            self.__trial_popup.close()
+            self.__trial_popup = None
+
         self.__dim_lights(0)
         self.__log_event("light_control", f"Brightness set to 0/255")
         self.__lights_slider.setValue(0)
@@ -1326,18 +1373,20 @@ class MainWindow(QMainWindow):
         self.__motor_set_mode("idle")
         self.__motor_set_speed(1.0)
         
-        # Log stop event
+        # Log stop event (before stopping writers so event_writer captures it)
         self.__log_event("trial_stop", f"Trial {self.__current_trial} stopped")
-        
-        # Close event log
-        self.__close_event_log()
-        
+        rospy.sleep(0.05)  # give the publisher time to deliver before unsubscribe
+
         # Call all writer services to stop
         for writer_service in self.__writer_services:
             try:
                 writer_service("stop", "", rospy.Time.now())
             except rospy.ServiceException as e:
                 rospy.logerr(f"Writer service call failed: {e}")
+
+        # Side-by-side videos are no longer built per trial (that thrashes the
+        # box when several trials end together). A single batch worker builds
+        # them all at GUI close (see __on_close_click / __spawn_sidebyside_batch).
 
         if self.__go_home_enable is not None:
             try:
@@ -1345,37 +1394,51 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.logwarn(f"Failed disabling go_home: {e}")
 
+    def __spawn_sidebyside_batch(self):
+        """Spawn one detached batch worker at GUI close that builds side-by-side
+        videos for every trial of today's sessions under TRIAL_ROOT, using a
+        bounded pool of concurrent workers. Replaces per-trial spawning."""
+        root = "/home/icvl/trial_output"
+        if not os.path.isdir(root):
+            rospy.logwarn(f"sidebyside batch: root {root} missing; skipping")
+            return
+
+        worker = os.path.join(os.path.dirname(__file__), "etc", "sidebyside_batch_worker.py")
+        log = os.path.join(root, "sidebyside_batch.log")
+        cam_w, cam_h = self.__room_camera_frame_shape[1], self.__room_camera_frame_shape[0]
+        # nice/ionice so the batch never starves anything still live. Children
+        # (sidebyside_worker -> ffmpeg) inherit it.
+        cmd = ["nice", "-n", "15", "ionice", "-c", "3",
+               sys.executable, worker, root,
+               "--jobs", "2",
+               "--room-cam-shape", f"{cam_w}x{cam_h}",
+               "--log", log]
+
+        logf = open(log, "a")
+        p = subprocess.Popen(cmd, stdout=logf, stderr=logf,
+                             start_new_session=True, close_fds=True)
+        rospy.loginfo(f"Spawned sidebyside batch worker pid={p.pid} log={log}")
+
     def __on_close_click(self, event):
-        # Log stop event if trial is ongoing
-        if self.__event_log_writer is not None:
+        if self.__ongoing_trial:
             self.__log_event("trial_stop", "Trial stopped - GUI closing")
-            self.__close_event_log()
-        
+            rospy.sleep(0.05)
+
         # Call all writer services to stop
         for writer_service in self.__writer_services:
             try:
                 writer_service("stop", "", rospy.Time.now())
             except rospy.ServiceException as e:
                 rospy.logerr(f"Writer service call failed: {e}")
-        
+
+        self.__spawn_sidebyside_batch()
+
         QApplication.quit()
         rospy.signal_shutdown("Closing GUI")
 
     def resizeEvent(self, event):
-        if self.__top_right_image.pixmap():
-            scaled_pixmap = self.__top_right_image.pixmap().scaled(
-                self.__top_right_image.size(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            self.__top_right_image.setPixmap(scaled_pixmap)
-        if self.__left_image_frame.pixmap():
-            scaled_pixmap = self.__left_image_frame.pixmap().scaled(
-                self.__left_image_frame.size(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            self.__left_image_frame.setPixmap(scaled_pixmap)
+        # GLImageWidget rescales the last frame on its own paintEvent;
+        # nothing to do here.
         super(MainWindow, self).resizeEvent(event)
      
     def showEvent(self, event):

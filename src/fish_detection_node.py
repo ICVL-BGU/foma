@@ -4,6 +4,15 @@ import os
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['NO_ALBUMENTATIONS_UPDATE'] = '1'
+# Per-node Ultralytics config dir: avoids settings.json write race between
+# concurrent YOLO nodes (room/fish/localization) that triggers a spurious
+# "settings reset to default values" warning. Ultralytics appends an
+# 'Ultralytics' subdir, so the dir below must exist and be writable.
+_yolo_cfg = os.path.expanduser('~/.config/yolo_fish')
+os.makedirs(_yolo_cfg, exist_ok=True)
+os.environ.setdefault('YOLO_CONFIG_DIR', _yolo_cfg)
+# Silence Ultralytics import-time INFO (e.g. "Creating new Settings file").
+os.environ.setdefault('YOLO_VERBOSE', 'False')
 
 import rospy
 from sensor_msgs.msg import CompressedImage
@@ -18,6 +27,7 @@ class FishDetectionNode(AbstractNode):
         super().__init__('fish_detection', 'Fish detection')
 
         model_path = rospy.get_param('~model_path')
+        self.tracker = rospy.get_param('~tracker_path', 'ocsort.yaml')
         self.model = YOLO(model_path)
         self.img = None
         self.bridge = CvBridge()
@@ -32,19 +42,24 @@ class FishDetectionNode(AbstractNode):
     def read_image(self, img_msg: CompressedImage):
         try:
             self.img = self.bridge.compressed_imgmsg_to_cv2(img_msg)
-            self.process_image()
+            # Stamp with the image CAPTURE time, not Time.now() after inference.
+            # model.track adds tens-hundreds ms; using now() would tag the fish
+            # state with capture_time + inference_latency, so downstream overlays
+            # (sidebyside_worker) render the fish direction lagging the video.
+            stamp = img_msg.header.stamp
+            if stamp.to_sec() == 0.0:
+                stamp = rospy.Time.now()
+            self.process_image(stamp)
         except CvBridgeError as e:
             self.logerr(f"Error converting image: {e}")
 
-    def process_image(self):
-        prediction = self.model.track(self.img, verbose=False)[0]
+    def process_image(self, timestamp):
+        prediction = self.model.track(self.img, tracker=self.tracker, persist=True, verbose=False)[0]
         img_h, img_w = self.img.shape[:2]
         img_center = (img_w / 2, img_h / 2)
 
         best_kp = None
         min_dist = float('inf')
-
-        timestamp = rospy.Time.now()
 
         kps = prediction.keypoints
         

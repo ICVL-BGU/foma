@@ -4,7 +4,6 @@ import rospy
 import serial
 from abstract_node import AbstractNode
 from foma.srv import Float, FloatRequest, FloatResponse
-from etc.settings import DIMMER_PORT, DIMMER_PORT_SPEED
 
 
 class LightDimmerNode(AbstractNode):
@@ -13,8 +12,8 @@ class LightDimmerNode(AbstractNode):
         self.dimmer_service = rospy.Service('light_dimmer/change', Float, self.dim)
 
         # Use the alias for the serial port
-        self.serial_port_alias = DIMMER_PORT
-        self.serial_baud_rate = DIMMER_PORT_SPEED
+        self.serial_port_alias = rospy.get_param('/DIMMER_PORT')
+        self.serial_baud_rate = rospy.get_param('/DIMMER_PORT_SPEED')
         self.serial_timeout = 1
 
         # Initialize serial port as None

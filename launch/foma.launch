@@ -1,4 +1,6 @@
-<launch>   
+<launch>
+    <rosparam command="load" file="$(find foma)/config/foma_params.yaml" />
+
     <!-- Node 1 -->
     <node pkg="foma" type="lidar_node.py" name="lidar_node" output="screen"/>
     <!-- <launch-prefix="gdb args python3"/> add 2 minuses before args-->

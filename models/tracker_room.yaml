@@ -1,0 +1,12 @@
+# ByteTrack for ROOM camera (FOMA / LIDAR object detection).
+# 1 FOMA + 1 LIDAR, distinct classes, camera fixed -> association is trivial.
+# Tuned to COAST through fisheye-corner dropouts where LIDAR is poorly detected:
+# long track_buffer keeps the ID alive across missed frames, low thresholds
+# still accept the weak corner detections.
+tracker_type: bytetrack
+track_high_thresh: 0.25   # lower: corner LIDAR boxes are low-conf
+track_low_thresh: 0.10
+new_track_thresh: 0.25
+track_buffer: 60          # ~2s @30fps: survive long corner dropouts
+match_thresh: 0.85
+fuse_score: true

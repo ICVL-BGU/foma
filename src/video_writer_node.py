@@ -4,17 +4,81 @@ import cv2
 from foma.srv import Write, WriteRequest, WriteResponse
 from sensor_msgs.msg import Image, CompressedImage
 from cv_bridge import CvBridge
+from etc import jpeg
 from abstract_node import AbstractNode
 import datetime
 import os
 import numpy as np
 from geometry_msgs.msg import Vector3
 from foma.msg import FomaLocation
-from etc.settings import *
 import sys
 import subprocess
 import threading
 import queue
+import shutil
+
+
+class FFmpegNVENCWriter:
+    """Drop-in replacement for cv2.VideoWriter that pipes raw BGR frames to
+    ffmpeg's GPU NVENC encoder (h264_nvenc). Exposes isOpened()/write()/release()
+    so callers can swap it for cv2.VideoWriter transparently."""
+
+    _nvenc_ok = None  # cached encoder-availability probe
+
+    @classmethod
+    def nvenc_available(cls):
+        if cls._nvenc_ok is None:
+            try:
+                out = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"],
+                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                cls._nvenc_ok = b"h264_nvenc" in out.stdout
+            except Exception:
+                cls._nvenc_ok = False
+        return cls._nvenc_ok
+
+    def __init__(self, filepath, fps, size):
+        w, h = size
+        self.__p = None
+        if shutil.which("ffmpeg") is None or not self.nvenc_available():
+            return
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "rawvideo", "-pix_fmt", "bgr24",
+            "-s", f"{w}x{h}", "-r", str(int(fps)),
+            "-i", "pipe:0",
+            "-c:v", "h264_nvenc", "-preset", "fast", "-cq", "23",
+            "-pix_fmt", "yuv420p", filepath,
+        ]
+        try:
+            self.__p = subprocess.Popen(cmd, stdin=subprocess.PIPE,
+                                        stdout=subprocess.DEVNULL,
+                                        stderr=subprocess.DEVNULL)
+        except Exception:
+            self.__p = None
+
+    def isOpened(self):
+        return self.__p is not None and self.__p.poll() is None
+
+    def write(self, frame):
+        if self.__p is not None and self.__p.stdin is not None:
+            try:
+                self.__p.stdin.write(frame.tobytes())
+            except (BrokenPipeError, ValueError):
+                pass
+
+    def release(self):
+        if self.__p is not None:
+            try:
+                if self.__p.stdin is not None:
+                    self.__p.stdin.close()
+            except Exception:
+                pass
+            try:
+                self.__p.wait(timeout=30)
+            except Exception:
+                self.__p.kill()
+            self.__p = None
+
 
 class VideoWriterNode(AbstractNode):
     def __init__(self):
@@ -30,7 +94,7 @@ class VideoWriterNode(AbstractNode):
         self.__fps = rospy.get_param('~fps', 25)
         self.__frame_shape = tuple(rospy.get_param('~frame_shape', [640, 480]))
         self.__video_type = rospy.get_param('~video_type', 'standard')  # standard or trajectory_map
-        
+
         # Reframe worker settings (only for this node)
         self.__enable_reframe_worker = rospy.get_param('~enable_reframe_worker', False)
         self.__reframe_worker_script = rospy.get_param('~reframe_worker_script', 'etc/reframe_worker.py')
@@ -88,12 +152,17 @@ class VideoWriterNode(AbstractNode):
             self.logerr(f"Trial folder does not exist: {self.__folder}")
             return
 
-        # Create video writer
+        # Create video writer. Prefer GPU NVENC via ffmpeg (raw BGR piped to
+        # h264_nvenc); fall back to cv2 FourCC (CPU) if NVENC unavailable.
         filepath = os.path.join(self.__folder, self.__filename)
-        fourcc = cv2.VideoWriter_fourcc(*self.__fourcc)
-        
-        self.__video_writer = cv2.VideoWriter(filepath, fourcc, self.__fps, self.__frame_shape)
-        self.loginfo(f"Created video writer at {filepath}")
+        self.__video_writer = FFmpegNVENCWriter(filepath, self.__fps, self.__frame_shape)
+        if self.__video_writer.isOpened():
+            self.loginfo(f"Created NVENC video writer at {filepath}")
+        else:
+            self.logwarn("NVENC pipeline unavailable, falling back to cv2 FourCC writer.")
+            fourcc = cv2.VideoWriter_fourcc(*self.__fourcc)
+            self.__video_writer = cv2.VideoWriter(filepath, fourcc, self.__fps, self.__frame_shape)
+            self.loginfo(f"Created video writer at {filepath}")
         
         # Initialize trajectory map if needed
         if self.__video_type == 'trajectory_map':
@@ -176,6 +245,7 @@ class VideoWriterNode(AbstractNode):
         logpath = os.path.join(folder, f"reframe.log")
         
         cmd = [
+            "nice", "-n", "15", "ionice", "-c", "3",  # don't starve live feeds
             sys.executable,  # Uses same Python interpreter
             worker_path,
             str(start_s),
@@ -240,11 +310,13 @@ class VideoWriterNode(AbstractNode):
         """Write CompressedImage message to video"""
         if not self.__write or self.__video_writer is None or self.__frame_queue is None:
             return
-        
-        # Convert and queue frame (fast operation)
-        img = self.bridge.compressed_imgmsg_to_cv2(img_msg)
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        
+
+        # fish_camera/image is published RGB-ordered (the GUI shows its raw
+        # decode and it looks right). jpeg.decode returns those bytes as-is and
+        # the ffmpeg writer is fed -pix_fmt bgr24, so without a swap the saved
+        # file has R<->B reversed vs the GUI. Swap here so disk matches display.
+        img = jpeg.decode(img_msg.data)[:, :, ::-1].copy()
+
         try:
             self.__frame_queue.put(img, block=True, timeout=0.5)
         except queue.Full:
