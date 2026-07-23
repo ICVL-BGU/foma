@@ -934,6 +934,11 @@ class MainWindow(QMainWindow):
             self.__velocity.angular.z = 0
 
     def __publish_velocity(self):
+        # Don't publish manual velocity while GoHome or precise spin is
+        # controlling the motors — otherwise we fight their closed-loop
+        # commands with stale/zero Twist messages every 50 ms.
+        if self.__go_home_active or self.__rotation_active:
+            return
         self.__motor_control_twist.publish(self.__velocity)
 
     def __update_fish_image(self, img_msg: CompressedImage):

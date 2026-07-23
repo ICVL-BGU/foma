@@ -95,6 +95,13 @@ class GoHomeNode(AbstractNode):
         self._spin_direction = 0
         self._pulse_tick = 0
 
+        # Safety: maximum allowed spin duration (seconds) and stall detection.
+        self._spin_timeout = rospy.get_param('~spin_timeout', 30.0)
+        self._spin_start_time = None
+        self._spin_stall_limit = rospy.get_param('~spin_stall_limit', 50)
+        self._spin_stall_counter = 0
+        self._spin_last_travelled = 0.0
+
         # Room-view rendering throttle (Hz).
         self._view_period = rospy.Duration(1.0 / 10.0)
         self._last_view = rospy.Time(0)
@@ -169,6 +176,9 @@ class GoHomeNode(AbstractNode):
         self._rot_tracker.reset()
         self._pulse_tick = 0
         self._spin_active = True
+        self._spin_start_time = rospy.Time.now()
+        self._spin_stall_counter = 0
+        self._spin_last_travelled = 0.0
         self.state = self.STATE_SPINNING
         self._publish_spin_active()
         self.loginfo(f'Spinning {degrees:+.1f} deg (LiDAR closed loop)')
@@ -203,9 +213,45 @@ class GoHomeNode(AbstractNode):
 
         # --- Precise rotation (STATE_SPINNING) --- #
         if self._spin_active:
+            # Safety timeout: abort if we've been spinning too long.
+            if self._spin_start_time is not None:
+                elapsed = (rospy.Time.now() - self._spin_start_time).to_sec()
+                if elapsed > self._spin_timeout:
+                    self.logwarn(f'Rotation TIMEOUT after {elapsed:.1f}s '
+                                 f'(travelled {self._rot_tracker.total:+.1f} deg '
+                                 f'of {self._spin_target:+.1f} deg). Aborting.')
+                    self._finish_spin(aborted=True)
+                    return
+
+            # wall_heading_error returns exactly 0.0 when it cannot compute a
+            # reliable heading (too few wall segments visible — common during
+            # fast rotation).  Feeding that into the tracker corrupts the
+            # accumulated angle, so we skip it and just keep the motors
+            # running with the last command.
+            if heading_err is None or heading_err == 0.0:
+                # Still publish the spin command so motors keep turning.
+                cmd = Twist()
+                cmd.angular.z = self._spin_direction * self._spin_cmd
+                self.cmd_pub.publish(cmd)
+                return
+
             folded = heading_err  # wall_heading_error already gives folded angle
             travelled = self._rot_tracker.update(folded)
             remaining = self._spin_target - travelled
+
+            # Stall detection: if travelled hasn't changed for too many frames
+            # despite receiving valid headings, something is wrong.
+            if abs(travelled - self._spin_last_travelled) < 0.05:
+                self._spin_stall_counter += 1
+            else:
+                self._spin_stall_counter = 0
+                self._spin_last_travelled = travelled
+
+            if self._spin_stall_counter >= self._spin_stall_limit:
+                self.logwarn(f'Rotation STALLED ({self._spin_stall_limit} frames '
+                             f'with no progress at {travelled:+.1f} deg). Aborting.')
+                self._finish_spin(aborted=True)
+                return
 
             mode, sign = self._rot_controller.classify(remaining)
             if mode == homing.RotationController.STOP:
@@ -260,6 +306,10 @@ class GoHomeNode(AbstractNode):
                 cmd.angular.z = ang
 
         elif self.state == self.STATE_ALIGN:
+            if heading_err is None:
+                # No valid heading — hold still until we get a reading.
+                self.stop_robot()
+                return
             v_ang, aligned = homing.alignment_command(
                 heading_err, self.align_params)
             if aligned:

@@ -210,7 +210,7 @@ def wall_heading_error(ranges, r_min=0.15, r_max=12.0, max_gap=0.30,
             continue
         folded.append(fold_angle(math.degrees(math.atan2(dy, dx))))
     if len(folded) < min_segments:
-        return 0.0
+        return None
     return float(np.median(folded))
 
 
