@@ -1,139 +1,145 @@
 #!/usr/bin/env python3
-"""Homing node: centre the robot in the room, align it to the walls, and
-perform precise closed-loop rotations.
+"""Homing node: square the robot up to the walls, centre it in the room, and
+perform precise closed-loop relative rotations.
 
-Overhauled to keep the three concerns fully **decoupled and reusable**:
-  * centering (translate to the geometric centre),
-  * alignment (yaw correction to the walls), and
-  * precise rotation (spin-in-place via LiDAR feedback)
-are each a one-line call into the hardware-independent helpers in
-``etc.homing`` (unit-tested in ``test/test_homing.py``). Either controller can
-be reused on its own elsewhere (e.g. continuous yaw correction while driving a
-corridor) without touching this node.
+A thin ROS shell — all control logic lives in the hardware-independent,
+unit-tested components in ``etc/`` (alignment, centering, homing). Alignment
+and centering are independent, so they are exposed separately as well as
+chained:
 
-The precise-rotation capability (previously a separate ``rotation_node``) is
-merged here to keep the ROS graph clean: one node, one LiDAR subscription, one
-Twist publisher.
+    go_home/enable  (SetBool)  align -> settle -> centre -> verify
+    go_home/align   (SetBool)  align only
+    go_home/center  (SetBool)  centre only
+    rotation/spin   (Float)    signed degrees, + = CCW; non-blocking
+    rotation/stop   (SetBool)  abort the current rotation
 
-Key improvements over the previous version:
-  * The wall-orientation estimate no longer fits fixed cardinal sectors (which
-    straddle a corner and lose accuracy at ~45 degrees). ``homing`` estimates a
-    single room orientation from every wall segment and folds it to
-    [-45, 45), so any yaw - including 45 degrees - is handled gracefully.
-  * Friction / dead-band compensation lives in one reusable helper
-    (``homing.apply_deadband``), applied to every motion channel.
-  * Concurrent yaw correction during centering: small angular.z is applied
-    alongside the translation commands so the robot is mostly aligned by the
-    time it reaches the centre.
-  * Consecutive-arrival counter: the node waits for N successive "arrived"
-    readings before switching from centering to alignment, preventing
-    premature transitions from a single lucky reading while oscillating.
-  * While active, the node renders and publishes a top-down "room model as the
-    robot sees it" (LiDAR dots on the modelled walls, robot pose, offset
-    vector) on ``go_home/room_view`` so the GUI can show it during centering,
-    alignment, and rotation.
-
-Rotation interface (non-blocking, so the GUI never freezes):
-  * Service ``/rotation/spin`` (foma/Float): request ``data`` = signed degrees
-    (positive = CCW, negative = CW). Starts the spin and returns immediately.
-  * Service ``/rotation/stop`` (std_srvs/SetBool): abort the current spin.
-  * Topic ``/rotation/active`` (Bool, latched): True while a spin is running,
-    False when it finishes or is aborted. The GUI/protocol watches this to
-    chain the next step.
+Safety: motion is commanded only while a controller says it is unfinished,
+motor_control/twist has a subscriber, LiDAR scans are arriving, the requesting
+client is still alive (gui/heartbeat), and the operation timeout has not
+expired. Any of those failing calls _hard_stop(). The timeouts live in the
+20 Hz publish timer, not the LiDAR callback, so they fire even when the LiDAR
+is the thing that died.
 """
-import rospy
 import numpy as np
+import rospy
 
 from abstract_node import AbstractNode
-from etc import homing
-from sensor_msgs.msg import LaserScan, CompressedImage
+from etc import scan_geometry as geom
+from etc.alignment import AlignmentController, AlignParams
+from etc.centering import CenteringController, CenteringParams
+from etc.homing import HomingRoutine, PreciseRotator, RotationParams
+from foma.srv import Float, FloatResponse
 from geometry_msgs.msg import Twist
+from sensor_msgs.msg import CompressedImage, LaserScan
 from std_msgs.msg import Bool
 from std_srvs.srv import SetBool, SetBoolResponse
-from foma.srv import Float, FloatResponse
 
 
 class GoHomeNode(AbstractNode):
-    STATE_CENTER = 0
-    STATE_ALIGN = 1
-    STATE_SPINNING = 2
 
-    # Number of consecutive "arrived" LiDAR frames required before
-    # transitioning from centering to alignment.
-    ARRIVAL_CONFIRM_COUNT = 5
+    # A single dropped message must never leave the robot driving.
+    HARD_STOP_REPEATS = 5
+    STOP_TAIL_S = 0.6       # seconds of zero velocity published after a stop
 
     def __init__(self):
         super().__init__('go_home', 'Go Home')
 
-        # Decoupled controller parameter blocks (kept at the original tuning).
-        self.center_params = homing.CenteringParams(
-            kp=1.3, min_v=0.18, max_speed=0.55, arrival_tol=0.15,
-            settle_zone=0.30)
-        self.align_params = homing.AlignParams(
-            kp=0.06, min_ang_v=0.16, max_ang_v=0.5, angle_tol=3.0)
+        g = rospy.get_param
 
-        # Centering parameters for concurrent yaw correction.
-        self._center_yaw_kp = 0.03          # weaker than full alignment
-        self._center_yaw_max = 0.25         # cap angular.z while translating
+        # --- controllers (each independently constructed and reusable) --- #
+        align_params = AlignParams(
+            kp=g('~align_kp', 0.018),
+            kd=g('~align_kd', 0.004),
+            min_ang_v=g('~align_min_v', 0.13),
+            max_ang_v=g('~align_max_v', 0.40),
+            angle_tol=g('~align_tol_deg', 2.5),
+            filter_alpha=g('~align_filter_alpha', 0.35),
+            slow_zone=g('~align_slow_zone_deg', 12.0),
+            max_slew=g('~align_max_slew', 0.05))
 
-        self.enabled = False
-        self.state = self.STATE_CENTER
-        self._arrival_counter = 0
+        center_params = CenteringParams(
+            kp=g('~center_kp', 3.0),
+            min_v=g('~center_min_v', 0.35),
+            max_speed=g('~center_max_v', 0.85),
+            arrival_tol=g('~center_tol_m', 0.10),
+            settle_zone=g('~center_settle_zone_m', 0.30),
+            alpha=g('~center_filter_alpha', 0.5),
+            stall_time=g('~center_stall_time', 1.2),
+            stall_boost=g('~center_stall_boost', 1.4))
 
-        # --- Precise rotation (merged from rotation_node) --- #
-        self._rot_tol = rospy.get_param('~rot_tol_deg', 2.0)
-        self._rot_slow_zone = rospy.get_param('~rot_slow_zone_deg', 15.0)
-        self._spin_cmd = rospy.get_param('~spin_cmd', 0.5)
-        self._pulse_period = rospy.get_param('~pulse_period', 4)
+        self._align_ctrl = AlignmentController(
+            params=align_params, confirm_frames=g('~align_confirm_frames', 5))
+        self._center_ctrl = CenteringController(
+            params=center_params,
+            confirm_frames=g('~center_confirm_frames', 5),
+            drift_tol=g('~center_drift_tol_deg', 8.0))
+        self._routine = HomingRoutine(
+            mode=HomingRoutine.FULL,
+            align_ctrl=self._align_ctrl,
+            center_ctrl=self._center_ctrl,
+            settle_frames=g('~settle_frames', 6))
 
-        self._rot_controller = homing.RotationController(
-            tol=self._rot_tol, slow_zone=self._rot_slow_zone)
-        self._rot_tracker = homing.RotationTracker()
+        self._rotator = PreciseRotator(RotationParams(
+            tol=g('~rot_tol_deg', 2.0),
+            slow_zone=g('~rot_slow_zone_deg', 20.0),
+            cmd=g('~spin_cmd', 0.35),
+            min_cmd=g('~spin_min_cmd', 0.18),
+            timeout=g('~spin_timeout', 25.0),
+            stall_time=g('~spin_stall_time', 2.5),
+            wrong_way_grace=g('~spin_wrong_way_grace', 2.0),
+            blind_time=g('~spin_blind_time', 1.5)))
 
-        self._spin_active = False
+        # --- runtime state --- #
+        self.enabled = False              # homing routine running
+        self._homing_timeout = g('~homing_timeout', 60.0)
+        self._homing_start = None
+
+        self._spin_start = None
         self._spin_target = 0.0
-        self._spin_direction = 0
-        self._pulse_tick = 0
+        self._spin_watch_clients = False  # arm the client-drop check per spin
 
-        # Safety: maximum allowed spin duration (seconds) and stall detection.
-        self._spin_timeout = rospy.get_param('~spin_timeout', 30.0)
-        self._spin_start_time = None
-        self._spin_stall_limit = rospy.get_param('~spin_stall_limit', 50)
-        self._spin_stall_counter = 0
-        self._spin_last_travelled = 0.0
+        self._last_cmd = Twist()
+        self._last_lidar = rospy.Time(0)
+        self._lidar_timeout = g('~lidar_timeout', 0.5)
+        self._stop_until = rospy.Time(0)  # keep publishing zeros until this
 
-        # Room-view rendering throttle (Hz).
+        # Armed only once a beat has been seen, so a headless launch (joystick,
+        # rosservice call) isn't crippled by a watchdog for a client that never
+        # existed. 2 s = 10 missed beats at the GUI's 5 Hz.
+        self._heartbeat_timeout = g('~heartbeat_timeout', 2.0)
+        self._last_heartbeat = None
+
         self._view_period = rospy.Duration(1.0 / 10.0)
         self._last_view = rospy.Time(0)
 
-        # Publishers
+        # --- ROS I/O --- #
         self.cmd_pub = rospy.Publisher('motor_control/twist', Twist,
                                        queue_size=1, tcp_nodelay=True)
         self.pub_enabled = rospy.Publisher('go_home/enabled', Bool,
                                            queue_size=1, latch=True)
-        self.view_pub = rospy.Publisher('go_home/room_view', CompressedImage,
-                                        queue_size=1, tcp_nodelay=True)
         self.spin_active_pub = rospy.Publisher('rotation/active', Bool,
                                                queue_size=1, latch=True)
+        self.view_pub = rospy.Publisher('go_home/room_view', CompressedImage,
+                                        queue_size=1, tcp_nodelay=True)
 
-        # Subscribers
         rospy.Subscriber('lidar/scans', LaserScan, self.on_lidar,
                          queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('gui/heartbeat', Bool, self.on_heartbeat,
+                         queue_size=1, tcp_nodelay=True)
 
-        # Services — homing
         rospy.Service('go_home/enable', SetBool, self.on_enable)
-
-        # Services — precise rotation
+        rospy.Service('go_home/align', SetBool, self.on_align_only)
+        rospy.Service('go_home/center', SetBool, self.on_center_only)
         rospy.Service('rotation/spin', Float, self.on_spin)
         rospy.Service('rotation/stop', SetBool, self.on_spin_stop)
 
+        # 20 Hz command pump + safety supervisor.
+        self._cmd_timer = rospy.Timer(rospy.Duration(0.05), self._publish_loop)
+
         self.publish_status()
         self._publish_spin_active()
-
-        # SAFETY: ensure motors are stopped on node shutdown/crash/kill.
         rospy.on_shutdown(self._on_shutdown)
-
-        rospy.loginfo('[GoHome] Node Started Successfully')
+        self.loginfo('Node started (align / centre / precise rotation).')
 
     # ------------------------------------------------------------------ #
     #  Status helpers                                                      #
@@ -142,195 +148,260 @@ class GoHomeNode(AbstractNode):
         self.pub_enabled.publish(Bool(data=self.enabled))
 
     def _publish_spin_active(self):
-        self.spin_active_pub.publish(Bool(data=self._spin_active))
+        self.spin_active_pub.publish(Bool(data=self._rotator.active))
 
-    # ------------------------------------------------------------------ #
-    #  Homing enable / disable                                             #
-    # ------------------------------------------------------------------ #
-    def on_enable(self, req):
-        self.enabled = bool(req.data)
-        self.state = self.STATE_CENTER
-        self._arrival_counter = 0
+    @property
+    def _busy(self):
+        return self.enabled or self._rotator.active
+
+    def stop_robot(self):
+        """Publish one zero command and latch it as what the 20 Hz pump repeats."""
+        self._last_cmd = Twist()
+        self.cmd_pub.publish(self._last_cmd)
+
+    def _hard_stop(self, reason='hard stop', warn=True):
+        """The single funnel every stop path goes through — completion,
+        timeout, stall, LiDAR loss, motor-node loss, client disconnect.
+
+        Clears the activity flags first so no callback can re-arm a command
+        behind our back, then publishes zero repeatedly.
+        """
+        was_busy = self._busy
+        was_spinning = self._rotator.active
+
+        self.enabled = False
+        self._rotator.active = False
+        self._homing_start = None
+        self._spin_start = None
+        self._spin_watch_clients = False
+        self._last_cmd = Twist()
+
+        zero = Twist()
+        for _ in range(self.HARD_STOP_REPEATS):
+            try:
+                self.cmd_pub.publish(zero)
+            except Exception:
+                break
+        self._stop_until = rospy.Time.now() + rospy.Duration(self.STOP_TAIL_S)
+
         self.publish_status()
-        if not self.enabled:
-            self.stop_robot()
-        return SetBoolResponse(success=True,
-                               message=f'GoHome status: {self.enabled}')
+        if was_spinning:
+            self._publish_spin_active()
+        if was_busy:
+            if warn:
+                self.logwarn(f'HARD STOP — {reason}')
+            else:
+                self.loginfo(f'Stopped — {reason}')
 
-    # ------------------------------------------------------------------ #
-    #  Precise rotation services                                           #
-    # ------------------------------------------------------------------ #
+    def _start_routine(self, mode, label):
+        self._routine.reset(mode=mode)
+        self.enabled = True
+        self._homing_start = rospy.Time.now()
+        self._last_cmd = Twist()
+        self.publish_status()
+        self.loginfo(f'{label} started.')
+        return SetBoolResponse(success=True, message=f'{label} started')
+
+    def _handle_enable(self, req, mode, label):
+        # A new request always supersedes whatever was running: a rotation and
+        # a homing routine must never drive the motors at the same time.
+        if self._rotator.active:
+            self._rotator.cancel('superseded by homing request')
+            self._publish_spin_active()
+        if not bool(req.data):
+            self._hard_stop(f'{label} disabled by client')
+            return SetBoolResponse(success=True, message=f'{label} stopped')
+        return self._start_routine(mode, label)
+
+    def on_enable(self, req):
+        return self._handle_enable(req, HomingRoutine.FULL, 'GoHome')
+
+    def on_align_only(self, req):
+        return self._handle_enable(req, HomingRoutine.ALIGN_ONLY, 'Align-only')
+
+    def on_center_only(self, req):
+        return self._handle_enable(req, HomingRoutine.CENTER_ONLY,
+                                   'Centre-only')
+
     def on_spin(self, req):
-        """Begin a precise spin of ``req.data`` degrees (signed)."""
+        """Spin ``req.data`` degrees (signed, + = CCW). Non-blocking: returns
+        immediately, ``rotation/active`` reports completion."""
         degrees = float(req.data)
-        if abs(degrees) <= self._rot_tol:
+
+        if abs(degrees) <= self._rotator.params.tol:
+            self._hard_stop('spin request below tolerance')
             return FloatResponse(result=True)
 
-        # Rotation takes over — disable centering/alignment if active.
+        # Rotation takes over from homing rather than fighting it. The homing
+        # deadline has to be cleared with it, or the (now irrelevant) homing
+        # timeout would fire mid-rotation and abort a perfectly good spin.
         if self.enabled:
             self.enabled = False
+            self._homing_start = None
             self.publish_status()
 
+        now = rospy.Time.now()
         self._spin_target = degrees
-        self._spin_direction = 1 if degrees > 0 else -1
-        self._rot_tracker.reset()
-        self._pulse_tick = 0
-        self._spin_active = True
-        self._spin_start_time = rospy.Time.now()
-        self._spin_stall_counter = 0
-        self._spin_last_travelled = 0.0
-        self.state = self.STATE_SPINNING
+        self._spin_start = now
+        self._rotator.start(degrees, now.to_sec())
+        # Arm the client-drop watchdog only if somebody is actually listening
+        # for the result, so a headless `rosservice call` is not aborted.
+        self._spin_watch_clients = self.spin_active_pub.get_num_connections() > 0
+        self._last_cmd = Twist()
         self._publish_spin_active()
-        self.loginfo(f'Spinning {degrees:+.1f} deg (LiDAR closed loop)')
+        self.loginfo(f'Spinning {degrees:+.1f} deg (LiDAR closed loop).')
         return FloatResponse(result=True)
 
     def on_spin_stop(self, req):
-        self._finish_spin(aborted=True)
+        self._hard_stop('rotation stopped by client')
         return SetBoolResponse(success=True, message='Rotation stopped')
 
-    def _finish_spin(self, aborted=False):
-        self._spin_active = False
-        self._spin_direction = 0
-        self.state = self.STATE_CENTER
-        self.stop_robot()
-        self._publish_spin_active()
-        if aborted:
-            self.logwarn('Rotation aborted.')
+    def on_heartbeat(self, msg):
+        self._last_heartbeat = rospy.Time.now()
 
-    # ------------------------------------------------------------------ #
-    #  LiDAR callback — main control loop                                  #
-    # ------------------------------------------------------------------ #
+    # ---------------- 20 Hz command pump + safety supervisor ------------- #
+    def _publish_loop(self, event):
+        now = rospy.Time.now()
+
+        if not self._busy:
+            # Keep asserting zero briefly after a stop, so a dropped message
+            # cannot leave the motor node ramping.
+            if now < self._stop_until:
+                self.cmd_pub.publish(Twist())
+            return
+
+        if self._safety_check(now):
+            return
+
+        self.cmd_pub.publish(self._last_cmd)
+
+    def _safety_check(self, now):
+        """Run every watchdog. Returns True if the robot was stopped."""
+        # Nobody is listening to our commands.
+        if self.cmd_pub.get_num_connections() == 0:
+            self._hard_stop('no subscriber on motor_control/twist '
+                            '(motor_control_node down?)')
+            return True
+
+        # The client that asked for this motion disappeared.
+        if self._last_heartbeat is not None:
+            age = (now - self._last_heartbeat).to_sec()
+            if age > self._heartbeat_timeout:
+                self._hard_stop(f'client heartbeat lost ({age:.1f}s) — '
+                                f'GUI closed or disconnected')
+                return True
+        if self._spin_watch_clients and self._rotator.active and \
+                self.spin_active_pub.get_num_connections() == 0:
+            self._hard_stop('rotation client disconnected')
+            return True
+
+        # LiDAR died: we are flying blind.
+        if (now - self._last_lidar).to_sec() > self._lidar_timeout:
+            self._hard_stop('no LiDAR scans')
+            return True
+
+        # Operation timeouts live here, not in the LiDAR callback, so they fire
+        # even when scans have stopped arriving.
+        if self._spin_start is not None:
+            elapsed = (now - self._spin_start).to_sec()
+            if elapsed > self._rotator.params.timeout:
+                self._hard_stop(f'rotation timeout after {elapsed:.1f}s '
+                                f'(travelled {self._rotator.tracker.total:+.1f} '
+                                f'of {self._spin_target:+.1f} deg)')
+                return True
+        if self._homing_start is not None:
+            elapsed = (now - self._homing_start).to_sec()
+            if elapsed > self._homing_timeout:
+                self._hard_stop(f'homing timeout after {elapsed:.1f}s '
+                                f'(state={self._routine.state})')
+                return True
+        return False
+
+    # ---------------- LiDAR callback: the main control loop -------------- #
     def on_lidar(self, msg):
-        ranges = np.array(msg.ranges) / 1000.0  # mm -> m
+        now = rospy.Time.now()
+        self._last_lidar = now
 
-        # Always compute room geometry for the view — even when idle.
-        cardinals = homing.cardinal_distances(ranges)
-        heading_err = homing.wall_heading_error(ranges)
+        # lidar/scans republishes at 100 Hz while the sensor only completes a
+        # revolution at ~5 Hz, and the wall-angle estimator is a 360-beam
+        # Python loop — derive the geometry once, and only when it's needed.
+        view_due = (now - self._last_view) >= self._view_period
+        if not (self._busy or view_due):
+            return
 
-        # Publish room view whenever homing or spinning is active.
-        if self.enabled or self._spin_active:
-            self._publish_room_view(ranges, heading_err, cardinals)
+        ranges = np.asarray(msg.ranges, dtype=float) / 1000.0  # mm -> m
+        heading_err = geom.wall_heading_error(ranges)
+        cardinals = geom.cardinal_distances(ranges)
 
-        # --- Precise rotation (STATE_SPINNING) --- #
-        if self._spin_active:
-            # Safety timeout: abort if we've been spinning too long.
-            if self._spin_start_time is not None:
-                elapsed = (rospy.Time.now() - self._spin_start_time).to_sec()
-                if elapsed > self._spin_timeout:
-                    self.logwarn(f'Rotation TIMEOUT after {elapsed:.1f}s '
-                                 f'(travelled {self._rot_tracker.total:+.1f} deg '
-                                 f'of {self._spin_target:+.1f} deg). Aborting.')
-                    self._finish_spin(aborted=True)
-                    return
+        if view_due:
+            self._publish_room_view(now, ranges, heading_err, cardinals)
 
-            # wall_heading_error returns exactly 0.0 when it cannot compute a
-            # reliable heading (too few wall segments visible — common during
-            # fast rotation).  Feeding that into the tracker corrupts the
-            # accumulated angle, so we skip it and just keep the motors
-            # running with the last command.
-            if heading_err is None or heading_err == 0.0:
-                # Still publish the spin command so motors keep turning.
-                cmd = Twist()
-                cmd.angular.z = self._spin_direction * self._spin_cmd
-                self.cmd_pub.publish(cmd)
-                return
+        if self._rotator.active:
+            self._step_rotation(ranges, heading_err)
+            return
 
-            folded = heading_err  # wall_heading_error already gives folded angle
-            travelled = self._rot_tracker.update(folded)
-            remaining = self._spin_target - travelled
+        if self.enabled:
+            self._step_homing(ranges, heading_err, cardinals)
 
-            # Stall detection: if travelled hasn't changed for too many frames
-            # despite receiving valid headings, something is wrong.
-            if abs(travelled - self._spin_last_travelled) < 0.05:
-                self._spin_stall_counter += 1
+    def _step_rotation(self, ranges, heading_err):
+        """PreciseRotator owns every termination condition; all this has to
+        guarantee is that ``done`` results in a hard stop."""
+        status = self._rotator.update(heading_err, rospy.Time.now().to_sec(),
+                                      ranges=ranges)
+
+        if status.done:
+            if status.success:
+                self.loginfo(f'Rotation complete: travelled '
+                             f'{status.travelled:+.1f} of '
+                             f'{self._spin_target:+.1f} deg ({status.reason}).')
             else:
-                self._spin_stall_counter = 0
-                self._spin_last_travelled = travelled
-
-            if self._spin_stall_counter >= self._spin_stall_limit:
-                self.logwarn(f'Rotation STALLED ({self._spin_stall_limit} frames '
-                             f'with no progress at {travelled:+.1f} deg). Aborting.')
-                self._finish_spin(aborted=True)
-                return
-
-            mode, sign = self._rot_controller.classify(remaining)
-            if mode == homing.RotationController.STOP:
-                self.loginfo(f'Rotation complete (travelled {travelled:+.1f} deg)')
-                self._finish_spin()
-                return
-
-            cmd = Twist()
-            if mode == homing.RotationController.FULL:
-                cmd.angular.z = sign * self._spin_cmd
-            else:  # SLOW -> pulse the command to creep the last few degrees
-                self._pulse_tick = (self._pulse_tick + 1) % self._pulse_period
-                cmd.angular.z = sign * self._spin_cmd if self._pulse_tick == 0 else 0.0
-            self.cmd_pub.publish(cmd)
-            return
-
-        # --- Homing (centering + alignment) --- #
-        if not self.enabled:
-            return
-
-        if cardinals is None:
+                self.logwarn(f'Rotation aborted ({status.reason}) after '
+                             f'{status.travelled:+.1f} of '
+                             f'{self._spin_target:+.1f} deg.')
+            self._hard_stop(f'rotation finished: {status.reason}',
+                            warn=not status.success)
             return
 
         cmd = Twist()
-        if self.state == self.STATE_CENTER:
-            vx, vy, dist, arrived = homing.centering_command(
-                cardinals, self.center_params)
+        cmd.angular.z = status.angular_z
+        self._last_cmd = cmd
+        rospy.loginfo_throttle(
+            1.0, f'[GoHome] SPIN travelled={status.travelled:+.1f} '
+                 f'remaining={status.remaining:+.1f} cmd={status.angular_z:+.3f}')
 
-            if arrived:
-                self._arrival_counter += 1
-                if self._arrival_counter >= self.ARRIVAL_CONFIRM_COUNT:
-                    rospy.loginfo('[GoHome] Center reached. Switching to align mode.')
-                    self.stop_robot()
-                    rospy.sleep(0.6)
-                    self.state = self.STATE_ALIGN
-                    return
-                # Not enough consecutive arrivals yet — hold still.
-                self.stop_robot()
-                return
-            else:
-                self._arrival_counter = 0
+    def _step_homing(self, ranges, heading_err, cardinals):
+        """One align/centre step, driven entirely by the routine state machine."""
+        result = self._routine.step(ranges, now=rospy.Time.now().to_sec(),
+                                    heading_err=heading_err,
+                                    cardinals=cardinals)
 
-            cmd.linear.x = vx
-            cmd.linear.y = vy
-
-            # Concurrent yaw correction: apply gentle angular.z during centering
-            # so the robot is already mostly aligned when it reaches the centre.
-            if heading_err is not None and abs(heading_err) > self.align_params.angle_tol:
-                raw_ang = heading_err * self._center_yaw_kp
-                # Clip to a gentle max so rotation doesn't interfere with driving.
-                ang = max(-self._center_yaw_max, min(self._center_yaw_max, raw_ang))
-                cmd.angular.z = ang
-
-        elif self.state == self.STATE_ALIGN:
-            if heading_err is None:
-                # No valid heading — hold still until we get a reading.
-                self.stop_robot()
-                return
-            v_ang, aligned = homing.alignment_command(
-                heading_err, self.align_params)
-            if aligned:
-                rospy.loginfo(
-                    f'[GoHome] Alignment complete (Error: {heading_err:.2f} deg)')
-                self._finish()
-                return
-            cmd.angular.z = v_ang
-
-        self.cmd_pub.publish(cmd)
-
-    # ------------------------------------------------------------------ #
-    def _publish_room_view(self, ranges, heading_err, cardinals):
-        """Render + publish the top-down room model (throttled)."""
-        now = rospy.Time.now()
-        if now - self._last_view < self._view_period:
+        if result.done:
+            self.loginfo(f'Homing finished ({result.reason}).')
+            self._hard_stop(f'homing finished: {result.reason}', warn=False)
             return
+
+        # Translation and rotation are mutually exclusive at the hardware, so
+        # the routine only ever produces one of them at a time.
+        cmd = Twist()
+        cmd.linear.x = result.vx
+        cmd.linear.y = result.vy
+        cmd.angular.z = result.wz
+        self._last_cmd = cmd
+
+        heading = ('n/a' if result.heading_err is None
+                   else f'{result.heading_err:+.2f} deg')
+        dist = 'n/a' if result.dist is None else f'{result.dist:.3f} m'
+        rospy.loginfo_throttle(
+            2.0, f'[GoHome] {result.state} ({result.reason}) '
+                 f'heading={heading} dist={dist} '
+                 f'cmd=({result.vx:+.2f},{result.vy:+.2f},{result.wz:+.2f})')
+
+    def _publish_room_view(self, now, ranges, heading_err, cardinals):
+        """Render + publish the top-down room model (throttled in on_lidar)."""
         self._last_view = now
         try:
             import cv2
-            img = homing.render_room_view(ranges, heading_err, cardinals)
+            img = geom.render_room_view(ranges, heading_err, cardinals)
             ok, buf = cv2.imencode('.jpg', img)
             if not ok:
                 return
@@ -342,34 +413,18 @@ class GoHomeNode(AbstractNode):
         except Exception as e:
             rospy.logwarn_throttle(5.0, f'[GoHome] room-view render failed: {e}')
 
-    def stop_robot(self):
-        self.cmd_pub.publish(Twist())
-
-    def _finish(self):
-        self.enabled = False
-        self.state = self.STATE_CENTER
-        self._arrival_counter = 0
-        self.publish_status()
-        self.stop_robot()
-        rospy.loginfo('[GoHome] Task finished successfully.')
-
     def _on_shutdown(self):
-        """SAFETY: called on node kill/crash/Ctrl-C. Publishes zero-velocity
-        commands multiple times to maximise the chance the motor controller
-        receives at least one before this process exits."""
-        self.logwarn('Shutdown requested — sending emergency stop.')
+        """Node kill / crash / Ctrl-C: leave the motors stopped."""
         self.enabled = False
-        self._spin_active = False
+        self._rotator.active = False
         stop = Twist()
-        # Publish several times with small delays: the subscriber may need
-        # more than one message to overcome its ramp, and a single publish
-        # might be lost if the transport is shutting down simultaneously.
-        for _ in range(5):
+        for _ in range(self.HARD_STOP_REPEATS):
             try:
                 self.cmd_pub.publish(stop)
                 rospy.sleep(0.02)
             except Exception:
-                pass
+                break
+
 
 if __name__ == '__main__':
     rospy.init_node('go_home_node')

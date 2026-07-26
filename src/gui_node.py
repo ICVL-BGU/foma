@@ -100,6 +100,37 @@ class MainWindow(QMainWindow):
         self.__trial_timer = QTimer(self)
         self.__trial_timer.timeout.connect(self.__update_trial_timer)
 
+        # 5 Hz "the operator is still here".
+        self.__heartbeat_timer = QTimer(self)
+        self.__heartbeat_timer.timeout.connect(self.__publish_heartbeat)
+        self.__heartbeat_timer.start(200)
+
+    def __publish_heartbeat(self):
+        try:
+            self.__heartbeat_pub.publish(Bool(data=True))
+        except Exception:
+            pass
+
+    def __emergency_stop(self, reason=""):
+        """Stop every motion this GUI can command — the robot must never
+        outlive the window that started it moving."""
+        try:
+            self.__motor_control_twist.publish(Twist())
+        except Exception:
+            pass
+        if self.__rotation_stop is not None:
+            try:
+                self.__rotation_stop(True)
+            except Exception as e:
+                self.logwarn(f"Failed to stop rotation: {e}")
+        if self.__go_home_enable is not None:
+            try:
+                self.__go_home_enable(False)
+            except Exception as e:
+                self.logwarn(f"Failed to stop GoHome: {e}")
+        if reason:
+            self.loginfo(f"Emergency stop: {reason}")
+
     def __pump_displays(self):
         fish = self.__latest_fish
         if fish is not None:
@@ -149,6 +180,7 @@ class MainWindow(QMainWindow):
         self.__rotation_spin = None
         self.__rotation_stop = None
         self.__rotation_active = False
+        self.__rotation_buttons = []
         self.__room_view_window = None
         self.__room_view_label = None
 
@@ -446,6 +478,9 @@ class MainWindow(QMainWindow):
         self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=1, tcp_nodelay=True)
         self.__control_mode_pub = rospy.Publisher("control/mode", StringMsg, queue_size=1)
         self.__event_pub = rospy.Publisher('trial_events', TrialEvent, queue_size=100)
+        # Liveness heartbeat: go_home_node hard-stops when this goes stale, so
+        # losing the GUI mid-rotation stops the robot.
+        self.__heartbeat_pub = rospy.Publisher('gui/heartbeat', Bool, queue_size=1)
         
         # Writer services - one for each writer node
         self.__writer_services = [
@@ -484,12 +519,15 @@ class MainWindow(QMainWindow):
                 self.__motor_set_mode("trial")
             else:
                 self.__motor_set_mode("idle")
-            self.__motor_control_twist.publish(Twist())
+            # Closing the manual window must also cancel a precise rotation it
+            # started — otherwise the robot keeps spinning with no visible UI.
+            self.__emergency_stop("manual control window closed")
             self.__motor_set_speed(1.0)
             self.__bypass_lidar(False)
             self.__velocity_timer.stop()
             self.__velocity = Twist()
-            
+            self.__rotation_buttons = []  # widgets die with the window
+
             # Log manual control end
             self.__log_event("manual_control", "Manual control window closed")
 
@@ -598,18 +636,29 @@ class MainWindow(QMainWindow):
         rotate_custom_button.clicked.connect(rotate_custom)
 
         preset_layout = QGridLayout()
+        self.__rotation_buttons = [rotate_custom_button]
         for col, deg in enumerate((90, 180, 270, 360)):
             b = QPushButton(f"{deg}\u00b0")
             b.clicked.connect(lambda _=False, d=deg: self.__request_spin(signed(d)))
             preset_layout.addWidget(b, 0, col)
+            self.__rotation_buttons.append(b)
         preset_widget = QWidget()
         preset_widget.setLayout(preset_layout)
+
+        # Stop button: always available while a spin is running, so the
+        # operator never has to close the GUI to stop the robot.
+        rotation_stop_button = QPushButton("Stop Rotation")
+        rotation_stop_button.clicked.connect(
+            lambda: self.__emergency_stop("stop rotation pressed"))
+
+        self.__set_rotation_buttons_enabled(not self.__rotation_active)
 
         control_layout.addWidget(rotation_label, 5, 0, 1, 2)
         control_layout.addWidget(rotation_dir, 5, 2, 1, 2)
         control_layout.addWidget(preset_widget, 6, 0, 1, 4)
         control_layout.addWidget(custom_angle, 7, 0, 1, 2)
         control_layout.addWidget(rotate_custom_button, 7, 2, 1, 2)
+        control_layout.addWidget(rotation_stop_button, 8, 0, 1, 4)
 
         forward_button.pressed.connect(lambda: self.__update_velocity(True,0))
         forward_button.released.connect(lambda: self.__update_velocity(False))
@@ -666,8 +715,18 @@ class MainWindow(QMainWindow):
         if active:
             self.__open_room_view_window()
 
+    def __set_rotation_buttons_enabled(self, enabled: bool):
+        """Presets are disabled during a spin: stacking requests restarts the
+        closed loop mid-turn and loses the accumulated angle."""
+        for button in getattr(self, '_MainWindow__rotation_buttons', []):
+            try:
+                button.setEnabled(enabled)
+            except RuntimeError:
+                pass  # widget destroyed with its window
+
     def __update_rotation_state(self, active: bool):
         self.__rotation_active = active
+        self.__set_rotation_buttons_enabled(not active)
         if active:
             self.__open_room_view_window()
 
@@ -1572,6 +1631,14 @@ class MainWindow(QMainWindow):
         rospy.loginfo(f"Spawned sidebyside batch worker pid={p.pid} log={log}")
 
     def __on_close_click(self, event):
+        # Stop the robot before anything else: closing the window used to leave
+        # an in-progress rotation running with nobody left to cancel it.
+        self.__emergency_stop("GUI closing")
+        try:
+            self.__heartbeat_timer.stop()
+        except Exception:
+            pass
+
         if self.__ongoing_trial:
             self.__log_event("trial_stop", "Trial stopped - GUI closing")
             rospy.sleep(0.05)

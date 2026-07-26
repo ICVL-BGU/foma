@@ -1,300 +1,166 @@
-"""Hardware-independent homing / alignment / rotation geometry for FOMA.
+"""Precise rotation, the align+centre routine, and the public ``homing`` API.
 
-This module contains the *pure math* used by the homing (`go_home_node`) and
-precise-rotation (`rotation_node`) ROS nodes. It deliberately has **no ROS
-dependency** so the logic can be unit-tested on any machine with NumPy
-(see ``test/test_homing.py``).
+Layout of the homing code:
 
-Design goals (see CHANGELOG_AND_EXPLANATION.md):
-  * Alignment (yaw correction) and centering (translation to room centre) are
-    fully decoupled - each is a standalone function that takes a LiDAR scan
-    (ranges in metres) and returns a command. Either can be reused on its own,
-    e.g. continuous yaw correction while driving down a corridor.
-  * Friction / dead-band compensation is a single reusable helper so the same
-    behaviour is applied everywhere motion commands are produced.
-  * Wall-orientation estimation is robust to the "45-degree corner" failure of
-    the previous fixed-sector least-squares fit: it estimates a single room
-    orientation from *all* wall segments and folds it into the [-45, 45)
-    range, so a corner never corrupts the estimate.
+    etc/scan_geometry.py   pure LiDAR maths (no deps)
+    etc/alignment.py       yaw alignment    — standalone controller
+    etc/centering.py       room centering   — standalone controller
+    etc/homing.py          rotation + the routine that chains the above
 
-Coordinate / sign conventions (kept identical to the original go_home_node so
-on-robot behaviour is preserved):
-  * ``ranges`` is a length-N array (N usually 360); index ``i`` is angle ``i``
-    degrees, and a point is ``x = r*cos(i deg)``, ``y = r*sin(i deg)``.
-  * Cardinal sampling used by centering: front=270, back=90, left=0, right=180.
-  * ``error_x = (front-back)/2``  ``error_y = (left-right)/2``.
-  * ``heading error`` is the room orientation folded to [-45, 45); 0 means the
-    robot is aligned with the walls. Positive/negative sign matches the
-    original ``get_heading_error`` (both fold wall orientation the same way),
-    so the existing proportional gains keep the same closed-loop sign.
+Alignment and centering never reference each other; this module is the only
+place they are combined, which is what makes align-only, centre-only and the
+full sequence three configurations of one object. Everything is re-exported
+under the historical ``homing.*`` names, so ``from etc import homing`` and the
+existing test suite keep working.
 """
 
-import math
-import numpy as np
+try:
+    from . import scan_geometry as geom
+    from .scan_geometry import (                       # noqa: F401
+        sample_distance, cardinal_distances, center_error, apply_deadband,
+        clamp_magnitude, slew_limit, scan_to_points, fold_angle,
+        unwrap_folded_delta, wall_heading_error, scan_match_delta_deg,
+        render_room_view,
+    )
+    from .alignment import (                           # noqa: F401
+        AlignParams, alignment_command, AlignmentController,
+    )
+    from .centering import (                           # noqa: F401
+        CenteringParams, CenteringState, CenteringController,
+        centering_command, center_distance,
+    )
+except ImportError:                     # imported flat (unit tests, scripts)
+    import scan_geometry as geom
+    from scan_geometry import (                        # noqa: F401
+        sample_distance, cardinal_distances, center_error, apply_deadband,
+        clamp_magnitude, slew_limit, scan_to_points, fold_angle,
+        unwrap_folded_delta, wall_heading_error, scan_match_delta_deg,
+        render_room_view,
+    )
+    from alignment import (                            # noqa: F401
+        AlignParams, alignment_command, AlignmentController,
+    )
+    from centering import (                            # noqa: F401
+        CenteringParams, CenteringState, CenteringController,
+        centering_command, center_distance,
+    )
+
+_UNSET = geom.UNSET
 
 
-# --------------------------------------------------------------------------- #
-#  Tunable defaults (mirrors of the original go_home_node constants).          #
-# --------------------------------------------------------------------------- #
-class CenteringParams:
-    """Parameters for the translate-to-centre controller."""
+# =========================================================================== #
+#  Precise relative rotation (LiDAR feedback)                                 #
+# =========================================================================== #
+# There is no IMU and no wheel odometry, so "turn 90 degrees" is closed on the
+# LiDAR: the folded wall angle is precise but ambiguous modulo 90 degrees (so
+# it only works as a frame-to-frame delta), and scan matching is coarser but
+# unambiguous. Both are fused below.
+#
+# The previous version span forever because it only ever exited on
+# |remaining| <= tol. It had no overshoot exit (passing the target made it turn
+# back and hunt), a single feedback source that one bad median could corrupt
+# permanently, no direction or progress supervision, and it kept publishing the
+# spin command indefinitely when the heading estimate was unavailable.
 
-    def __init__(self, kp=1.3, min_v=0.18, max_speed=0.55, arrival_tol=0.15,
-                 settle_zone=0.30):
-        self.kp = kp
-        self.min_v = min_v            # dead-band / static-friction floor
-        self.max_speed = max_speed
-        self.arrival_tol = arrival_tol
-        self.settle_zone = settle_zone  # ramp min_v down inside this radius
+class RotationParams:
+    """Tuning and safety envelope for one relative rotation."""
 
-
-class AlignParams:
-    """Parameters for the yaw-alignment controller."""
-
-    def __init__(self, kp=0.06, min_ang_v=0.16, max_ang_v=0.5, angle_tol=3.0):
-        self.kp = kp
-        self.min_ang_v = min_ang_v    # dead-band / static-friction floor
-        self.max_ang_v = max_ang_v
-        self.angle_tol = angle_tol    # degrees
-
-
-# --------------------------------------------------------------------------- #
-#  Low-level scan helpers.                                                     #
-# --------------------------------------------------------------------------- #
-def sample_distance(ranges, angle_deg, half_window=10, r_min=0.1, r_max=15.0):
-    """Robust distance in a +/-``half_window`` cone around ``angle_deg``.
-
-    Returns the median of valid readings, or ``None`` if none are valid.
-    Matches the original ``get_dist`` behaviour.
-    """
-    ranges = np.asarray(ranges, dtype=float)
-    n = len(ranges)
-    idx = [(int(angle_deg) + i) % n for i in range(-half_window, half_window)]
-    vals = ranges[idx]
-    valid = vals[(vals > r_min) & (vals < r_max)]
-    if valid.size == 0:
-        return None
-    return float(np.median(valid))
+    def __init__(self, tol=2.0, slow_zone=20.0, cmd=0.35, min_cmd=0.18,
+                 timeout=25.0, stall_time=2.5, stall_progress=1.0,
+                 wrong_way_grace=2.0, wrong_way_deg=10.0, blind_time=1.5,
+                 max_step_deg=40.0):
+        self.tol = tol                    # deg; within this we are done
+        self.slow_zone = slow_zone        # deg; start decelerating here
+        self.cmd = cmd                    # full-speed command magnitude
+        self.min_cmd = min_cmd            # static-friction floor for the spin
+        self.timeout = timeout            # s; hard cap on one rotation
+        self.stall_time = stall_time      # s without progress = stalled
+        self.stall_progress = stall_progress   # deg that counts as progress
+        self.wrong_way_grace = wrong_way_grace  # s to settle before judging
+        self.wrong_way_deg = wrong_way_deg      # deg *away* that aborts
+        self.blind_time = blind_time      # s; max time with no heading
+        self.max_step_deg = max_step_deg  # reject deltas larger than this
 
 
-def cardinal_distances(ranges, front=270, back=90, left=0, right=180):
-    """Return ``(front, back, left, right)`` distances (metres) or ``None``.
-
-    ``None`` is returned for the whole tuple if any direction has no valid
-    reading, so callers can bail out cleanly.
-    """
-    f = sample_distance(ranges, front)
-    b = sample_distance(ranges, back)
-    l = sample_distance(ranges, left)
-    r = sample_distance(ranges, right)
-    if None in (f, b, l, r):
-        return None
-    return f, b, l, r
-
-
-def center_error(cardinals):
-    """From ``(f, b, l, r)`` return ``(error_x, error_y, distance)``.
-
-    Positive ``error_x`` -> robot is offset toward *front*; positive
-    ``error_y`` -> offset toward *left*. Distance is the Euclidean offset from
-    the geometric centre of the (assumed rectangular) room.
-    """
-    f, b, l, r = cardinals
-    error_x = (f - b) / 2.0
-    error_y = (l - r) / 2.0
-    return error_x, error_y, math.hypot(error_x, error_y)
-
-
-def apply_deadband(value, min_mag, max_mag):
-    """Friction / dead-band compensation for a single command channel.
-
-    * Boosts any non-zero command up to at least ``min_mag`` so the wheels
-      actually overcome static friction instead of buzzing in place.
-    * Clips the magnitude to ``max_mag``.
-    * Leaves an exact-zero command at zero.
-    """
-    if value == 0.0:
-        return 0.0
-    mag = abs(value)
-    if mag < min_mag:
-        mag = min_mag
-    if mag > max_mag:
-        mag = max_mag
-    return math.copysign(mag, value)
-
-
-# --------------------------------------------------------------------------- #
-#  Centering controller (translation only - decoupled from alignment).        #
-# --------------------------------------------------------------------------- #
-def centering_command(cardinals, params=None):
-    """Proportional + dead-band translate-to-centre controller.
-
-    Returns ``(vx, vy, distance, arrived)`` where ``vx`` maps to the robot's
-    front/back axis (Twist.linear.x) and ``vy`` to left/right
-    (Twist.linear.y), matching motor_control_node's twist handler.
-
-    Inside the ``settle_zone`` the dead-band floor (``min_v``) is ramped down
-    proportionally so the robot can creep in gently instead of oscillating.
-    """
-    if params is None:
-        params = CenteringParams()
-
-    ex, ey, dist = center_error(cardinals)
-    if dist < params.arrival_tol:
-        return 0.0, 0.0, dist, True
-
-    # Inside the settle zone, scale the dead-band floor down so the robot
-    # decelerates smoothly instead of overshooting at the fixed min_v.
-    if dist < params.settle_zone:
-        frac = dist / params.settle_zone          # 0 at centre … 1 at edge
-        effective_min_v = params.min_v * frac
-    else:
-        effective_min_v = params.min_v
-
-    vx = apply_deadband(ex * params.kp, effective_min_v, params.max_speed)
-    vy = apply_deadband(ey * params.kp, effective_min_v, params.max_speed)
-    return vx, vy, dist, False
-
-
-# --------------------------------------------------------------------------- #
-#  Wall-orientation estimation (robust, 45-degree-corner safe).               #
-# --------------------------------------------------------------------------- #
-def scan_to_points(ranges, r_min=0.15, r_max=12.0):
-    """Convert a scan to ``(x, y, valid)`` arrays in the robot frame."""
-    ranges = np.asarray(ranges, dtype=float)
-    n = len(ranges)
-    ang = np.deg2rad(np.arange(n))
-    x = ranges * np.cos(ang)
-    y = ranges * np.sin(ang)
-    valid = (ranges > r_min) & (ranges < r_max)
-    return x, y, valid
-
-
-def fold_angle(angle_deg):
-    """Fold an orientation into [-45, 45).
-
-    Two wall directions 90 degrees apart map to the same value, so a
-    rectangular room has one orientation error regardless of which wall we
-    look at. This is what makes the estimate corner-proof.
-    """
-    return ((angle_deg + 45.0) % 90.0) - 45.0
-
-
-def wall_heading_error(ranges, r_min=0.15, r_max=12.0, max_gap=0.30,
-                       min_segments=8):
-    """Estimate the room's yaw error (degrees, folded to [-45, 45)).
-
-    Instead of fitting fixed cardinal sectors (which straddle a corner and
-    break at ~45 degrees), this walks the whole scan, measures the orientation
-    of every short wall segment between adjacent valid points, discards
-    segments that jump across a corner/gap, folds each orientation into
-    [-45, 45), and returns the median. The median rejects the handful of
-    corner segments, so the estimate stays accurate at any yaw - including the
-    problematic 45-degree case.
-
-    Returns ``0.0`` when there is not enough wall structure to decide.
-    """
-    x, y, valid = scan_to_points(ranges, r_min, r_max)
-    n = len(x)
-    folded = []
-    for i in range(n):
-        j = (i + 1) % n
-        if not (valid[i] and valid[j]):
-            continue
-        dx = x[j] - x[i]
-        dy = y[j] - y[i]
-        seg = math.hypot(dx, dy)
-        # Skip degenerate points and segments that leap across a corner/gap
-        # (those connect two different walls and would bias the estimate).
-        if seg < 1e-4 or seg > max_gap:
-            continue
-        folded.append(fold_angle(math.degrees(math.atan2(dy, dx))))
-    if len(folded) < min_segments:
-        return None
-    return float(np.median(folded))
-
-
-def alignment_command(heading_err, params=None):
-    """Proportional + dead-band yaw-alignment controller.
-
-    Returns ``(angular_z, aligned)``. Decoupled from centering: give it any
-    heading error (from walls, a corridor, etc.) and it produces a spin
-    command that respects the static-friction floor.
-    """
-    if params is None:
-        params = AlignParams()
-
-    if abs(heading_err) < params.angle_tol:
-        return 0.0, True
-
-    v_ang = apply_deadband(heading_err * params.kp,
-                           params.min_ang_v, params.max_ang_v)
-    return v_ang, False
-
-
-# --------------------------------------------------------------------------- #
-#  Closed-loop precise rotation (LiDAR feedback).                             #
-# --------------------------------------------------------------------------- #
 class RotationTracker:
-    """Accumulate absolute yaw travelled from folded wall-angle measurements.
+    """Accumulate signed yaw travelled from folded wall-angle measurements.
 
-    The folded wall angle only lives in [-45, 45), so a raw reading cannot
-    distinguish 0 from 90 degrees. By unwrapping the *change* between
-    successive readings (assuming each step turns less than 45 degrees, which
-    holds at any sane spin rate + LiDAR update rate) we recover the true,
-    unbounded rotation travelled. This is the LiDAR-based feedback that lets us
-    spin a precise number of degrees with no IMU or wheel odometry.
+    The folded angle lives in [-45, 45), so a raw reading can't tell 0 from 90.
+    Unwrapping the *change* between successive readings (each step turns well
+    under 45 degrees at any sane spin rate) recovers the true rotation.
+
+    Two robustness additions over the original: deltas too large to be physical
+    are dropped rather than integrated (one bad median used to corrupt the
+    total permanently), and when the raw scan is supplied an independent
+    scan-match estimate arbitrates a folded delta that disagrees with it.
     """
 
-    def __init__(self):
-        self.total = 0.0
-        self._prev = None
+    def __init__(self, max_step_deg=40.0, disagree_deg=12.0):
+        self.max_step_deg = max_step_deg
+        self.disagree_deg = disagree_deg
+        self.reset()
 
     def reset(self):
         self.total = 0.0
+        self.rejected = 0
+        self.samples = 0
         self._prev = None
+        self._prev_ranges = None
 
-    def update(self, folded_deg):
-        """Feed a new folded wall angle; return cumulative signed rotation."""
+    @property
+    def travelled(self):
+        return self.total
+
+    def update(self, folded_deg, ranges=None):
+        """Feed a folded wall angle; return cumulative rotation (+ = CCW)."""
+        self.samples += 1
         if self._prev is None:
             self._prev = folded_deg
+            self._prev_ranges = None if ranges is None else list(ranges)
             return self.total
-        delta = folded_deg - self._prev
-        # Unwrap the 90-degree fold discontinuity into (-45, 45].
-        while delta > 45.0:
-            delta -= 90.0
-        while delta <= -45.0:
-            delta += 90.0
+
+        # Walls appear to rotate opposite to the robot, hence the negation.
+        delta = -geom.unwrap_folded_delta(folded_deg - self._prev)
+
+        match = None
+        if ranges is not None and self._prev_ranges is not None:
+            match = geom.scan_match_delta_deg(self._prev_ranges, ranges)
+
+        if abs(delta) > self.max_step_deg:
+            self.rejected += 1          # impossible between two frames
+            delta = 0.0
+        elif match is not None and abs(match - delta) > self.disagree_deg:
+            self.rejected += 1          # trust the unambiguous estimate
+            delta = match
+
         self.total += delta
         self._prev = folded_deg
+        if ranges is not None:
+            self._prev_ranges = list(ranges)
         return self.total
 
 
 class RotationController:
-    """Bang-bang + pulsed spin controller for a fixed-speed rotary drive.
+    """Decide how hard to turn given the remaining angle.
 
-    The Pololu drive spins at a fixed speed (only the *sign* of the command
-    matters at the motor), so we cannot slow down near the target by lowering
-    magnitude. Instead we:
-      * spin at full command until within ``slow_zone`` degrees of the target,
-      * then pulse (duty-cycle) the command to creep the last few degrees and
-        limit overshoot,
-      * and stop within ``tol`` degrees.
-
-    ``classify`` is a pure function (easy to unit-test); the actual on/off
-    pulsing timing lives in the node.
+    ``MotorControl.rotate`` scales with command magnitude below 1.0, so the
+    spin really can be slowed near the target. The old pulse/duty-cycle hack
+    was self-defeating: a pulse shorter than motor_control_node's acceleration
+    ramp (0.03 per 20 ms) produced no motion at all.
     """
 
     STOP = "stop"
     FULL = "full"
     SLOW = "slow"
 
-    def __init__(self, tol=2.0, slow_zone=15.0):
+    def __init__(self, tol=2.0, slow_zone=15.0, cmd=0.35, min_cmd=0.18):
         self.tol = tol
         self.slow_zone = slow_zone
+        self.cmd = cmd
+        self.min_cmd = min_cmd
 
     def classify(self, remaining_deg):
-        """Return (mode, sign) for the remaining angle to target."""
+        """-> ``(mode, sign)`` for the remaining angle."""
         if abs(remaining_deg) <= self.tol:
             return self.STOP, 0
         sign = 1 if remaining_deg > 0 else -1
@@ -302,86 +168,294 @@ class RotationController:
             return self.SLOW, sign
         return self.FULL, sign
 
+    def command(self, remaining_deg):
+        """-> signed angular command."""
+        mode, sign = self.classify(remaining_deg)
+        if mode == self.STOP:
+            return 0.0
+        if mode == self.FULL:
+            return sign * self.cmd
+        # Proportional deceleration, never below the friction floor (or the
+        # last few degrees never happen).
+        frac = abs(remaining_deg) / max(self.slow_zone, 1e-6)
+        return sign * max(self.min_cmd, self.cmd * frac)
 
-# --------------------------------------------------------------------------- #
-#  Room-model rendering (top-down "what the robot sees").                      #
-# --------------------------------------------------------------------------- #
-def render_room_view(ranges, heading_err=None, cardinals=None,
-                     size=480, scale=None, r_max=12.0):
-    """Render a top-down BGR image of the room as recognised by the robot.
 
-    Draws the LiDAR dots, the modelled wall lines (from the estimated
-    orientation + cardinal distances), the robot at the centre with a forward
-    arrow, and - when centering - the offset-to-centre vector.
+class RotationStatus:
+    """Result of one :meth:`PreciseRotator.update`."""
 
-    Returns an ``(size, size, 3)`` uint8 BGR ndarray. ``cv2`` is imported
-    lazily so this module still imports (and its math is testable) on machines
-    without OpenCV.
+    def __init__(self, angular_z=0.0, done=False, success=False, reason='',
+                 travelled=0.0, remaining=0.0):
+        self.angular_z = angular_z
+        self.done = done
+        self.success = success
+        self.reason = reason
+        self.travelled = travelled
+        self.remaining = remaining
+
+    def __repr__(self):
+        return (f'RotationStatus(cmd={self.angular_z:+.3f}, done={self.done}, '
+                f'success={self.success}, reason={self.reason!r}, '
+                f'travelled={self.travelled:+.1f}, '
+                f'remaining={self.remaining:+.1f})')
+
+
+class PreciseRotator:
+    """Closed-loop relative rotation with a complete termination guarantee.
+
+    Every ``update`` either returns a command with ``done=False``, or returns
+    ``angular_z == 0.0`` with ``done=True``. Six independent conditions reach
+    that exit — target reached, overshoot, timeout, stall, wrong direction and
+    blind — so no path through this class keeps commanding a turn forever.
     """
-    import cv2  # local import: not needed for the pure-math unit tests
 
-    img = np.full((size, size, 3), 20, dtype=np.uint8)   # dark background
-    cx = cy = size // 2
+    def __init__(self, params=None):
+        self.params = params or RotationParams()
+        self.tracker = RotationTracker(max_step_deg=self.params.max_step_deg)
+        self.controller = RotationController(
+            tol=self.params.tol, slow_zone=self.params.slow_zone,
+            cmd=self.params.cmd, min_cmd=self.params.min_cmd)
+        self.active = False
+        self.target = 0.0
+        self._start_time = None
+        self._best_remaining = None
+        self._best_time = None
+        self._last_seen = None
+        self._last_cmd = 0.0
 
-    x, y, valid = scan_to_points(ranges, r_max=r_max)
-    # metres -> pixels; auto-scale so the room fills ~80% of the view.
-    if scale is None:
-        if valid.any():
-            span = float(np.max(np.hypot(x[valid], y[valid])))
-        else:
-            span = 1.0
-        span = max(span, 0.5)
-        scale = (size * 0.42) / span
+    def start(self, target_deg, now):
+        """Begin a rotation of ``target_deg`` (signed; + = CCW)."""
+        self.target = float(target_deg)
+        self.tracker.reset()
+        self.active = True
+        self._start_time = now
+        self._best_remaining = abs(self.target)
+        self._best_time = now
+        self._last_seen = now
+        self._last_cmd = 0.0
+        return self.active
 
-    def to_px(px_m, py_m):
-        # image x right, image y down; robot forward (world -y at 270 deg) = up
-        return int(cx + px_m * scale), int(cy - py_m * scale)
+    def cancel(self, reason='cancelled'):
+        return self._finish(False, reason)
 
-    # LiDAR dots on the modelled walls.
-    xs, ys = x[valid], y[valid]
-    for pxm, pym in zip(xs, ys):
-        u, v = to_px(pxm, pym)
-        if 0 <= u < size and 0 <= v < size:
-            cv2.circle(img, (u, v), 2, (180, 200, 220), -1)
+    def _finish(self, success, reason):
+        self.active = False
+        self._last_cmd = 0.0
+        return RotationStatus(0.0, done=True, success=success, reason=reason,
+                              travelled=self.tracker.total,
+                              remaining=self.target - self.tracker.total)
 
-    # Modelled wall lines from orientation + cardinal distances.
-    if heading_err is not None and cardinals is not None:
-        f, b, l, r = cardinals
-        phi = math.radians(heading_err)
-        # Unit vectors for the two wall families (rotated by the yaw error).
-        ux, uy = math.cos(phi), math.sin(phi)          # front/back normal axis
-        vx, vy = -math.sin(phi), math.cos(phi)         # left/right normal axis
-        half = size  # long enough to span the view
-        wall_defs = [
-            (270, f, (ux, uy), (vx, vy)),   # front wall
-            (90,  b, (-ux, -uy), (vx, vy)),  # back wall
-            (0,   l, (vx, vy), (ux, uy)),   # left wall
-            (180, r, (-vx, -vy), (ux, uy)),  # right wall
-        ]
-        for _, dist, normal, tangent in wall_defs:
-            mxm = normal[0] * dist
-            mym = normal[1] * dist
-            p1 = to_px(mxm - tangent[0] * half, mym - tangent[1] * half)
-            p2 = to_px(mxm + tangent[0] * half, mym + tangent[1] * half)
-            cv2.line(img, p1, p2, (80, 180, 255), 2)
+    def update(self, heading_err, now, ranges=None):
+        """Advance by one measurement.
 
-        # Offset-to-centre vector. In the robot frame the centre lies at
-        # (-ey, ex): front axis (270 deg) is world (0,-1), left axis (0 deg) is
-        # (1,0), and the centre is -error_x along front and -error_y along left.
-        ex, ey, _ = center_error(cardinals)
-        u, v = to_px(-ey, ex)
-        cv2.arrowedLine(img, (cx, cy), (u, v), (80, 255, 80), 2, tipLength=0.2)
+        ``heading_err`` is the folded wall angle in degrees, or None when the
+        scan has no usable wall structure. ``now`` is a monotonic float.
+        """
+        if not self.active:
+            return RotationStatus(0.0, done=True, success=False, reason='idle')
+        p = self.params
 
-    # Robot marker + forward arrow (forward = up).
-    cv2.circle(img, (cx, cy), 7, (0, 80, 255), -1)
-    cv2.arrowedLine(img, (cx, cy), (cx, cy - 28), (0, 80, 255), 2, tipLength=0.35)
+        if self._start_time is not None and (now - self._start_time) > p.timeout:
+            return self._finish(False, 'timeout')
 
-    if heading_err is not None:
-        cv2.putText(img, f"yaw err: {heading_err:+.1f} deg", (8, 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1, cv2.LINE_AA)
-    if cardinals is not None:
-        _, _, dist = center_error(cardinals)
-        cv2.putText(img, f"dist to centre: {dist:.3f} m", (8, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1, cv2.LINE_AA)
+        # No usable heading: hold the last command, but never indefinitely.
+        if heading_err is None:
+            if self._last_seen is not None and (now - self._last_seen) > p.blind_time:
+                return self._finish(False, 'no_lidar_heading')
+            return RotationStatus(self._last_cmd, reason='blind',
+                                  travelled=self.tracker.total,
+                                  remaining=self.target - self.tracker.total)
 
-    return img
+        self._last_seen = now
+        travelled = self.tracker.update(heading_err, ranges=ranges)
+        remaining = self.target - travelled
+
+        if abs(remaining) <= p.tol:
+            return self._finish(True, 'reached')
+
+        # Overshoot: we passed the target. Stop rather than turn back — that
+        # hunt is what oscillated around the setpoint indefinitely.
+        if (remaining > 0) != (self.target > 0):
+            return self._finish(True, 'overshoot')
+
+        elapsed = now - self._start_time if self._start_time is not None else 0.0
+        if elapsed > p.wrong_way_grace and \
+                abs(remaining) > abs(self.target) + p.wrong_way_deg:
+            return self._finish(False, 'wrong_direction')
+
+        if self._best_remaining is None or \
+                abs(remaining) < self._best_remaining - p.stall_progress:
+            self._best_remaining = abs(remaining)
+            self._best_time = now
+        elif self._best_time is not None and (now - self._best_time) > p.stall_time:
+            return self._finish(False, 'stalled')
+
+        self._last_cmd = self.controller.command(remaining)
+        return RotationStatus(self._last_cmd, reason='turning',
+                              travelled=travelled, remaining=remaining)
+
+
+# =========================================================================== #
+#  The align + centre routine (the only place the two are chained)            #
+# =========================================================================== #
+class HomingResult:
+    """Outcome of one :meth:`HomingRoutine.step`."""
+
+    def __init__(self, vx=0.0, vy=0.0, wz=0.0, state='idle', done=False,
+                 success=False, reason='', heading_err=None, dist=None):
+        self.vx = vx
+        self.vy = vy
+        self.wz = wz
+        self.state = state
+        self.done = done
+        self.success = success
+        self.reason = reason
+        self.heading_err = heading_err
+        self.dist = dist
+
+    def __repr__(self):
+        return (f'HomingResult(state={self.state!r}, done={self.done}, '
+                f'v=({self.vx:+.2f},{self.vy:+.2f}), wz={self.wz:+.2f})')
+
+
+class HomingRoutine:
+    """Align and/or centre the robot, as a restartable state machine.
+
+        HomingRoutine(mode=HomingRoutine.ALIGN_ONLY)    # square up only
+        HomingRoutine(mode=HomingRoutine.CENTER_ONLY)   # drive to centre only
+        HomingRoutine(mode=HomingRoutine.FULL)          # both, then verify
+
+    ALIGN -> SETTLE -> CENTER -> VERIFY. SETTLE is a frame counter, not a
+    sleep, letting the chassis come to rest before the cardinal distances are
+    trusted. VERIFY re-checks both criteria and sends the routine back to
+    whichever stage failed. Hardware independent: ``step`` returns a command
+    and a state, and the ROS node only has to publish it.
+
+    The two controllers are exposed as ``self.align`` / ``self.center`` so a
+    caller can reuse or re-tune either directly.
+    """
+
+    ALIGN_ONLY = 'align'
+    CENTER_ONLY = 'center'
+    FULL = 'full'
+
+    ST_ALIGN = 'ALIGN'
+    ST_SETTLE = 'SETTLE'
+    ST_CENTER = 'CENTER'
+    ST_VERIFY = 'VERIFY'
+    ST_DONE = 'DONE'
+
+    def __init__(self, mode=FULL, align_ctrl=None, center_ctrl=None,
+                 settle_frames=6, verify_align_scale=1.2,
+                 verify_center_scale=1.5, max_retries=4):
+        self.mode = mode
+        self.align = align_ctrl or AlignmentController(confirm_frames=5)
+        self.center = center_ctrl or CenteringController(confirm_frames=5,
+                                                         drift_tol=8.0)
+        self.settle_frames = settle_frames
+        self.verify_align_scale = verify_align_scale
+        self.verify_center_scale = verify_center_scale
+        self.max_retries = max_retries
+        self.reset()
+
+    def reset(self, mode=None):
+        if mode is not None:
+            self.mode = mode
+        self.align.reset()
+        self.center.reset()
+        self._settle_count = 0
+        self._retries = 0
+        self.state = (self.ST_CENTER if self.mode == self.CENTER_ONLY
+                      else self.ST_ALIGN)
+
+    def _enter_align(self):
+        self.align.reset()
+        self.state = self.ST_ALIGN
+
+    def _enter_center(self):
+        self.center.reset()
+        self.state = self.ST_CENTER
+
+    def _finish(self, reason='complete'):
+        self.state = self.ST_DONE
+        return HomingResult(state=self.ST_DONE, done=True, success=True,
+                            reason=reason)
+
+    def step(self, ranges, now=None, dt=None, heading_err=_UNSET,
+             cardinals=_UNSET):
+        """One step from a scan. ``heading_err`` / ``cardinals`` may be
+        supplied by a caller that already derived them from this scan."""
+        if self.state == self.ST_DONE:
+            return HomingResult(state=self.ST_DONE, done=True, success=True,
+                                reason='already_done')
+
+        if self.state == self.ST_ALIGN:
+            wz, aligned, err = self.align.step(ranges, dt=dt,
+                                               heading_err=heading_err)
+            if err is None:
+                return HomingResult(state=self.ST_ALIGN, reason='no_heading')
+            if aligned:
+                if self.mode == self.ALIGN_ONLY:
+                    return self._finish('aligned')
+                self._settle_count = 0
+                self.state = self.ST_SETTLE
+                return HomingResult(state=self.ST_SETTLE, heading_err=err,
+                                    reason='aligned')
+            return HomingResult(wz=wz, state=self.ST_ALIGN, heading_err=err,
+                                reason='aligning')
+
+        if self.state == self.ST_SETTLE:
+            self._settle_count += 1
+            if self._settle_count >= self.settle_frames:
+                self._enter_center()
+                return HomingResult(state=self.ST_CENTER, reason='settled')
+            return HomingResult(state=self.ST_SETTLE, reason='settling')
+
+        if self.state == self.ST_CENTER:
+            vx, vy, dist, arrived, drift = self.center.step(
+                ranges, now=now, cardinals=cardinals, heading_err=heading_err)
+            # Skewed cardinal readings: re-square first. Bounded by
+            # max_retries so align/centre cannot ping-pong forever.
+            if drift and self.mode == self.FULL and self._retries < self.max_retries:
+                self._retries += 1
+                self._enter_align()
+                return HomingResult(state=self.ST_ALIGN, dist=dist,
+                                    reason='drift')
+            if arrived:
+                if self.mode == self.CENTER_ONLY:
+                    return self._finish('centred')
+                self.state = self.ST_VERIFY
+                return HomingResult(state=self.ST_VERIFY, dist=dist,
+                                    reason='centred')
+            return HomingResult(vx=vx, vy=vy, state=self.ST_CENTER, dist=dist,
+                                reason='centring')
+
+        if self.state == self.ST_VERIFY:
+            if heading_err is _UNSET:
+                heading_err = geom.wall_heading_error(ranges)
+            if cardinals is _UNSET:
+                cardinals = geom.cardinal_distances(ranges)
+            if heading_err is None or cardinals is None:
+                return HomingResult(state=self.ST_VERIFY, reason='bad_scan')
+
+            dist = geom.center_error(cardinals)[2]
+            heading_ok = abs(heading_err) < (self.align.params.angle_tol *
+                                             self.verify_align_scale)
+            center_ok = dist < (self.center.params.arrival_tol *
+                                self.verify_center_scale)
+            if heading_ok and center_ok:
+                return self._finish('verified')
+            if self._retries >= self.max_retries:
+                # Good enough; retrying further would just burn the timeout.
+                return self._finish('verify_retries_exhausted')
+            self._retries += 1
+
+            if not heading_ok:
+                self._enter_align()
+                return HomingResult(state=self.ST_ALIGN, heading_err=heading_err,
+                                    dist=dist, reason='verify_failed_heading')
+            self._enter_center()
+            return HomingResult(state=self.ST_CENTER, heading_err=heading_err,
+                                dist=dist, reason='verify_failed_centre')
+
+        return HomingResult(state=self.state, reason='unknown_state')
