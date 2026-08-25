@@ -29,45 +29,18 @@
     <!-- Writer Nodes -->
     <include file="$(find foma)/launch/writers.launch"/>
 
-    <!-- Go Home: wall alignment, room centering and precise rotation.
-         Every value below is live-tunable; the defaults in go_home_node.py
-         match these. -->
-    <node pkg="foma" type="go_home_node.py" name="go_home_node" output="screen">
-        <!-- Alignment (yaw). Low gain + rate damping + slew limiting: a high
-             gain here is what made the robot wobble around the setpoint. -->
-        <param name="align_kp"            value="0.018"/>
-        <param name="align_kd"            value="0.004"/>
-        <param name="align_min_v"         value="0.13"/>
-        <param name="align_max_v"         value="0.40"/>
-        <param name="align_tol_deg"       value="2.5"/>
-        <param name="align_max_slew"      value="0.05"/>
+    <!-- Go Home. Tuned from the go_home_node: block in foma_params.yaml. -->
+    <node pkg="foma" type="go_home_node.py" name="go_home_node" output="screen"/>
 
-        <!-- Centering (translation). center_min_v is the *active* minimum
-             drive speed held all the way to the tolerance; lowering it below
-             what breaks static friction makes the robot stall short of the
-             centre. -->
-        <param name="center_kp"           value="3.0"/>
-        <param name="center_min_v"        value="0.35"/>
-        <param name="center_max_v"        value="0.85"/>
-        <param name="center_tol_m"        value="0.10"/>
-
-        <!-- Precise rotation + safety envelope. -->
-        <param name="rot_tol_deg"         value="2.0"/>
-        <param name="spin_cmd"            value="0.35"/>
-        <param name="spin_min_cmd"        value="0.18"/>
-        <param name="spin_timeout"        value="25.0"/>
-        <param name="homing_timeout"      value="60.0"/>
-        <!-- Client-disconnect watchdog: robot hard-stops this long after the
-             GUI heartbeat goes quiet. -->
-        <param name="heartbeat_timeout"   value="2.0"/>
-    </node>
-
+    <!-- Precise in-place rotation by LIDAR scan matching.
+         Tuned from the rotate_node: block in foma_params.yaml. -->
+    <node pkg="foma" type="rotate_node.py" name="rotate_node" output="screen"/>
 
     <!-- Joystick to Motor-->
     <node pkg="foma" type="joystick_node.py" name="joystick_node" output="screen"/>
     
     <node pkg="joy" type="joy_node" name="joy_node" output="screen">
-        <param name="dev" value="/dev/input/js0"/>
+        <param name="dev" value="/dev/input/js1"/>
         <param name="deadzone" value="0.05"/>
         <param name="autorepeat_rate" value="20.0"/>
     </node> 

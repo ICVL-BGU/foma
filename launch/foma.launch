@@ -13,4 +13,7 @@
 
     <!-- Node 4 -->
     <node pkg="foma" type="feeder_node.py" name="feeder_node" output="screen"/>
+
+    <!-- Node 5 -->
+    <node pkg="foma" type="rotate_node.py" name="rotate_node" output="screen"/>
 </launch>
