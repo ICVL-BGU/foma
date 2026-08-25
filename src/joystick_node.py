@@ -40,8 +40,10 @@ class JoystickNode(AbstractNode):
         #goHome toggle (optional)
         self.go_home_srv = rospy.ServiceProxy("go_home/enable", SetBool)
         rospy.Subscriber("go_home/enabled", Bool, self.on_go_home_state)
+        rospy.Subscriber("rotation/active", Bool, self.on_spin_state)
 
         self.go_home_active = False
+        self.spin_active = False
         self.lidar_bypassed = False
         self.current_speed = 1.0
 
@@ -58,6 +60,11 @@ class JoystickNode(AbstractNode):
     def on_go_home_state(self, msg: Bool):
         self.go_home_active = msg.data
         rospy.loginfo(f"[joystick_node] Go Home active: {self.go_home_active}")
+
+    def on_spin_state(self, msg: Bool):
+        self.spin_active = msg.data
+        if self.spin_active:
+            rospy.loginfo("[joystick_node] Spin active — sticks disabled")
 
     def stop_motion(self):
         self.pub_vector.publish(Vector3(0.0, 0.0, 0.0))
@@ -149,8 +156,8 @@ class JoystickNode(AbstractNode):
             self.handle_loading_sequence()
 
         #  movement: rotate or translate 
-        # only move the robot when in joystick mode
-        if self.mode != "joystick":
+        # only move the robot when in joystick mode AND go_home/spin are not active
+        if self.mode != "joystick" or self.go_home_active or self.spin_active:
             self.prev_buttons = msg.buttons[:]  # still update state
             return
 

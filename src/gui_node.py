@@ -60,6 +60,14 @@ class MainWindow(QMainWindow):
     # frame at the display rate; older frames are discarded by construction.
     services_updated = pyqtSignal(dict)
     go_home_state_signal = pyqtSignal(bool)
+    rotate_state_signal = pyqtSignal(bool)
+    rotate_result_signal = pyqtSignal(str)
+
+    # Dead-man: an un-refreshed jog intent expires after this.
+    JOG_HOLD_S = 0.5
+    # Ceiling on one continuous jog, for the case where a key release is lost
+    # while the dialog keeps focus and the held-set never empties.
+    JOG_MAX_S = 15.0
 
     def __init__(self):
         super(MainWindow, self).__init__()
@@ -80,6 +88,8 @@ class MainWindow(QMainWindow):
     def __init_signals(self):
         self.services_updated.connect(self.__update_services)
         self.go_home_state_signal.connect(self.__update_go_home_state)
+        self.rotate_state_signal.connect(self.__update_rotate_state)
+        self.rotate_result_signal.connect(self.__update_rotate_result)
 
         # Latest-frame refs; written by ROS subscriber threads, read by the
         # display timer on the GUI thread. ndarray ref assignment is atomic
@@ -134,8 +144,18 @@ class MainWindow(QMainWindow):
         self.__bypass_lidar = None
         self.__go_home_enable = None
         self.__go_home_active = False
+        self.__rotate_quarter_turns = None
+        self.__rotate_active = False
         self.__motor_set_speed = None
         self.__motor_set_mode = None
+
+        # Manual jog state: velocity only flows while an intent is verifiably
+        # held (see __jog_alive).
+        self.__keys_held = set()
+        self.__jog_buttons_down = 0
+        self.__velocity_deadline = 0.0
+        self.__velocity_started = None
+        self.__velocity_zero_bursts = 0
 
         # Trial Control
         self.__ongoing_trial = False
@@ -183,7 +203,9 @@ class MainWindow(QMainWindow):
         self.__BL_layout.addWidget(self.__show_fish_direction_cb, 0, 3, 1, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__show_foma_direction_cb, 1, 3, 1, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__room_display_group, 0, 4, 2, 1, alignment=Qt.AlignCenter)
-        
+        self.__BL_layout.addWidget(self.__rotate_container, 0, 5, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__rotate_button, 1, 5, alignment=Qt.AlignCenter)
+
         self.__BL_widget = QFrame()
         self.__BL_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
         self.__BL_widget.setLineWidth(2)
@@ -293,6 +315,33 @@ class MainWindow(QMainWindow):
         self.__feed_loading_button.setMaximumHeight(50)
         self.__feed_loading_button.clicked.connect(self.__init_feeding_load_window)
         self.__feed_loading_button.setDisabled(True)
+
+        # In-place rotation. Label and field share a cell to keep two rows.
+        self.__rotate_input = QLineEdit()
+        self.__rotate_input.setPlaceholderText("e.g. 2 = 180")
+        self.__rotate_input.setAlignment(Qt.AlignHCenter)
+        self.__rotate_input.setValidator(QDoubleValidator(-8.0, 8.0, 2))
+        self.__rotate_input.setMaximumWidth(120)
+        self.__rotate_input.setToolTip(
+            "Quarter turns. 1 = 90°, 2 = 180°. Negative = clockwise.")
+        self.__rotate_input.returnPressed.connect(self.__on_rotate_click)
+        self.__rotate_input.setDisabled(True)
+
+        self.__rotate_label = QLabel("Quarter turns (− = CW)")
+        self.__rotate_label.setAlignment(Qt.AlignHCenter)
+
+        self.__rotate_container = QWidget()
+        _rotate_box = QVBoxLayout()
+        _rotate_box.setContentsMargins(0, 0, 0, 0)
+        _rotate_box.addWidget(self.__rotate_label)
+        _rotate_box.addWidget(self.__rotate_input)
+        self.__rotate_container.setLayout(_rotate_box)
+
+        self.__rotate_button = QPushButton()
+        self.__rotate_button.setText("Rotate")
+        self.__rotate_button.setMaximumHeight(50)
+        self.__rotate_button.clicked.connect(self.__on_rotate_click)
+        self.__rotate_button.setDisabled(True)
 
         # Fish image init — OpenGL surface; Qt does GPU blit + scale on repaint.
         self.__left_image_frame = GLImageWidget()
@@ -422,6 +471,8 @@ class MainWindow(QMainWindow):
         rospy.Subscriber('lidar/blocked', Int16MultiArray, self.__update_blocked_directions, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('motor_control/speed', TwistStamped, self.__update_foma_speed, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('go_home/enabled', Bool, self.__on_go_home_state, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('rotate/active', Bool, self.__on_rotate_state, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('rotate/result', StringMsg, self.__on_rotate_result, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('fish_feeder/feed_inc', TriggerResponse, self.__update_feeder_status, queue_size=1, tcp_nodelay=True)
         self.__motor_control_twist = rospy.Publisher('motor_control/twist', Twist, queue_size=1, tcp_nodelay=True)
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=1, tcp_nodelay=True)
@@ -453,6 +504,13 @@ class MainWindow(QMainWindow):
         if self.__go_home_enable is not None:
             self.__go_home_enable(False)
 
+        # ... and any rotation in progress, for the same reason.
+        if self.__rotate_quarter_turns is not None:
+            try:
+                self.__rotate_quarter_turns(0.0)
+            except Exception as e:
+                self.logwarn(f"Failed to stop Rotate: {e}")
+
         # Log manual control start
         self.__log_event("manual_control", "Manual control window opened")
 
@@ -466,7 +524,12 @@ class MainWindow(QMainWindow):
                 self.__motor_set_mode("trial")
             else:
                 self.__motor_set_mode("idle")
-            self.__motor_control_twist.publish(Twist())
+            # Zero before stopping the timer, or a non-zero command is stranded.
+            self.__keys_held.clear()
+            self.__jog_buttons_down = 0
+            self.__update_velocity(False)
+            for _ in range(3):
+                self.__motor_control_twist.publish(Twist())
             self.__motor_set_speed(1.0)
             self.__bypass_lidar(False)
             self.__velocity_timer.stop()
@@ -479,32 +542,40 @@ class MainWindow(QMainWindow):
 
             event.accept()
 
+        # Map numpad keys and +/-
+        key_to_angle = {
+            Qt.Key_8: 0,
+            Qt.Key_2: 180,
+            Qt.Key_4: 90,
+            Qt.Key_6: 270,
+            Qt.Key_7: 45,
+            Qt.Key_9: 315,
+            Qt.Key_1: 135,
+            Qt.Key_3: 225,
+            Qt.Key_Plus: -2,  # ccw
+            Qt.Key_Minus: -1  # cw
+        }
+
         def on_key_press(event):
+            # X11 sends a release/press pair per auto-repeat tick; ignoring
+            # them makes the held-set the sole source of truth.
+            if event.isAutoRepeat():
+                event.accept()
+                return
 
             key = event.key()
-            # Map numpad keys and +/-
-            key_to_angle = {
-                Qt.Key_8: 0,
-                Qt.Key_2: 180,
-                Qt.Key_4: 90,
-                Qt.Key_6: 270,
-                Qt.Key_7: 45,
-                Qt.Key_9: 315,
-                Qt.Key_1: 135,
-                Qt.Key_3: 225,
-                Qt.Key_Plus: -2,  # ccw
-                Qt.Key_Minus: -1  # cw
-            }
-            if key in key_to_angle:
-                if event.type() == QEvent.KeyPress:
-                    angle = key_to_angle[key]
-                    self.__update_velocity(True, angle)
-                    event.accept()
-                elif event.type() == QEvent.KeyRelease:
-                    self.__update_velocity(False)
-                    event.accept()
-            else:
+            if key not in key_to_angle:
                 event.ignore()
+                return
+
+            if event.type() == QEvent.KeyPress:
+                self.__keys_held.add(key)
+                self.__update_velocity(True, key_to_angle[key])
+            elif event.type() == QEvent.KeyRelease:
+                self.__keys_held.discard(key)
+                if not self.__keys_held and self.__jog_buttons_down == 0:
+                    self.__update_velocity(False)
+            event.accept()
 
         self.__manual_control_window.closeEvent = on_close
         self.__manual_control_window.keyPressEvent = on_key_press
@@ -556,27 +627,33 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(speed_control_textbox, 4, 2)
         control_layout.addWidget(speed_control_button, 4, 3)
 
-        forward_button.pressed.connect(lambda: self.__update_velocity(True,0))
-        forward_button.released.connect(lambda: self.__update_velocity(False))
-        backward_button.pressed.connect(lambda: self.__update_velocity(True, 180))
-        backward_button.released.connect(lambda: self.__update_velocity(False))
-        left_button.pressed.connect(lambda: self.__update_velocity(True, 90))
-        left_button.released.connect(lambda: self.__update_velocity(False))
-        right_button.pressed.connect(lambda: self.__update_velocity(True, 270))
-        right_button.released.connect(lambda: self.__update_velocity(False))
-        forward_left_button.pressed.connect(lambda: self.__update_velocity(True, 45))
-        forward_left_button.released.connect(lambda: self.__update_velocity(False))
-        forward_right_button.pressed.connect(lambda: self.__update_velocity(True, 315))
-        forward_right_button.released.connect(lambda: self.__update_velocity(False))
-        backward_left_button.pressed.connect(lambda: self.__update_velocity(True, 135))
-        backward_left_button.released.connect(lambda: self.__update_velocity(False))
-        backward_right_button.pressed.connect(lambda: self.__update_velocity(True, 225))
-        backward_right_button.released.connect(lambda: self.__update_velocity(False))
-        cw_button.pressed.connect(lambda: self.__update_velocity(True, -1))
-        cw_button.released.connect(lambda: self.__update_velocity(False))
-        ccw_button.pressed.connect(lambda: self.__update_velocity(True, -2))
-        ccw_button.released.connect(lambda: self.__update_velocity(False))
+        def jog_press(direction):
+            self.__jog_buttons_down += 1
+            self.__update_velocity(True, direction)
+
+        def jog_release():
+            self.__jog_buttons_down = max(0, self.__jog_buttons_down - 1)
+            if self.__jog_buttons_down == 0 and not self.__keys_held:
+                self.__update_velocity(False)
+
+        for _button, _direction in (
+                (forward_button, 0), (backward_button, 180),
+                (left_button, 90), (right_button, 270),
+                (forward_left_button, 45), (forward_right_button, 315),
+                (backward_left_button, 135), (backward_right_button, 225),
+                (cw_button, -1), (ccw_button, -2)):
+            _button.pressed.connect(
+                lambda d=_direction: jog_press(d))
+            _button.released.connect(jog_release)
+            # Focus here would cost the dialog the releases that stop the robot.
+            _button.setFocusPolicy(Qt.NoFocus)
         speed_control_button.clicked.connect(set_speed)
+        speed_control_button.setFocusPolicy(Qt.NoFocus)
+
+        # The speed box used to swallow numpad keys once clicked.
+        speed_control_textbox.setFocusPolicy(Qt.ClickFocus)
+        self.__manual_control_window.setFocusPolicy(Qt.StrongFocus)
+        self.__manual_control_window.setFocus()
 
         bypass_lidar_checkbox.stateChanged.connect(lambda state: self.__bypass_lidar(state == Qt.Checked))
         
@@ -605,6 +682,82 @@ class MainWindow(QMainWindow):
     def __update_go_home_state(self, active: bool):
         self.__go_home_active = active
         self.__go_home_button.setText("Stop Go Home" if active else "Go Home")
+
+    # -- Rotation. ROS callbacks hop to the GUI thread via pyqtSignal.
+
+    def __on_rotate_state(self, msg: Bool):
+        self.rotate_state_signal.emit(bool(msg.data))
+
+    def __update_rotate_state(self, active: bool):
+        self.__rotate_active = active
+        self.__rotate_button.setText("Stop" if active else "Rotate")
+        self.__rotate_input.setDisabled(
+            active or self.__rotate_quarter_turns is None)
+
+    def __on_rotate_result(self, msg: StringMsg):
+        self.rotate_result_signal.emit(str(msg.data))
+
+    def __update_rotate_result(self, text: str):
+        # foma/Float's response has no message field, hence rotate/result.
+        if text in ("", "idle"):
+            return
+        self.__rotate_button.setToolTip(text)
+        self.__log_event("rotate_result", text)
+        if text.startswith("success"):
+            self.loginfo(f"Rotate: {text}")
+        else:
+            self.logwarn(f"Rotate: {text}")
+
+    def __on_rotate_click(self):
+        """Start a turn, or stop the one in progress."""
+        if self.__rotate_quarter_turns is None:
+            self.logwarn("Rotate service not available")
+            return
+
+        if self.__rotate_active:
+            try:
+                self.__rotate_quarter_turns(0.0)      # 0 = cancel
+                self.__log_event("rotate", "Rotation cancelled by operator")
+            except Exception as e:
+                self.logwarn(f"Failed to stop Rotate: {e}")
+            return
+
+        text = self.__rotate_input.text().strip()
+        try:
+            quarter_turns = float(text)
+        except ValueError:
+            self.logwarn("Enter a signed number of quarter turns (1 = 90°)")
+            return
+        if not math.isfinite(quarter_turns) or quarter_turns == 0.0:
+            self.logwarn("Quarter turns must be a non-zero number")
+            return
+
+        # Take the robot cleanly first, exactly as __start_go_home does.
+        if self.__manual_control_window is not None:
+            self.__motor_control_twist.publish(Twist())
+            if getattr(self, '_MainWindow__velocity_timer', None) is not None:
+                self.__velocity_timer.stop()
+            self.__manual_control_window.close()
+        if self.__go_home_active and self.__go_home_enable is not None:
+            try:
+                self.__go_home_enable(False)
+            except Exception as e:
+                self.logwarn(f"Failed to stop GoHome: {e}")
+
+        try:
+            if self.__motor_set_speed is not None:
+                self.__motor_set_speed(1.0)
+            accepted = self.__rotate_quarter_turns(quarter_turns)
+            if accepted is not None and not accepted.result:
+                # The node explains why on rotate/result.
+                self.logwarn("Rotate request refused")
+                return
+            self.__log_event(
+                "rotate",
+                f"Requested {quarter_turns:+g} quarter turns "
+                f"({quarter_turns * 90:+.1f}°)")
+        except Exception as e:
+            self.logwarn(f"Failed to start Rotate: {e}")
 
     def __start_go_home(self):
         """Toggle go home — starts if idle, stops if already running."""
@@ -712,6 +865,7 @@ class MainWindow(QMainWindow):
                 ('__motor_set_mode',         'motor_control/set_mode',  String),
                 ('__bypass_lidar',            'motor_control/bypass_lidar', SetBool),
                 ('__go_home_enable', 'go_home/enable', SetBool),
+                ('__rotate_quarter_turns', 'rotate/quarter_turns', Float),
             ]
             while not rospy.is_shutdown():
                 status = {}
@@ -789,7 +943,7 @@ class MainWindow(QMainWindow):
                 self.__velocity.linear.x = -math.sin(radians)
                 self.__velocity.linear.y = math.cos(radians)
                 self.__velocity.angular.z = 0
-    
+
             else:
                 self.__velocity.linear.x = 0
                 self.__velocity.linear.y = 0
@@ -797,13 +951,63 @@ class MainWindow(QMainWindow):
                     self.__velocity.angular.z = 1
                 elif direction == -2: # "ccw":
                     self.__velocity.angular.z = -1
+            now = time.monotonic()
+            self.__velocity_deadline = now + self.JOG_HOLD_S
+            if self.__velocity_started is None:
+                self.__velocity_started = now
         else:
             self.__velocity.linear.x = 0
             self.__velocity.linear.y = 0
             self.__velocity.angular.z = 0
+            self.__velocity_deadline = 0.0
+            self.__velocity_started = None
+            self.__velocity_zero_bursts = 5   # flush zeros, then fall silent
+
+    def __jog_alive(self):
+        """Is a jog intent verifiably still held?
+
+        The held-set alone cannot be trusted: a release is never delivered if
+        the dialog loses focus mid-hold, so it must still own the keyboard.
+        """
+        window = self.__manual_control_window
+        return (window is not None and window.isActiveWindow()
+                and (bool(self.__keys_held) or self.__jog_buttons_down > 0))
 
     def __publish_velocity(self):
-        self.__motor_control_twist.publish(self.__velocity)
+        """Feed motor_control only while the operator is demonstrably holding.
+
+        This used to republish unconditionally, which kept motor_control's 1 s
+        watchdog permanently fed: one missed release meant a spin forever, with
+        LIDAR safety bypassed since rotation skips __check_blocking. Falling
+        silent once stopped makes that watchdog a real backstop.
+        """
+        moving = (self.__velocity.linear.x or self.__velocity.linear.y
+                  or self.__velocity.angular.z)
+
+        if moving:
+            now = time.monotonic()
+            started = self.__velocity_started
+            if started is not None and now - started > self.JOG_MAX_S:
+                self.logwarn(
+                    f"Manual jog exceeded {self.JOG_MAX_S:.0f}s of continuous "
+                    "motion - stopping. Release and press again to continue.")
+                self.__keys_held.clear()
+                self.__jog_buttons_down = 0
+                self.__update_velocity(False)
+                moving = False
+            elif self.__jog_alive():
+                self.__velocity_deadline = now + self.JOG_HOLD_S
+            elif now >= self.__velocity_deadline:
+                self.__keys_held.clear()
+                self.__jog_buttons_down = 0
+                self.__update_velocity(False)
+                moving = False
+
+        if moving:
+            self.__motor_control_twist.publish(self.__velocity)
+        elif self.__velocity_zero_bursts > 0:
+            self.__velocity_zero_bursts -= 1
+            self.__motor_control_twist.publish(self.__velocity)
 
     def __update_fish_image(self, img_msg: CompressedImage):
         try:
@@ -1103,6 +1307,23 @@ class MainWindow(QMainWindow):
             self.logerr("GoHome enable service unavailable")
             self.__go_home_enable = None
             self.__go_home_button.setDisabled(True)
+            # If the node died mid-run the latched topic never updates, so the
+            # toggle would read "Stop" forever.
+            self.__update_go_home_state(False)
+
+        # Store the Rotate service proxy when available.
+        rotate_proxy = status.get('__rotate_quarter_turns')
+        if self.__rotate_quarter_turns is None and rotate_proxy is not None:
+            self.loginfo("Rotate service available")
+            self.__rotate_quarter_turns = rotate_proxy
+            self.__rotate_button.setDisabled(False)
+            self.__rotate_input.setDisabled(False)
+        elif self.__rotate_quarter_turns is not None and rotate_proxy is None:
+            self.logerr("Rotate service unavailable")
+            self.__rotate_quarter_turns = None
+            self.__rotate_button.setDisabled(True)
+            self.__rotate_input.setDisabled(True)
+            self.__update_rotate_state(False)
 
         # [ADDED] Store motor_control/set_speed service proxy when available.
         motor_set_speed_proxy = status.get('__motor_set_speed')

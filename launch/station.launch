@@ -29,18 +29,18 @@
     <!-- Writer Nodes -->
     <include file="$(find foma)/launch/writers.launch"/>
 
-    <!-- Go Home -->
-    <node pkg="foma" type="go_home_node.py" name="go_home_node" output="screen">
-        <param name="goal_x" value="0.5"/>
-        <param name="goal_y" value="0.5"/>
-        <param name="arrival_tol" value="0.03"/>
-    </node>
+    <!-- Go Home. Tuned from the go_home_node: block in foma_params.yaml. -->
+    <node pkg="foma" type="go_home_node.py" name="go_home_node" output="screen"/>
+
+    <!-- Precise in-place rotation by LIDAR scan matching.
+         Tuned from the rotate_node: block in foma_params.yaml. -->
+    <node pkg="foma" type="rotate_node.py" name="rotate_node" output="screen"/>
 
     <!-- Joystick to Motor-->
     <node pkg="foma" type="joystick_node.py" name="joystick_node" output="screen"/>
     
     <node pkg="joy" type="joy_node" name="joy_node" output="screen">
-        <param name="dev" value="/dev/input/js0"/>
+        <param name="dev" value="/dev/input/js1"/>
         <param name="deadzone" value="0.05"/>
         <param name="autorepeat_rate" value="20.0"/>
     </node> 
