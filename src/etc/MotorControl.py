@@ -35,6 +35,13 @@ class MotorControl(Serial):
         self.speed = speed
         self.punishment_factor = 0.85
 
+        # Telemetry only (drift compensation, stage 0). Never read by the
+        # control logic below. Order everywhere: (left, right, top, bottom).
+        self.last_duties = (0, 0, 0, 0)
+        # Steps accumulated before each reset_encoders(), so read_encoders()
+        # returns continuous totals while the control logic keeps resetting.
+        self._telemetry_offsets = [0, 0, 0, 0]
+
         #set controllers to different IDs to avoid collision due to daisy-chain connection
         self.motorTopBottom.turnOn()
         self.motorRightLeft.turnOn()
@@ -58,6 +65,7 @@ class MotorControl(Serial):
         hSpeed = speed * np.sin(angle * np.pi/180)
         vSpeed = speed * np.cos(angle * np.pi/180)
 
+        self.last_duties = (hSpeed, -hSpeed, vSpeed, -vSpeed)
         self.motorRightLeft.setSpeeds(-hSpeed, hSpeed)
         self.motorTopBottom.setSpeeds(vSpeed, -vSpeed)
         
@@ -135,6 +143,7 @@ class MotorControl(Serial):
         left_speed = int(left_speed)
         right_speed = int(right_speed) 
 
+        self.last_duties = (left_speed, right_speed, top_speed, bottom_speed)
         self.motorRightLeft.setSpeeds(right_speed,  left_speed)
         self.motorTopBottom.setSpeeds(top_speed,   bottom_speed)
 
@@ -143,22 +152,45 @@ class MotorControl(Serial):
             speed = self.speed
 
         if wheel == 'top':
+            self.last_duties = (0, 0, speed, 0)
             self.motorTopBottom.setSpeeds(speed,0)
         elif wheel == 'bottom':
+            self.last_duties = (0, 0, 0, speed)
             self.motorTopBottom.setSpeeds(0,speed)
         elif wheel == 'left':
+            self.last_duties = (speed, 0, 0, 0)
             self.motorRightLeft.setSpeeds(0,speed)
         elif wheel == 'right':
+            self.last_duties = (0, speed, 0, 0)
             self.motorRightLeft.setSpeeds(speed,0)
         else:
             raise ValueError("Invalid wheel, received: {}, allowed wheels are: ('top','bottom','left','right'), case sensitive.".format(wheel))
         
     def rotate(self, direction: float):
         speed = int(self.speed * direction / max(1, abs(direction)))
+        self.last_duties = (speed, speed, speed, speed)
         self.motorRightLeft.setSpeeds(speed, speed)
         self.motorTopBottom.setSpeeds(speed, speed)
 
+    def read_encoders(self):
+        """Telemetry snapshot of encoder totals, (left, right, top, bottom).
+
+        Read-only: does not touch the counters the control logic uses. Totals
+        stay continuous across reset_encoders(), so differences between two
+        snapshots are always real wheel motion.
+        """
+        o = self._telemetry_offsets
+        return (o[0] + self.encoderLeft.steps,
+                o[1] + self.encoderRight.steps,
+                o[2] + self.encoderTop.steps,
+                o[3] + self.encoderBottom.steps)
+
     def reset_encoders(self):
+        o = self._telemetry_offsets
+        o[0] += self.encoderLeft.steps
+        o[1] += self.encoderRight.steps
+        o[2] += self.encoderTop.steps
+        o[3] += self.encoderBottom.steps
         self.encoderTop.steps = 0
         self.encoderBottom.steps = 0
         self.encoderLeft.steps = 0

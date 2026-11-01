@@ -2,7 +2,7 @@
 
 from pickletools import dis
 import rospy
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import LaserScan, JointState
 from std_msgs.msg import Float32, Header
 from geometry_msgs.msg import Twist, TwistStamped, Vector3
 from abstract_node import AbstractNode
@@ -12,13 +12,22 @@ import numpy as np
 from std_srvs.srv import SetBool, SetBoolRequest, SetBoolResponse
 from foma.srv import Float, FloatRequest, FloatResponse, String
 import math
+import time
+
+# Telemetry wheel order for motor_control/wheel_state (drift compensation, stage 0).
+WHEEL_NAMES = ['left', 'right', 'top', 'bottom']
 
 class MotorControlNode(AbstractNode):
     def __init__(self):
         super().__init__('motor_control', 'Motor control')
 
         self.__speed_publisher = rospy.Publisher('motor_control/speed', TwistStamped, queue_size=10, tcp_nodelay=True)
-        
+        # Telemetry only: encoder totals (position), rates in steps/s
+        # (velocity) and last duties sent (effort), order = WHEEL_NAMES.
+        self.__wheel_state_publisher = rospy.Publisher('motor_control/wheel_state', JointState, queue_size=10, tcp_nodelay=True)
+        self.__prev_wheel_counts = None
+        self.__prev_wheel_time = None
+
         rospy.Subscriber('fish_detection/state', TwistStamped, self.__handle_fish_direction, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('lidar/scans', LaserScan, self.__update_lidar, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('motor_control/angle', Float32, self.__handle_angle, queue_size=1, tcp_nodelay=True)
@@ -102,7 +111,36 @@ class MotorControlNode(AbstractNode):
                         header = Header(stamp = rospy.Time.now())
                     )
                 )
+            self.__publish_wheel_state()
             rate.sleep()
+
+    def __publish_wheel_state(self):
+        '''
+        Telemetry only (drift compensation, stage 0). Reads the encoders and
+        the last duties sent; never changes what goes to the motors. Any
+        failure here is logged and swallowed so it cannot stop the loop.
+        '''
+        try:
+            counts = self.__motor_control.read_encoders()
+            duties = self.__motor_control.last_duties
+            now = time.monotonic()
+            if self.__prev_wheel_counts is None or now <= self.__prev_wheel_time:
+                rates = [0.0] * 4
+            else:
+                dt = now - self.__prev_wheel_time
+                rates = [(c - p) / dt for c, p in zip(counts, self.__prev_wheel_counts)]
+            self.__prev_wheel_counts = counts
+            self.__prev_wheel_time = now
+
+            msg = JointState()
+            msg.header.stamp = rospy.Time.now()
+            msg.name = WHEEL_NAMES
+            msg.position = [float(c) for c in counts]
+            msg.velocity = [float(r) for r in rates]
+            msg.effort = [float(d) for d in duties]
+            self.__wheel_state_publisher.publish(msg)
+        except Exception as e:
+            rospy.logwarn_throttle(10.0, f"Motor control: wheel telemetry failed: {e}")
 
     def __ramp(self, current, target):
         '''

@@ -7,12 +7,18 @@ from adafruit_rplidar import RPLidar, RPLidarException
 import numpy as np
 import threading
 from std_msgs.msg import Int16MultiArray
+from etc.lidar_revolution import bin_revolution, angle_increment_rad, SCAN_FULL_BINS
 
 class LIDARNode(AbstractNode):
     def __init__(self):
         super().__init__('lidar', 'LIDAR')
         self.__lidar_pub = rospy.Publisher('lidar/scans', LaserScan, queue_size=1, tcp_nodelay=True)
         self.__blocked_pub = rospy.Publisher('lidar/blocked', Int16MultiArray, queue_size=1, tcp_nodelay=True)
+        # Drift compensation, stage 0: one message per complete revolution,
+        # stamped, in metres, NaN = no return. lidar/scans is unchanged.
+        self.__scan_full_pub = rospy.Publisher('lidar/scan_full', LaserScan, queue_size=5, tcp_nodelay=True)
+        self.__rev_samples = []
+        self.__rev_start = None
 
         self.__lidar_offset = rospy.get_param('/LIDAR_OFFSET')
         safety_distance = rospy.get_param('/SAFETY_DISTANCE')
@@ -44,15 +50,20 @@ class LIDARNode(AbstractNode):
         # Exit the loop if ROS is shutting down or if the stop event is set
         while not rospy.is_shutdown() and not self.__stop_event.is_set():
             try:
-                for _, quality, angle, distance in self.lidar.iter_measurements():
+                for new_scan, quality, angle, distance in self.lidar.iter_measurements():
                     # _, angles, distances = zip(*scan)
+                    if new_scan:
+                        self.__publish_revolution()
                     if quality > 0:
                         if distance < 30:
                             continue
+                        raw_angle = angle
                         angle = 359 - round(angle + self.__lidar_offset) % 360
                         self.scan_msg.ranges[angle] = distance
+                        self.__rev_samples.append((raw_angle, distance))
 
             except RPLidarException as e:
+                self.__drop_revolution()
                 self.logerr(e)
                 if str(e).startswith("Failed to connect to the sensor"):
                     self.lidar.disconnect()
@@ -67,8 +78,43 @@ class LIDARNode(AbstractNode):
                 rospy.sleep(0.05)
 
             except Exception as e:
+                self.__drop_revolution()
                 self.logerr(f"Unexpected scan-loop error: {e}")
                 rospy.sleep(0.05)
+
+    def __drop_revolution(self):
+        """Discard a partial revolution (sensor error / reconnect)."""
+        self.__rev_samples = []
+        self.__rev_start = None
+
+    def __publish_revolution(self):
+        """Publish the revolution that just ended on lidar/scan_full.
+
+        header.stamp = time the revolution started, scan_time = its duration.
+        The first (partial) revolution after start or an error is dropped.
+        Failures are logged and swallowed so lidar/scans keeps flowing.
+        """
+        now = rospy.Time.now()
+        samples, start = self.__rev_samples, self.__rev_start
+        self.__rev_samples = []
+        self.__rev_start = now
+        if start is None or not samples:
+            return
+        try:
+            msg = LaserScan()
+            msg.header.stamp = start
+            msg.header.frame_id = 'lidar'
+            msg.angle_min = 0.0
+            msg.angle_increment = angle_increment_rad(SCAN_FULL_BINS)
+            msg.angle_max = msg.angle_increment * (SCAN_FULL_BINS - 1)
+            msg.scan_time = (now - start).to_sec()
+            msg.time_increment = 0.0
+            msg.range_min = 0.03
+            msg.range_max = 40.0
+            msg.ranges = bin_revolution(samples, self.__lidar_offset, SCAN_FULL_BINS)
+            self.__scan_full_pub.publish(msg)
+        except Exception as e:
+            rospy.logwarn_throttle(10.0, f"LIDAR: scan_full publish failed: {e}")
 
     def run(self):
         """Main thread: publishes the latest scan_msg at a fixed rate."""
