@@ -6,7 +6,7 @@ from sensor_msgs.msg import Joy
 from std_msgs.msg import String, Float32, Bool
 from geometry_msgs.msg import Vector3, Twist
 from std_srvs.srv import Trigger, TriggerRequest, SetBool, SetBoolRequest
-from foma.srv import Float
+from foma.srv import Float, String as ModeSrv
 
 class JoystickNode(AbstractNode):
     def __init__(self):
@@ -16,6 +16,10 @@ class JoystickNode(AbstractNode):
         self.mode = "manual"  # default mode
         rospy.Subscriber("control/mode", String, self.set_mode)
         self.mode_pub = rospy.Publisher("control/mode", String, queue_size=1)
+        # motor_control follows the fish only in 'trial'; taking over must
+        # switch it off there too, or fish and sticks drive at once.
+        self.motor_mode_srv = rospy.ServiceProxy("motor_control/set_mode", ModeSrv)
+        self.resume_mode = None   # mode to return to when handing back (e.g. 'trial')
 
         #  publishers to MotorControlNode 
         self.pub_vector = rospy.Publisher("motor_control/vector", Vector3, queue_size=1, tcp_nodelay=True)
@@ -54,8 +58,37 @@ class JoystickNode(AbstractNode):
         self.prev_buttons = []
    
     def set_mode(self, msg: String):
+        was_driving = self.mode == "joystick"
         self.mode = msg.data
+        if was_driving and self.mode != "joystick":
+            # Someone else (GUI manual window, trial start) took control:
+            # never leave our last stick command running.
+            self.stop_motion()
         rospy.loginfo(f"[joystick_node] Control mode set to: {self.mode}")
+
+    def set_motor_mode(self, mode):
+        try:
+            self.motor_mode_srv(mode)
+        except rospy.ServiceException as e:
+            rospy.logerr(f"[joystick_node] motor_control/set_mode failed: {e}")
+
+    def take_control(self):
+        """Joystick overrides whoever drives now; remembers a trial to resume."""
+        if self.mode == "joystick":
+            return
+        self.resume_mode = self.mode if self.mode == "trial" else None
+        self.set_motor_mode("joystick")       # fish commands ignored from here
+        self.mode_pub.publish(String("joystick"))
+        rospy.loginfo("[joystick_node] Switched to joystick mode")
+
+    def release_control(self):
+        """Hand back: to the fish if a trial was running, else to nobody."""
+        self.stop_motion()
+        back = self.resume_mode or "manual"
+        self.resume_mode = None
+        self.set_motor_mode("trial" if back == "trial" else "idle")
+        self.mode_pub.publish(String(back))
+        rospy.loginfo(f"[joystick_node] Switched to {back} mode")
 
     def on_go_home_state(self, msg: Bool):
         self.go_home_active = msg.data
@@ -117,11 +150,9 @@ class JoystickNode(AbstractNode):
                 if self.go_home_active:
                     self.go_home_srv(False)  # disable go home if active
                 if self.mode != "joystick":
-                    self.mode_pub.publish(String("joystick"))
-                    rospy.loginfo("[joystick_node] Switched to joystick mode")
+                    self.take_control()
                 else:
-                    self.mode_pub.publish(String("manual"))
-                    rospy.loginfo("[joystick_node] Switched to manual mode")
+                    self.release_control()
             except rospy.ServiceException as e:
                 rospy.logerr(f"[joystick_node] Mode switch failed: {e}")
                 
@@ -129,7 +160,7 @@ class JoystickNode(AbstractNode):
         if BTN_Y and not self.prev_buttons[3]:
             try:
                 self.stop_motion()  # stop before switching modes
-                self.mode_pub.publish(String("joystick"))  # ensure we’re in joystick mode
+                self.take_control()  # Go Home must not race the fish either
                 self.go_home_srv(not self.go_home_active)
                 rospy.loginfo(f"[joystick_node] Go Home toggled to: {not self.go_home_active}")
             except rospy.ServiceException as e:

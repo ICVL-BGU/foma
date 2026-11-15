@@ -494,6 +494,8 @@ class MainWindow(QMainWindow):
         
     def __init_manual_control_window(self):
         self.__motor_set_mode("manual")
+        # Take control from the joystick too, or both drive at once.
+        self.__control_mode_pub.publish(StringMsg("manual"))
         self.__motor_set_speed(1.0)
         self.__bypass_lidar(False)
         
@@ -522,6 +524,7 @@ class MainWindow(QMainWindow):
         def on_close(event):
             if self.__ongoing_trial:
                 self.__motor_set_mode("trial")
+                self.__control_mode_pub.publish(StringMsg("trial"))
             else:
                 self.__motor_set_mode("idle")
             # Zero before stopping the timer, or a non-zero command is stranded.

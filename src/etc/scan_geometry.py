@@ -146,6 +146,94 @@ def wall_heading_error(ranges, r_min=0.15, r_max=12.0, max_gap=0.50,
     return float(np.median(folded))
 
 
+def wall_heading(ranges, r_min=0.15, r_max=12.0, max_gap=0.50,
+                 inlier_deg=10.0, min_segments=20):
+    """Coarse room yaw ``(heading_deg, confidence)``, or ``(None, 0.0)``.
+
+    Segment directions averaged on the 90-degree circle (angles x 4), so
+    readings either side of the +/-45 fold do not cancel to 0. One outlier
+    pass; ``confidence`` = inlier fraction.
+    """
+    x, y, valid = scan_to_points(ranges, r_min, r_max)
+    dx = np.roll(x, -1) - x
+    dy = np.roll(y, -1) - y
+    seg = np.hypot(dx, dy)
+    ok = valid & np.roll(valid, -1) & (seg > 1e-4) & (seg < max_gap)
+    if np.count_nonzero(ok) < min_segments:
+        return None, 0.0
+
+    quad = 4.0 * np.arctan2(dy[ok], dx[ok])
+    est = np.angle(np.exp(1j * quad).mean())
+    resid = np.angle(np.exp(1j * (quad - est)))
+    inl = np.abs(resid) < 4.0 * math.radians(inlier_deg)
+    if np.count_nonzero(inl) < min_segments:
+        return None, 0.0
+    est = np.angle(np.exp(1j * quad[inl]).mean())
+    return fold_angle(math.degrees(est / 4.0)), float(inl.mean())
+
+
+def wall_fit(ranges, r_min=0.15, r_max=12.0, sector_deg=35.0,
+             outlier_m=0.03, min_points=25, min_span_m=0.5):
+    """One straight line per wall -> ``(heading_deg, confidence, dists)``.
+
+    ~0.1 deg precise, vs degrees for ``wall_heading`` (lidar_node rounds
+    beams to whole degrees, which swamps 5 cm segments). Total least squares
+    per wall, one outlier pass, walls weighted by points x length.
+    ``dists``: perpendicular distance (m) to the forward/left/back/right
+    wall, None if unseen; unlike a beam range, independent of lidar mounting.
+    """
+    dists = [None] * 4
+    coarse, conf = wall_heading(ranges, r_min, r_max)
+    if coarse is None:
+        return None, 0.0, dists
+
+    x, y, valid = scan_to_points(ranges, r_min, r_max)
+    ang = np.degrees(np.arctan2(y, x))
+    est, weight = [], []
+    for k in range(4):
+        # Wall tangents run at `coarse`, so their normals sit at coarse + k*90.
+        off = (ang - (coarse + 90.0 * k) + 180.0) % 360.0 - 180.0
+        sel = valid & (np.abs(off) < sector_deg)
+        if np.count_nonzero(sel) < min_points:
+            continue
+        px, py = x[sel], y[sel]
+        # Seed from the coarse line, not from a fit: near a corner the
+        # sector also holds the neighbouring wall, and a fit of that L is
+        # skewed before any outlier test can help.
+        nrm = math.radians(coarse + 90.0 * k)
+        nx, ny = math.cos(nrm), math.sin(nrm)
+        dist = px * nx + py * ny
+        keep = np.abs(dist - np.median(dist)) < 2.0 * outlier_m
+        px, py = px[keep], py[keep]
+        if len(px) < min_points:
+            continue
+        for _ in range(2):
+            cx, cy = px.mean(), py.mean()
+            _, evecs = np.linalg.eigh(np.cov(np.vstack((px - cx, py - cy))))
+            tx, ty = evecs[:, 1]                   # line direction
+            resid = np.abs((px - cx) * -ty + (py - cy) * tx)
+            keep = resid < outlier_m
+            if keep.all() or np.count_nonzero(keep) < min_points:
+                break
+            px, py = px[keep], py[keep]
+        span = np.ptp((px - cx) * tx + (py - cy) * ty)
+        if span < min_span_m:
+            continue
+        a = fold_angle(math.degrees(math.atan2(ty, tx)))
+        est.append(coarse + unwrap_folded_delta(a - coarse))
+        weight.append(len(px) * span)
+        dists[k] = float(abs(cx * -ty + cy * tx))
+    if not est:
+        return coarse, conf, dists
+    return fold_angle(float(np.average(est, weights=weight))), conf, dists
+
+
+def wall_heading_fit(ranges, **kw):
+    """Precise room yaw ``(heading_deg, confidence)``; see ``wall_fit``."""
+    h, conf, _ = wall_fit(ranges, **kw)
+    return h, conf
+
+
 def scan_match_delta_deg(prev_ranges, ranges, max_shift=30, r_min=0.15,
                          r_max=12.0):
     """Yaw change between two scans by circular cross-correlation (degrees).

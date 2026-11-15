@@ -7,6 +7,8 @@ from std_msgs.msg import Float32, Header
 from geometry_msgs.msg import Twist, TwistStamped, Vector3
 from abstract_node import AbstractNode
 from etc.MotorControl import *
+from etc import scan_geometry as geom
+from etc.heading_hold import HeadingHold, HeadingHoldParams
 from gpiozero import BadPinFactory
 import numpy as np
 from std_srvs.srv import SetBool, SetBoolRequest, SetBoolResponse
@@ -28,6 +30,10 @@ class MotorControlNode(AbstractNode):
 
         rospy.Service('motor_control/bypass_lidar', SetBool, self.__bypass_lidar)
         rospy.Service('motor_control/set_speed', Float, self.__set_speed)
+        rospy.Service('motor_control/heading_hold', SetBool, self.__set_heading_hold)
+        self.__heading_pub = rospy.Publisher('motor_control/heading', Vector3, queue_size=1)
+        # x = drift across the line (m, + = right of it), y = correction duty
+        self.__lane_pub = rospy.Publisher('motor_control/lane', Vector3, queue_size=1)
 
         g = rospy.get_param
         self.__foma_camera_frame_shape = tuple(g('/FOMA_CAMERA_FRAME_SHAPE'))
@@ -71,6 +77,39 @@ class MotorControlNode(AbstractNode):
 
         self.__fresh_threshold = 1.0  # seconds, how long to keep the last command fresh
 
+        # Heading hold: keep square to the room while translating.
+        hh = lambda k, d: g('~heading_hold/' + k, d)
+        self.__hold_enabled = bool(hh('enabled', True))
+        self.__hold_min_conf = float(hh('min_conf', 0.5))
+        self.__hold_offset = float(g('/HEADING_OFFSET_DEG', 0.0))   # shared with go_home and rotate
+        self.__hold = HeadingHold(HeadingHoldParams(
+            kp=float(hh('kp', 0.060)), ki=float(hh('ki', 0.030)),
+            max_corr=float(hh('max_corr', 0.30)),
+            deadband=float(hh('deadband_deg', 0.1)),
+            filter_alpha=float(hh('filter_alpha', 0.5)),
+            i_limit=float(hh('i_limit', 0.15)),
+            runaway_deg=float(hh('runaway_deg', 6.0)),
+            sign=1 if int(g('/ALIGN_SIGN', 1)) >= 0 else -1))
+        self.__hold_engaged = False
+        self.__hold_last_t = None
+
+        # Lane hold: driving along a room axis, keep the side-wall offset it
+        # started with, so sideways wheel slip cannot add up to a diagonal.
+        lh = lambda k, d: g('~lane_hold/' + k, d)
+        self.__lane_enabled = bool(lh('enabled', True))
+        self.__lane_kp = float(lh('kp', 3.0))              # duty per metre of drift
+        self.__lane_max = float(lh('max_corr', 0.35))
+        # Sideways correction lands on the wheels the drive leaves idle; they
+        # are standing still, so anything under static friction does nothing.
+        self.__lane_min = float(lh('min_corr', 0.24))
+        self.__lane_deadband = float(lh('deadband_m', 0.010))
+        self.__lane_jump = float(lh('jump_m', 0.25))       # bigger = an obstacle, re-anchor
+        self.__lane_dir_tol = float(lh('dir_tol_deg', 5.0))  # command turn that starts a new line
+        self.__lane_dir = None
+        self.__lane_ref = None
+        # Joystick: within this many degrees of an axis counts as on it.
+        self.__axis_snap_deg = float(g('~axis_snap_deg', 12.0))
+
         rospy.on_shutdown(self.__on_shutdown)
 
     def run(self):
@@ -90,10 +129,17 @@ class MotorControlNode(AbstractNode):
             self.__current_rotate = self.__ramp(self.__current_rotate, self.__desired_rotate)
 
             if abs(self.__current_rotate) > 1e-6:
+                self.__release_hold()       # an explicit turn always wins
                 self.__rotate_motor(self.__current_rotate)
             else:
                 self.__current_h, self.__current_v = self.__check_blocking(self.__current_h, self.__current_v)
-                self.__move_by_components(self.__current_h, self.__current_v)
+                h, v = self.__lane_correction(self.__current_h, self.__current_v)
+                h, v = self.__check_blocking(h, v)
+                corr = self.__heading_correction(h, v)
+                if corr is None:
+                    self.__move_by_components(h, v)
+                else:
+                    self.__move_with_rotation(h, v, corr)
 
                 self.__speed_publisher.publish(
                     TwistStamped(
@@ -121,6 +167,128 @@ class MotorControlNode(AbstractNode):
     def __set_speed(self, request:FloatRequest):
         self.__speed = request.data
         return FloatResponse(result = True)
+
+    def __set_heading_hold(self, request:SetBoolRequest):
+        self.__hold_enabled = bool(request.data)
+        self.__hold.tripped = False
+        self.__release_hold()
+        return SetBoolResponse(success = True, message = f"Heading hold {'on' if self.__hold_enabled else 'off'}.")
+
+    def __release_hold(self):
+        if self.__hold_engaged:
+            self.__hold.reset()
+        self.__hold_engaged = False
+        self.__hold_last_t = None
+
+    def __snap_to_axis(self, h, v):
+        '''
+            A stick pushed "straight" is never exactly straight; a few degrees
+            off drives a diagonal. Near an axis, drive exactly along it.
+        '''
+        ang = math.degrees(math.atan2(v, h))
+        nearest = round(ang / 90.0) * 90.0
+        if abs(ang - nearest) <= self.__axis_snap_deg:
+            r = math.radians(nearest)
+            return float(round(math.cos(r))), float(round(math.sin(r)))
+        return h, v
+
+    def __wall_fit(self):
+        '''One wall-line fit per scan, shared by the heading and lane holds.'''
+        if getattr(self, '_MotorControlNode__fit', None) is None:
+            self.__fit = geom.wall_fit(self.__scans / 1000.0)
+        return self.__fit
+
+    def __lane_position(self):
+        '''(forward, right) position in the room, metres, from the
+        perpendicular distances to the fitted walls. A range read along a
+        fixed beam would tilt with the lidar's mounting and turn a straight
+        drive into a diagonal; a perpendicular distance does not. None if a
+        wall is not visible.'''
+        _, _, d = self.__wall_fit()
+        if None in d:
+            return None
+        fwd, left, back, right = d
+        return (back - fwd) / 2.0, (left - right) / 2.0
+
+    def __lane_correction(self, h, v):
+        '''
+            Keep a straight drive on its line, in any direction (axis or an
+            explicit diagonal, joystick or fish). Forward = h, Right = v (see
+            __check_blocking). Only the drift *across* the commanded
+            direction is corrected; a new direction starts a new line.
+        '''
+        dh, dv = self.__desired_h, self.__desired_v
+        dmag = math.hypot(dh, dv)
+        if not (self.__lane_enabled and self.__hold_enabled and not self.__hold.tripped
+                and self.__scans is not None and dmag > 1e-6 and math.hypot(h, v) > 0.05):
+            self.__lane_ref = self.__lane_dir = None
+            return h, v
+
+        pos = self.__lane_position()
+        if pos is None:
+            return h, v
+        uh, uv = dh / dmag, dv / dmag
+        new_dir = (self.__lane_dir is None or
+                   math.degrees(math.acos(max(-1.0, min(1.0,
+                       uh * self.__lane_dir[0] + uv * self.__lane_dir[1]))))
+                   > self.__lane_dir_tol)
+        if new_dir or self.__lane_ref is None:
+            self.__lane_ref, self.__lane_dir = pos, (uh, uv)
+            return h, v
+
+        # Signed drift across the line (normal = direction turned to the right).
+        nh, nv = -uv, uh
+        e = (pos[0] - self.__lane_ref[0]) * nh + (pos[1] - self.__lane_ref[1]) * nv
+        if abs(e) > self.__lane_jump:          # an obstacle, not drift: new line
+            self.__lane_ref = pos
+            return h, v
+        c = 0.0
+        if abs(e) >= self.__lane_deadband:
+            c = math.copysign(min(max(self.__lane_kp * abs(e), self.__lane_min),
+                                  self.__lane_max), e)
+        self.__lane_pub.publish(Vector3(e, c, 0.0))
+        return h - c * nh, v - c * nv
+
+    def __heading_correction(self, h_component, v_component):
+        '''
+            Rotation to mix into a translation, or None to drive as before
+            (not translating, hold off or tripped). Heading is the wall
+            direction folded to [-45, 45), so the target is always the
+            nearest room axis.
+        '''
+        if not self.__hold_enabled or self.__hold.tripped or self.__scans is None \
+                or math.hypot(h_component, v_component) < 0.05:
+            self.__release_hold()
+            return None
+
+        now = rospy.get_time()
+        dt = 0.0 if self.__hold_last_t is None else now - self.__hold_last_t
+        self.__hold_last_t = now
+        self.__hold_engaged = True
+
+        heading, conf, _ = self.__wall_fit()
+        if heading is not None and conf >= self.__hold_min_conf:
+            heading = geom.fold_angle(heading - self.__hold_offset)
+        else:
+            heading = None
+        corr = self.__hold.update(heading, dt, now)
+        if self.__hold.tripped:
+            self.logwarn("Heading hold disabled: error kept growing while "
+                         "correcting (ALIGN_SIGN wrong?). Re-enable with "
+                         "motor_control/heading_hold.")
+            return None
+        self.__heading_pub.publish(Vector3(
+            float('nan') if heading is None else heading, conf, corr))
+        return corr
+
+    def __move_with_rotation(self, h_component, v_component, rotation):
+        if self.__movement != 'linear':
+            self.__movement = 'linear'
+            self.__motor_control.reset_encoders()
+        if self.__motor_control:
+            self.__motor_control.move(h_component * self.__speed,
+                                      v_component * self.__speed,
+                                      rotation)
 
     def __set_mode(self, request:String):
         self._mode = request.data
@@ -205,8 +373,7 @@ class MotorControlNode(AbstractNode):
             self.__desired_h = 0.0
             self.__desired_v = 0.0
         else:
-            self.__desired_h = x / mag
-            self.__desired_v = y / mag
+            self.__desired_h, self.__desired_v = self.__snap_to_axis(x / mag, y / mag)
 
         self.__desired_rotate = 0.0
         self.__last_cmd_time = rospy.Time.now()
@@ -225,6 +392,7 @@ class MotorControlNode(AbstractNode):
 
     def __update_lidar(self, scans: LaserScan):
         self.__scans = np.array(scans.ranges)
+        self.__fit = None                   # recomputed on demand, once per scan
 
     def __is_sector_blocked(self, sector):
         filtered_scans = np.array(self.__scans)[sector] 

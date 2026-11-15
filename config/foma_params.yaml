@@ -47,28 +47,72 @@ ROOM_FLOOR_MAP_SHAPE:     [5000, 5000]
 ROOM_MAP_FRAME_SHAPE:     &room_map_shape    [1000, 1000]
 FOMA_CAMERA_FRAME_SHAPE:  &foma_camera_shape  [640, 640]
 
+# ---------- Heading (shared by go_home_node and motor_control_node) ----------
+# Heading = wall direction seen by the lidar, folded to [-45, 45); 0 = square.
+ALIGN_SIGN: 1               # angular.z sign that reduces a positive heading error
+HEADING_OFFSET_DEG: 3.6     # lidar mounting yaw vs the chassis (measured 2026-11-15: +3.61 +-0.02). To measure:
+                            # square the robot by hand, read "heading err" in
+                            # the GoHome window, enter that value here.
+
+# ---------- Motor control: heading hold while translating ----------
+motor_control_node:
+  heading_hold:
+    enabled: true           # runtime: rosservice call /motor_control/heading_hold
+    # Heading from a line fit per wall (~0.1 deg precise), so the hold can act
+    # on tenths of a degree before they become a visible diagonal.
+    kp: 0.060               # duty per degree
+    ki: 0.030               # duty per degree-second: cancels a wheel that slips steadily
+    max_corr: 0.30          # cap on the rotation mixed into a drive
+    deadband_deg: 0.1
+    filter_alpha: 0.5       # heading smoothing (1 = none); the fit is precise enough for light smoothing
+    min_conf: 0.5           # inlier fraction of wall segments to trust heading
+    runaway_deg: 6.0        # error growing this far while correcting -> hold disables itself
+  # Lane hold: a straight drive in any direction (axis or explicit diagonal,
+  # joystick or fish) stays on the line it started on. Corrects the sideways
+  # slip that the heading hold cannot see.
+  lane_hold:
+    enabled: true
+    kp: 3.0                 # duty per metre of drift across the line
+    max_corr: 0.35
+    # The correction drives the wheels the straight drive leaves idle; they
+    # stand still, so below static friction (~0.2) they do not move at all.
+    min_corr: 0.24          # 0.18 only stopped the drift (held at 2.5 cm); raise if it still builds up, lower if it zig-zags
+    deadband_m: 0.010       # drift smaller than this is left alone
+    jump_m: 0.25            # sudden change bigger than this = obstacle, new line
+    dir_tol_deg: 5.0        # command direction change that starts a new line
+  axis_snap_deg: 12.0       # joystick only: within this of an axis drives exactly along it
+
 # ---------- Go Home (LIDAR room-centring) ----------
 go_home_node:
   # linear.{x,y} are motor duty in [-1, 1], not m/s.
   max_lin_v: 0.95
   min_lin_v: 0.25   # below this the drive train stalls
   kp_lin: 8.0       # control goes flat below min_lin_v/kp_lin = 3.1 cm
-  # Rotation left alone: align_tol is tight and spinning faster overshoots it.
+  # Heading is the wall direction in degrees, folded to [-45, 45).
   max_ang_v: 0.45
   min_ang_v: 0.20
-  kp_ang: 30.0
+  kp_ang: 0.015       # duty per degree, saturates beyond 30 deg
   # Must stay above min_lin_v/kp_lin (0.031 m) or the loop cannot settle.
   # Relax center_tol first if the robot hunts until timeout.
   center_tol: 0.045
   verify_center_tol: 0.065
-  align_tol: 0.012
-  verify_align_tol: 0.020
+  align_tol: 2.5        # deg. rotate_node measured ~3 deg as the shortest turn
+  verify_align_tol: 2.0   # fine_align_tol < this < align_tol
+  release_scale: 1.5    # settling tolerates residual up to tol * this
+  center_drift_deg: 6.0 # heading lost while centring -> re-align
+  min_heading_conf: 0.5 # inlier fraction of wall segments to trust heading
+  sign_autodetect: false  # ALIGN_SIGN=1 confirmed on the robot; true = check during the first turn
+  # Smooth turn: min_ang_v breaks away, creep_ang_v once turning, coast when
+  # the measured rate would reach the target within stop_lead_s.
+  creep_ang_v: 0.17     # raise if the turn stalls short of the target
+  stop_lead_s: 0.25     # raise if it overshoots, lower if it stops short
+  fine_align_tol: 1.0   # deg; final in-place squaring after centring
   # Settling time before a phase completes. Seconds, not frames.
-  align_settle: 0.3
-  center_settle: 0.3
+  align_settle: 0.8
+  center_settle: 0.8
   timeout: 90.0       # whole routine, shared across both phases
   control_hz: 100.0
-  go_home_passes: 2   # centre+align retries before giving up
+  go_home_passes: 3   # align+centre retries before giving up
   # Live top-down window: room model + LIDAR returns.
   visualize: true
   viz_fps: 20
@@ -113,8 +157,8 @@ rotate_node:
   match_hz: 25.0
   max_ang_v: 0.55              # brake scales with measured rate, so it adapts
   min_ang_v: 0.20              # below this the drive train stalls
-  kp_duty_per_deg: 0.015       # saturates beyond 37 deg of error
-  stop_lead_s: 0.15            # predictive brake, scaled by measured rate
+  kp_duty_per_deg: 0.03        # saturates beyond 18 deg (0.015: 37 deg, a slow 14 s tail on 90)
+  stop_lead_s: 0.25            # predictive brake, scaled by measured rate (raised with kp)
   stop_lead_deg: 1.0
   runaway_deg: 20.0            # error growing this far past best -> abort
   # --- sign conventions ---
@@ -131,6 +175,16 @@ rotate_node:
   tol_deg: 2.5                 # actuation floor: shortest pulse is ~3 deg
   trim_min_deg: 1.5            # below this a trim would oscillate
   max_trims: 2
+  # Square to the room at the end: quarter turns finish on the wall heading,
+  # so a crooked start or a short turn still ends aligned.
+  snap_to_axes: true
+  snap_tol_deg: 1.5            # trims under ~1.5 deg did not move the robot, only cost time
+  max_snap_deg: 20.0           # farther than this from the request -> plain relative turn
+  # Stall recovery: commanded but not turning for stall_s -> floor + stall_step.
+  # min_ang_v alone did not break static friction on this floor.
+  stall_s: 0.4
+  stall_dps: 1.5
+  stall_step: 0.04
   max_trim_deg: 12.0
   trim_timeout_s: 6.0
   # --- budget ---

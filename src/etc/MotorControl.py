@@ -138,6 +138,27 @@ class MotorControl(Serial):
         self.motorRightLeft.setSpeeds(right_speed,  left_speed)
         self.motorTopBottom.setSpeeds(top_speed,   bottom_speed)
 
+    def move(self, horizontal_component: float, vertical_component: float,
+             rotation: float, speed: float = None):
+        """Translate and rotate at once (same axes as move_by_components and
+        rotate). Wheels are scaled down together if any would exceed full
+        speed, so the travel direction and the turn ratio are preserved."""
+        if speed is None:
+            speed = self.speed
+
+        right  = -horizontal_component + rotation
+        left   =  horizontal_component + rotation
+        top    =  vertical_component + rotation
+        bottom = -vertical_component + rotation
+
+        peak = max(abs(right), abs(left), abs(top), abs(bottom), 1.0)
+        # round, not int: truncation toward zero swallowed small corrections.
+        right, left, top, bottom = (int(round(w * speed / peak))
+                                    for w in (right, left, top, bottom))
+
+        self.motorRightLeft.setSpeeds(right, left)
+        self.motorTopBottom.setSpeeds(top, bottom)
+
     def move_by_wheel(self, wheel: str, speed = None):
         if not speed:
             speed = self.speed

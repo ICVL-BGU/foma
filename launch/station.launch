@@ -40,7 +40,9 @@
     <node pkg="foma" type="joystick_node.py" name="joystick_node" output="screen"/>
     
     <node pkg="joy" type="joy_node" name="joy_node" output="screen">
-        <param name="dev" value="/dev/input/js1"/>
+        <!-- by-id, not jsN: jsN follows USB enumeration order and has been
+             swapped with the keyboard's media keys -->
+        <param name="dev" value="/dev/input/by-id/usb-_GAME_FOR_WINDOWS_AE931A2B0000-joystick"/>
         <param name="deadzone" value="0.05"/>
         <param name="autorepeat_rate" value="20.0"/>
     </node> 

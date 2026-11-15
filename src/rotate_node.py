@@ -13,6 +13,7 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Float32, String as StringMsg
 
 from foma.srv import Float, FloatRequest, FloatResponse
+from etc import scan_geometry as geom
 
 # lidar_node's fill value; a bin still holding it was never measured.
 SENTINEL_MM = 15000.0
@@ -153,10 +154,16 @@ class RotateController:
         self.runaway_deg = runaway_deg
         self.target = 0.0
         self._best = float('inf')
+        self.boost = 0.0                # added to min_v after a stall
 
     def reset(self, target_deg):
         self.target = float(target_deg)
         self._best = float('inf')
+
+    def bump(self, step):
+        """Commanded but not turning: static friction beat min_v on this
+        floor.  Raise the floor for the rest of the request."""
+        self.boost = min(self.boost + step, self.max_v - self.min_v)
 
     def step(self, theta_deg, rate_dps):
         """Duty to command, or None to cut power and coast into the target."""
@@ -170,7 +177,7 @@ class RotateController:
         if abs(e) <= lead:
             return None
         v = min(self.max_v, self.kp * abs(e))
-        v = max(v, self.min_v)              # beat static friction
+        v = max(v, self.min_v + self.boost)  # beat static friction
         return math.copysign(v, e)
 
 
@@ -238,6 +245,17 @@ class RotateNode(AbstractNode):
         self.max_trims     = int(g('~max_trims', 2))
         self.max_trim_deg  = float(g('~max_trim_deg', 12.0))
         self.trim_timeout_s = float(g('~trim_timeout_s', 6.0))
+        # Stall recovery: no turn for stall_s while commanded -> floor + step.
+        self.stall_s       = float(g('~stall_s', 0.4))
+        self.stall_dps     = float(g('~stall_dps', 1.5))
+        self.stall_step    = float(g('~stall_step', 0.04))
+        # Finish square to the room: quarter turns end on the wall heading,
+        # not on the relative angle, so a crooked start or a short turn
+        # still ends aligned.
+        self.snap_to_axes  = bool(g('~snap_to_axes', True))
+        self.snap_tol_deg  = float(g('~snap_tol_deg', 1.0))
+        self.max_snap_deg  = float(g('~max_snap_deg', 20.0))
+        self.heading_offset = float(g('/HEADING_OFFSET_DEG', 0.0))
 
         # budget
         self.base_timeout_s   = float(g('~base_timeout_s', 4.0))
@@ -475,6 +493,7 @@ class RotateNode(AbstractNode):
                      + self.max_trims * self.trim_timeout_s + 2 * self.settle_s)
         deadline = time.monotonic() + budget
         self._progress = 0.0
+        self._ctrl.boost = 0.0
 
         if self._cancel.is_set():
             return TurnResult(Status.CANCELLED, target_deg, 0.0, 0,
@@ -511,16 +530,26 @@ class RotateNode(AbstractNode):
 
         # Judge the result stationary-against-stationary: no shear either side.
         trims = 0
+        quarter = abs(target_deg / 90.0 - round(target_deg / 90.0)) < 1e-6
         while True:
             st, theta, why = self._settle(deadline, rev_s)
             if st is not None:
                 return TurnResult(st, target_deg, theta, trims, why)
 
-            residual = target_deg - theta
-            if abs(residual) <= self.tol_deg:
+            goal, tol = target_deg, self.tol_deg
+            if self.snap_to_axes and quarter:
+                h = self._axis_heading()
+                # The wall heading moves by minus the scan shift, so the
+                # shift that squares the robot up is theta + h.
+                if h is not None and abs(theta + h - target_deg) <= self.max_snap_deg:
+                    goal, tol = theta + h, self.snap_tol_deg
+
+            residual = goal - theta
+            if abs(residual) <= tol:
                 return TurnResult(Status.SUCCESS, target_deg, theta, trims, "")
 
-            if (trims >= self.max_trims or abs(residual) < self.trim_min_deg
+            if (trims >= self.max_trims
+                    or abs(residual) < min(self.trim_min_deg, tol)
                     or abs(residual) > self.max_trim_deg):
                 # Too small to resolve, or too large to correct blind.
                 return TurnResult(Status.UNSETTLED, target_deg, theta, trims,
@@ -530,7 +559,7 @@ class RotateNode(AbstractNode):
             rospy.loginfo("[Rotate] trim %d/%d for %+.1f deg", trims,
                           self.max_trims, residual)
             trim_deadline = min(deadline, time.monotonic() + self.trim_timeout_s)
-            st, theta, why = self._sweep(target_deg, trim_deadline, lag_s,
+            st, theta, why = self._sweep(goal, trim_deadline, lag_s,
                                          start_theta=theta)
             if st is not None and st != Status.TIMEOUT:
                 return TurnResult(st, target_deg, theta, trims, why)
@@ -538,10 +567,15 @@ class RotateNode(AbstractNode):
     def _probe_sign(self, direction, deadline):
         """Nudge briefly and check the shift moves the expected way."""
         period = 1.0 / self.control_hz
-        end = min(deadline, time.monotonic() + self.sign_probe_s)
-        duty = self.min_ang_v * direction
+        start = time.monotonic()
+        end = min(deadline, start + self.sign_probe_s)
         moved = 0.0
         while time.monotonic() < end:
+            # Ramp from min_ang_v: a fixed floor-level nudge failed to break
+            # static friction and rejected the first request of every session.
+            level = self.min_ang_v + self.stall_step * int(
+                (time.monotonic() - start) / self.stall_s)
+            duty = min(level, self.max_ang_v) * direction
             if self._cancel.is_set():
                 return Status.CANCELLED, "cancelled during sign probe"
             if not self._scan_ok():
@@ -560,7 +594,6 @@ class RotateNode(AbstractNode):
             self._sleep(period)
 
         self._publish_duty(0.0)
-        self._sign_checked = True
 
         if abs(moved) < self.sign_probe_deg:
             # A hung LIDAR is indistinguishable from a stalled drive train here.
@@ -571,8 +604,24 @@ class RotateNode(AbstractNode):
             rospy.logerr("[Rotate] rotation sign was inverted -- flipped "
                          "rotate_sign to %+d. Set this in foma_params.yaml.",
                          self.rotate_sign)
+        self._sign_checked = True       # only once it actually proved the sign
         self._settle_quiet(0.4)         # let the probe motion bleed off
         return None, ""
+
+    def _axis_heading(self, samples=3, window_s=0.6):
+        """Median wall heading (deg, 0 = square to the room) of a few
+        distinct stationary scans, or None when the walls are not trusted."""
+        vals, last = [], None
+        end = time.monotonic() + window_s
+        while time.monotonic() < end and len(vals) < samples:
+            scan = self._scan
+            if scan is not None and (last is None or changed_bins(scan, last) > 0):
+                last = np.array(scan)
+                h, conf = geom.wall_heading_fit(last / 1000.0)
+                if h is not None and conf >= 0.5:
+                    vals.append(geom.fold_angle(h - self.heading_offset))
+            self._sleep(0.05)
+        return float(np.median(vals)) if vals else None
 
     def _settle_quiet(self, seconds):
         end = time.monotonic() + seconds
@@ -604,6 +653,7 @@ class RotateNode(AbstractNode):
         live_mark = None
         live_mark_t = time.monotonic()
         moving_since = None
+        stall_since = None
 
         while True:
             now = time.monotonic()
@@ -678,6 +728,15 @@ class RotateNode(AbstractNode):
             self._publish_duty(self.rotate_sign * duty)
             if moving_since is None:
                 moving_since = now
+            # Commanded but not turning: this floor needs more than min_v.
+            if abs(rate) < self.stall_dps:
+                if stall_since is None:
+                    stall_since = now
+                elif now - stall_since > self.stall_s:
+                    self._ctrl.bump(self.stall_step)
+                    stall_since = now
+            else:
+                stall_since = None
             self._sleep(period)
 
     def _settle(self, deadline, rev_s):
