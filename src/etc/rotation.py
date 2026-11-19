@@ -1,4 +1,11 @@
-#!/usr/bin/env python3
+"""In-place quarter turns closed on the LIDAR.
+
+Runs inside motor_control_node: the Rotator writes its duty straight into
+the motor loop through `command`, so there is one owner of the motors and
+no network round trip in the loop. Interface kept from the old rotate_node:
+service rotate/quarter_turns, topics rotate/active, rotate/result,
+rotate/progress.
+"""
 import math
 import threading
 import time
@@ -7,9 +14,6 @@ from collections import namedtuple
 
 import numpy as np
 import rospy
-from abstract_node import AbstractNode
-from geometry_msgs.msg import Twist, Vector3
-from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Float32, String as StringMsg
 
 from foma.srv import Float, FloatRequest, FloatResponse
@@ -181,13 +185,15 @@ class RotateController:
         return math.copysign(v, e)
 
 
-# --- ROS node --------------------------------------------------------------
+# --- The maneuver ----------------------------------------------------------
 
-class RotateNode(AbstractNode):
+class Rotator:
 
-    def __init__(self):
-        super().__init__('rotate', 'Rotate')
-        g = rospy.get_param
+    def __init__(self, command, param_ns='~rotate/'):
+        """`command(duty)` sets the rotation duty of the motor loop. Called
+        at control_hz while turning, so the loop's 1 s watchdog stays armed."""
+        self._command = command
+        g = lambda k, d: rospy.get_param(param_ns + k.lstrip('~'), d)
 
         # request limits
         self.max_quarter_turns = float(g('~max_quarter_turns', 8))
@@ -239,6 +245,7 @@ class RotateNode(AbstractNode):
 
         # finish
         self.settle_s      = float(g('~settle_s', 0.8))
+        self.trim_settle_s = float(g('~trim_settle_s', 0.4))
         self.still_tol_deg = float(g('~still_tol_deg', 0.4))
         self.tol_deg       = float(g('~tol_deg', 2.5))
         self.trim_min_deg  = float(g('~trim_min_deg', 1.5))
@@ -255,6 +262,7 @@ class RotateNode(AbstractNode):
         self.snap_to_axes  = bool(g('~snap_to_axes', True))
         self.snap_tol_deg  = float(g('~snap_tol_deg', 1.0))
         self.max_snap_deg  = float(g('~max_snap_deg', 20.0))
+        self.max_snap_trims = int(g('~max_snap_trims', 5))
         self.heading_offset = float(g('/HEADING_OFFSET_DEG', 0.0))
 
         # budget
@@ -275,14 +283,13 @@ class RotateNode(AbstractNode):
         self._thread = None
         self._go_home_active = False
         self._progress = 0.0
+        self._still_scans = []
 
         self._ctrl = RotateController(self.kp_duty, self.min_ang_v,
                                       self.max_ang_v, self.stop_lead_s,
                                       self.stop_lead_deg, self.runaway_deg)
 
-        # ROS I/O
-        self.cmd_pub = rospy.Publisher('motor_control/twist', Twist,
-                                       queue_size=1, tcp_nodelay=True)
+        # ROS I/O. Scans come from the owner through on_scan.
         self.pub_active = rospy.Publisher('rotate/active', Bool, queue_size=1,
                                           latch=True)
         self.pub_result = rospy.Publisher('rotate/result', StringMsg,
@@ -290,19 +297,11 @@ class RotateNode(AbstractNode):
         self.pub_prog = rospy.Publisher('rotate/progress', Float32,
                                         queue_size=1)
 
-        rospy.Subscriber('lidar/scans', LaserScan, self._on_lidar,
-                         queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('go_home/enabled', Bool, self._on_go_home,
-                         queue_size=1)
-        # Channels we never use: traffic means the joystick took over.
-        rospy.Subscriber('motor_control/rotate', Float32, self._on_foreign_rot,
-                         queue_size=1)
-        rospy.Subscriber('motor_control/vector', Vector3, self._on_foreign_vec,
                          queue_size=1)
 
         self.srv = rospy.Service('rotate/quarter_turns', Float, self._on_request)
 
-        rospy.on_shutdown(self._on_shutdown)
         self._publish_active()
         self._publish_result("idle")
         rospy.loginfo("[Rotate] ready. tol=%.1f deg  max=%.1f quarter turns  "
@@ -310,23 +309,20 @@ class RotateNode(AbstractNode):
                       self.tol_deg, self.max_quarter_turns, self.rotate_sign,
                       self.sign_autodetect)
 
-    # -- subscriptions ------------------------------------------------------
+    # -- inputs from the owner ----------------------------------------------
 
-    def _on_lidar(self, msg):
-        self._scan = np.asarray(msg.ranges, dtype=np.float64)
+    def on_scan(self, ranges):
+        self._scan = np.asarray(ranges, dtype=np.float64)
         self._scan_time = time.monotonic()
 
     def _on_go_home(self, msg):
         self._go_home_active = bool(msg.data)
 
-    def _on_foreign_rot(self, msg):
-        if self.active and abs(float(msg.data)) > 0.05:
-            rospy.logwarn("[Rotate] motor_control/rotate traffic - cancelling")
-            self._cancel.set()
-
-    def _on_foreign_vec(self, msg):
-        if self.active and math.hypot(msg.x, msg.y) > 0.05:
-            rospy.logwarn("[Rotate] motor_control/vector traffic - cancelling")
+    def request_cancel(self, why):
+        """Another source took the motors. Returns at once, the turn thread
+        stops on its next tick."""
+        if self.active and not self._cancel.is_set():
+            rospy.logwarn("[Rotate] %s - cancelling", why)
             self._cancel.set()
 
     # -- service ------------------------------------------------------------
@@ -369,7 +365,7 @@ class RotateNode(AbstractNode):
             t.join(timeout=join_timeout)
         self._hard_stop()
 
-    def _on_shutdown(self):
+    def shutdown(self):
         self._cancel.set()
         self.active = False
         try:
@@ -391,13 +387,11 @@ class RotateNode(AbstractNode):
             pass
 
     def _publish_duty(self, duty):
-        """Command a rotation duty. linear.{x,y} stay zero because"""
-        cmd = Twist()
-        cmd.angular.z = float(duty)
-        self.cmd_pub.publish(cmd)
+        """Command a rotation duty. Translation is zeroed by the owner."""
+        self._command(float(duty))
 
     def _hard_stop(self):
-        """Zero the motors, then go quiet so motor_control's 1 s watchdog arms"""
+        """Zero the motors for a while so the loop ramps down, then go quiet"""
         end = time.monotonic() + self.stop_publish_s
         period = 1.0 / self.control_hz
         while time.monotonic() < end:
@@ -490,7 +484,8 @@ class RotateNode(AbstractNode):
     def _rotate(self, target_deg):
         budget = min(self.max_timeout_s,
                      self.base_timeout_s + abs(target_deg) / self.min_rate_dps
-                     + self.max_trims * self.trim_timeout_s + 2 * self.settle_s)
+                     + max(self.max_trims, self.max_snap_trims) * self.trim_timeout_s
+                     + 2 * self.settle_s)
         deadline = time.monotonic() + budget
         self._progress = 0.0
         self._ctrl.boost = 0.0
@@ -524,45 +519,72 @@ class RotateNode(AbstractNode):
             if st is not None:
                 return TurnResult(st, target_deg, self._progress, 0, why)
 
+        t0 = time.monotonic()
         st, theta, why = self._sweep(target_deg, deadline, lag_s)
         if st is not None:
             return TurnResult(st, target_deg, theta, 0, why)
+        rospy.loginfo("[Rotate] sweep %.1f s, at %+.1f deg", time.monotonic() - t0, theta)
 
         # Judge the result stationary-against-stationary: no shear either side.
         trims = 0
         quarter = abs(target_deg / 90.0 - round(target_deg / 90.0)) < 1e-6
         while True:
-            st, theta, why = self._settle(deadline, rev_s)
+            t_settle = time.monotonic()
+            # A trim runs at low duty and ramps down fast: a shorter wait.
+            # Stillness is still proven by the anchors either way.
+            st, theta, why = self._settle(
+                deadline, rev_s, self.trim_settle_s if trims else self.settle_s)
             if st is not None:
                 return TurnResult(st, target_deg, theta, trims, why)
+            t_walls = time.monotonic()
 
-            goal, tol = target_deg, self.tol_deg
+            goal, tol, limit, snapped = target_deg, self.tol_deg, self.max_trims, False
             if self.snap_to_axes and quarter:
-                h = self._axis_heading()
-                # The wall heading moves by minus the scan shift, so the
-                # shift that squares the robot up is theta + h.
-                if h is not None and abs(theta + h - target_deg) <= self.max_snap_deg:
-                    goal, tol = theta + h, self.snap_tol_deg
+                h = self._axis_heading(self._still_scans)
+                if h is None:
+                    rospy.logwarn("[Rotate] walls not trusted - finishing on "
+                                  "the relative angle, may end off axis")
+                else:
+                    goal = self._square_goal(theta, h, target_deg)
+                    tol, limit, snapped = self.snap_tol_deg, self.max_snap_trims, True
+                    if abs(goal - target_deg) > self.max_snap_deg:
+                        rospy.logwarn("[Rotate] squaring up %+.1f deg away from "
+                                      "the request (crooked start or tracking drift)",
+                                      goal - target_deg)
 
             residual = goal - theta
+            rospy.loginfo("[Rotate] settle %.1f s, walls %.1f s, residual %+.1f deg",
+                          t_walls - t_settle, time.monotonic() - t_walls, residual)
             if abs(residual) <= tol:
                 return TurnResult(Status.SUCCESS, target_deg, theta, trims, "")
 
-            if (trims >= self.max_trims
+            # The wall heading is absolute, so a large snap residual is still
+            # safe to correct. Only a relative finish is capped as blind.
+            if (trims >= limit
                     or abs(residual) < min(self.trim_min_deg, tol)
-                    or abs(residual) > self.max_trim_deg):
-                # Too small to resolve, or too large to correct blind.
+                    or (not snapped and abs(residual) > self.max_trim_deg)):
                 return TurnResult(Status.UNSETTLED, target_deg, theta, trims,
                                   "residual %+.1f deg" % residual)
 
             trims += 1
             rospy.loginfo("[Rotate] trim %d/%d for %+.1f deg", trims,
-                          self.max_trims, residual)
+                          limit, residual)
             trim_deadline = min(deadline, time.monotonic() + self.trim_timeout_s)
+            t_trim = time.monotonic()
             st, theta, why = self._sweep(goal, trim_deadline, lag_s,
                                          start_theta=theta)
+            rospy.loginfo("[Rotate] trim sweep %.1f s, at %+.1f deg",
+                          time.monotonic() - t_trim, theta)
             if st is not None and st != Status.TIMEOUT:
                 return TurnResult(st, target_deg, theta, trims, why)
+
+    @staticmethod
+    def _square_goal(theta, h, target_deg):
+        """Shift that leaves the robot square to the room, nearest the request.
+        The wall heading moves by minus the scan shift, so at shift theta with
+        heading h the squared-up shifts are theta + h + k * 90."""
+        square = theta + h
+        return square + 90.0 * round((target_deg - square) / 90.0)
 
     def _probe_sign(self, direction, deadline):
         """Nudge briefly and check the shift moves the expected way."""
@@ -608,18 +630,31 @@ class RotateNode(AbstractNode):
         self._settle_quiet(0.4)         # let the probe motion bleed off
         return None, ""
 
-    def _axis_heading(self, samples=3, window_s=0.6):
+    def _wall_heading(self, scan):
+        """Wall heading (deg, 0 = square to the room) of one scan, or None."""
+        h, conf = geom.wall_heading_fit(np.asarray(scan) / 1000.0)
+        if h is None or conf < 0.5:
+            return None
+        return geom.fold_angle(h - self.heading_offset)
+
+    def _axis_heading(self, still_scans=None, samples=3, window_s=0.6):
         """Median wall heading (deg, 0 = square to the room) of a few
-        distinct stationary scans, or None when the walls are not trusted."""
+        distinct stationary scans, or None when the walls are not trusted.
+        Scans the settle already proved still are used first, which saves
+        waiting for fresh ones."""
+        if still_scans:
+            vals = [v for v in map(self._wall_heading, still_scans) if v is not None]
+            if vals:
+                return float(np.median(vals))
         vals, last = [], None
         end = time.monotonic() + window_s
         while time.monotonic() < end and len(vals) < samples:
             scan = self._scan
             if scan is not None and (last is None or changed_bins(scan, last) > 0):
                 last = np.array(scan)
-                h, conf = geom.wall_heading_fit(last / 1000.0)
-                if h is not None and conf >= 0.5:
-                    vals.append(geom.fold_angle(h - self.heading_offset))
+                h = self._wall_heading(last)
+                if h is not None:
+                    vals.append(h)
             self._sleep(0.05)
         return float(np.median(vals)) if vals else None
 
@@ -739,15 +774,17 @@ class RotateNode(AbstractNode):
                 stall_since = None
             self._sleep(period)
 
-    def _settle(self, deadline, rev_s):
-        """Stop, wait for the buffer to refresh, and prove the robot is still."""
+    def _settle(self, deadline, rev_s, settle_s):
+        """Stop, wait for the buffer to refresh, and prove the robot is still.
+        The two scans that proved it are left in _still_scans."""
         period = 1.0 / self.control_hz
         pred = self._progress
-        end = time.monotonic() + self.settle_s
+        end = time.monotonic() + settle_s
         # Keep matching and publishing zeros so motor_control ramps down.
-        anchors = []
+        anchors, scans = [], []
         next_anchor = end
-        hard_end = time.monotonic() + self.settle_s + 2.0
+        hard_end = time.monotonic() + settle_s + 2.0
+        self._still_scans = []
 
         while True:
             now = time.monotonic()
@@ -760,7 +797,8 @@ class RotateNode(AbstractNode):
 
             self._publish_duty(0.0)
 
-            m = match_shift(self._scan, self._ref, pred, self.window_deg,
+            scan = self._scan
+            m = match_shift(scan, self._ref, pred, self.window_deg,
                             ref_m=self._ref_mask, clip_mm=self.clip_mm,
                             min_overlap=self.min_overlap,
                             cost_max_mm=self.cost_max_mm,
@@ -771,22 +809,12 @@ class RotateNode(AbstractNode):
                 self._progress = pred
                 if now >= next_anchor:
                     anchors.append(pred)
+                    scans.append(np.array(scan))
                     next_anchor = now + rev_s
                     # Two readings a revolution apart that agree mean a stationary buffer.
                     if len(anchors) >= 2:
                         if abs(anchors[-1] - anchors[-2]) <= self.still_tol_deg:
+                            self._still_scans = scans[-2:]
                             return None, pred, ""
-                        anchors = anchors[-1:]
+                        anchors, scans = anchors[-1:], scans[-1:]
             self._sleep(period)
-
-    def run(self):
-        rospy.spin()
-
-
-if __name__ == "__main__":
-    rospy.init_node("rotate_node")
-    try:
-        node = RotateNode()
-        node.run()
-    except rospy.ROSInterruptException:
-        pass

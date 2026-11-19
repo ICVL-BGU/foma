@@ -9,6 +9,7 @@ from abstract_node import AbstractNode
 from etc.MotorControl import *
 from etc import scan_geometry as geom
 from etc.heading_hold import HeadingHold, HeadingHoldParams
+from etc.rotation import Rotator
 from gpiozero import BadPinFactory
 import numpy as np
 from std_srvs.srv import SetBool, SetBoolRequest, SetBoolResponse
@@ -18,6 +19,12 @@ import math
 class MotorControlNode(AbstractNode):
     def __init__(self):
         super().__init__('motor_control', 'Motor control')
+
+        # Quarter turns closed on the LIDAR (service rotate/quarter_turns).
+        # While one runs it owns the motors: a real command from the joystick
+        # or the GUI cancels it, zeros and the fish are ignored. Created
+        # before the subscribers, which feed it.
+        self.__rotator = Rotator(self.__rotator_command)
 
         self.__speed_publisher = rospy.Publisher('motor_control/speed', TwistStamped, queue_size=10, tcp_nodelay=True)
         
@@ -324,8 +331,24 @@ class MotorControlNode(AbstractNode):
 
         return h_component, v_component
 
+    def __turn_owns_motors(self, magnitude, source):
+        '''True if a running turn keeps the motors and this command is dropped.
+        A real command (not a zero) cancels the turn and goes through.'''
+        if not self.__rotator.active:
+            return False
+        if magnitude > 0.05:
+            self.__rotator.request_cancel(f"{source} command")
+            return False
+        return True
+
+    def __rotator_command(self, duty):
+        self.__desired_rotate = duty
+        self.__desired_h = 0.0
+        self.__desired_v = 0.0
+        self.__last_cmd_time = rospy.Time.now()
+
     def __handle_fish_direction(self, msg: TwistStamped):
-        if self._mode != 'trial':
+        if self._mode != 'trial' or self.__rotator.active:
             return
         
         # Get fish location
@@ -356,6 +379,8 @@ class MotorControlNode(AbstractNode):
             self.__handle_vector(Vector3(0, 0, 0))
 
     def __handle_angle(self, msg: Float32):
+        if self.__turn_owns_motors(1.0, 'motor_control/angle'):
+            return
         angle = msg.data % 360
         h, v = self.__split_components(angle_deg=angle)
 
@@ -368,6 +393,8 @@ class MotorControlNode(AbstractNode):
     def __handle_vector(self, msg: Vector3):
         x, y = msg.x, msg.y
         mag = np.hypot(x, y)
+        if self.__turn_owns_motors(mag, 'motor_control/vector'):
+            return
         if mag < 1e-6:
             # Zero‐motion request
             self.__desired_h = 0.0
@@ -379,12 +406,17 @@ class MotorControlNode(AbstractNode):
         self.__last_cmd_time = rospy.Time.now()
 
     def __handle_twist(self, msg: Twist):
+        mag = max(math.hypot(msg.linear.x, msg.linear.y), abs(msg.angular.z))
+        if self.__turn_owns_motors(mag, 'motor_control/twist'):
+            return
         self.__desired_h = msg.linear.y
         self.__desired_v = msg.linear.x
         self.__desired_rotate = msg.angular.z
         self.__last_cmd_time = rospy.Time.now()
 
     def __handle_rotate(self, msg: Float32):
+        if self.__turn_owns_motors(abs(msg.data), 'motor_control/rotate'):
+            return
         self.__desired_rotate = msg.data
         self.__desired_h = 0.0
         self.__desired_v = 0.0
@@ -393,6 +425,7 @@ class MotorControlNode(AbstractNode):
     def __update_lidar(self, scans: LaserScan):
         self.__scans = np.array(scans.ranges)
         self.__fit = None                   # recomputed on demand, once per scan
+        self.__rotator.on_scan(scans.ranges)
 
     def __is_sector_blocked(self, sector):
         filtered_scans = np.array(self.__scans)[sector] 
@@ -502,6 +535,7 @@ class MotorControlNode(AbstractNode):
             self.__motor_control.rotate(0.0)
     
     def __on_shutdown(self):
+        self.__rotator.shutdown()
         if self.__motor_control:
             self.loginfo("Stopping motors.")
             self.__motor_control.shutdown()

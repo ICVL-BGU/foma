@@ -32,10 +32,6 @@
     <!-- Go Home. Tuned from the go_home_node: block in foma_params.yaml. -->
     <node pkg="foma" type="go_home_node.py" name="go_home_node" output="screen"/>
 
-    <!-- Precise in-place rotation by LIDAR scan matching.
-         Tuned from the rotate_node: block in foma_params.yaml. -->
-    <node pkg="foma" type="rotate_node.py" name="rotate_node" output="screen"/>
-
     <!-- Joystick to Motor-->
     <node pkg="foma" type="joystick_node.py" name="joystick_node" output="screen"/>
     

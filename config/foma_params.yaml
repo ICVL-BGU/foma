@@ -81,6 +81,83 @@ motor_control_node:
     jump_m: 0.25            # sudden change bigger than this = obstacle, new line
     dir_tol_deg: 5.0        # command direction change that starts a new line
   axis_snap_deg: 12.0       # joystick only: within this of an axis drives exactly along it
+  # Precise in-place rotation (LIDAR scan matching), service rotate/quarter_turns
+  rotate:
+    # --- request limits ---
+    max_quarter_turns: 8         # +/-720 deg; larger is rejected
+    snap_to_quarter: true        # round to the nearest 0.25 turn
+    # --- geometry / safety ---
+    # motor_control skips its lidar check while rotating, so this is the only
+    # protection. The full circle is swept: no direction can be relaxed.
+    robot_radius_mm: 407         # 576 mm square -> circumscribed radius
+    clearance_margin_mm: 80      # pre-flight margin
+    run_margin_mm: 30            # in-turn margin (a moving scan is noisy)
+    max_violating_bins: 2        # tolerate spurious returns
+    run_violation_cycles: 3      # consecutive violations before aborting
+    min_valid_bins: 200
+    require_clearance: true      # off for bench work
+    # --- lidar model ---
+    # lidar_node keeps republishing a stale buffer after the sensor dies, so
+    # liveness is judged from the contents changing.
+    lidar_rev_s: 0.18            # fallback; measured at reference capture
+    measure_rev_period: false    # probe times out when stationary; use lidar_rev_s
+    scan_timeout_s: 0.5          # no message at all -> abort
+    liveness_window_s: 0.7       # contents must change while moving
+    min_changed_bins: 10
+    # --- scan matching ---
+    window_deg: 25.0             # MUST stay < 45: rooms alias every 90 deg,
+                                 # which is exactly what we turn
+    reject_deg: 15.0
+    clip_mm: 300.0               # truncated L1: no stale bin can move the minimum
+    min_overlap: 100
+    cost_max_mm: 400.0
+    max_bad_measurements: 15
+    refine_step_deg: 0.2
+    rate_alpha: 0.25
+    # --- motion ---
+    control_hz: 50.0
+    match_hz: 25.0
+    max_ang_v: 0.55              # brake scales with measured rate, so it adapts
+    min_ang_v: 0.20              # below this the drive train stalls
+    kp_duty_per_deg: 0.03        # saturates beyond 18 deg (0.015: 37 deg, a slow 14 s tail on 90)
+    stop_lead_s: 0.25            # predictive brake, scaled by measured rate (raised with kp)
+    stop_lead_deg: 1.0
+    runaway_deg: 20.0            # error growing this far past best -> abort
+    # --- sign conventions ---
+    # Both depend on wiring and are not provable from source, hence the
+    # autodetect. Record the value here if it ever flips.
+    angle_sign: 1                # +1: a positive request turns CCW
+    rotate_sign: -1              # angular.z sign that increases the shift
+    sign_autodetect: true
+    sign_probe_deg: 4.0          # too small to reach a 90 deg alias
+    sign_probe_s: 2.0
+    # --- finish ---
+    settle_s: 0.8                # ramp-down + >= 2 lidar revolutions
+    trim_settle_s: 0.4           # same after a trim: low duty ramps down in ~0.2 s
+    still_tol_deg: 0.4
+    tol_deg: 2.5                 # actuation floor: shortest pulse is ~3 deg
+    trim_min_deg: 1.5            # below this a trim would oscillate
+    max_trims: 2
+    # Square to the room at the end: quarter turns finish on the wall heading,
+    # so a crooked start or a short turn still ends aligned.
+    snap_to_axes: true
+    snap_tol_deg: 1.5            # trims under ~1.5 deg did not move the robot, only cost time
+    max_snap_deg: 20.0           # squaring up farther than this from the request logs a warning
+    max_snap_trims: 5            # trims allowed when finishing on the walls (relative finish: max_trims)
+    # Stall recovery: commanded but not turning for stall_s -> floor + stall_step.
+    # min_ang_v alone did not break static friction on this floor.
+    stall_s: 0.4
+    stall_dps: 1.5
+    stall_step: 0.04
+    max_trim_deg: 12.0
+    trim_timeout_s: 6.0
+    # --- budget ---
+    base_timeout_s: 4.0
+    min_expected_rate_dps: 15.0  # deliberately pessimistic
+    max_timeout_s: 120.0
+    stop_publish_s: 0.4          # zeros for this long, then silence so
+                                 # motor_control's watchdog is a 2nd backstop
+    publish_progress: true
 
 # ---------- Go Home (LIDAR room-centring) ----------
 go_home_node:
@@ -119,81 +196,6 @@ go_home_node:
   viz_size: 720
   viz_range_m: 0.0   # 0 = auto-fit to the scan
 
-# ---------- Precise in-place rotation (LIDAR scan matching) ----------
-rotate_node:
-  # --- request limits ---
-  max_quarter_turns: 8         # +/-720 deg; larger is rejected
-  snap_to_quarter: true        # round to the nearest 0.25 turn
-  # --- geometry / safety ---
-  # motor_control skips its lidar check while rotating, so this is the only
-  # protection. The full circle is swept: no direction can be relaxed.
-  robot_radius_mm: 407         # 576 mm square -> circumscribed radius
-  clearance_margin_mm: 80      # pre-flight margin
-  run_margin_mm: 30            # in-turn margin (a moving scan is noisy)
-  max_violating_bins: 2        # tolerate spurious returns
-  run_violation_cycles: 3      # consecutive violations before aborting
-  min_valid_bins: 200
-  require_clearance: true      # off for bench work
-  # --- lidar model ---
-  # lidar_node keeps republishing a stale buffer after the sensor dies, so
-  # liveness is judged from the contents changing.
-  lidar_rev_s: 0.18            # fallback; measured at reference capture
-  measure_rev_period: false    # probe times out when stationary; use lidar_rev_s
-  scan_timeout_s: 0.5          # no message at all -> abort
-  liveness_window_s: 0.7       # contents must change while moving
-  min_changed_bins: 10
-  # --- scan matching ---
-  window_deg: 25.0             # MUST stay < 45: rooms alias every 90 deg,
-                               # which is exactly what we turn
-  reject_deg: 15.0
-  clip_mm: 300.0               # truncated L1: no stale bin can move the minimum
-  min_overlap: 100
-  cost_max_mm: 400.0
-  max_bad_measurements: 15
-  refine_step_deg: 0.2
-  rate_alpha: 0.25
-  # --- motion ---
-  control_hz: 50.0
-  match_hz: 25.0
-  max_ang_v: 0.55              # brake scales with measured rate, so it adapts
-  min_ang_v: 0.20              # below this the drive train stalls
-  kp_duty_per_deg: 0.03        # saturates beyond 18 deg (0.015: 37 deg, a slow 14 s tail on 90)
-  stop_lead_s: 0.25            # predictive brake, scaled by measured rate (raised with kp)
-  stop_lead_deg: 1.0
-  runaway_deg: 20.0            # error growing this far past best -> abort
-  # --- sign conventions ---
-  # Both depend on wiring and are not provable from source, hence the
-  # autodetect. Record the value here if it ever flips.
-  angle_sign: 1                # +1: a positive request turns CCW
-  rotate_sign: -1              # angular.z sign that increases the shift
-  sign_autodetect: true
-  sign_probe_deg: 4.0          # too small to reach a 90 deg alias
-  sign_probe_s: 2.0
-  # --- finish ---
-  settle_s: 0.8                # ramp-down + >= 2 lidar revolutions
-  still_tol_deg: 0.4
-  tol_deg: 2.5                 # actuation floor: shortest pulse is ~3 deg
-  trim_min_deg: 1.5            # below this a trim would oscillate
-  max_trims: 2
-  # Square to the room at the end: quarter turns finish on the wall heading,
-  # so a crooked start or a short turn still ends aligned.
-  snap_to_axes: true
-  snap_tol_deg: 1.5            # trims under ~1.5 deg did not move the robot, only cost time
-  max_snap_deg: 20.0           # farther than this from the request -> plain relative turn
-  # Stall recovery: commanded but not turning for stall_s -> floor + stall_step.
-  # min_ang_v alone did not break static friction on this floor.
-  stall_s: 0.4
-  stall_dps: 1.5
-  stall_step: 0.04
-  max_trim_deg: 12.0
-  trim_timeout_s: 6.0
-  # --- budget ---
-  base_timeout_s: 4.0
-  min_expected_rate_dps: 15.0  # deliberately pessimistic
-  max_timeout_s: 120.0
-  stop_publish_s: 0.4          # zeros for this long, then silence so
-                               # motor_control's watchdog is a 2nd backstop
-  publish_progress: true
 
 # ---------- Writer node params (loaded into node-private namespace) ----------
 csv_writer_foma_location:

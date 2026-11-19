@@ -14,6 +14,5 @@
     <!-- Node 4 -->
     <node pkg="foma" type="feeder_node.py" name="feeder_node" output="screen"/>
 
-    <!-- Node 5 -->
-    <node pkg="foma" type="rotate_node.py" name="rotate_node" output="screen"/>
+    <!-- In-place rotation (rotate/quarter_turns) runs inside motor_control_node. -->
 </launch>
