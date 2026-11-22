@@ -4,17 +4,21 @@ re-blits the frame on widget resize or expose events. The frame is uploaded
 once per setFrame() call.
 
 Use as a drop-in replacement for QLabel-based camera displays."""
-from PyQt5.QtCore import Qt, QRect
+from PyQt5.QtCore import Qt, QRect, pyqtSignal
 from PyQt5.QtGui import QImage, QPainter
 from PyQt5.QtWidgets import QOpenGLWidget, QSizePolicy
 
 
 class GLImageWidget(QOpenGLWidget):
+    # Left click on the image, in image coordinates normalised to 0..1.
+    clicked = pyqtSignal(float, float)
+
     def __init__(self, parent=None, fmt=QImage.Format_RGB888):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._image = None
         self._fmt = fmt
+        self._drawn = None              # QRect the image was last drawn into
 
     def setFrame(self, arr):
         """arr: H x W x 3 uint8. Format selected at construction time
@@ -39,4 +43,14 @@ class GLImageWidget(QOpenGLWidget):
         x = (ww - dw) // 2
         y = (wh - dh) // 2
         p.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        p.drawImage(QRect(x, y, dw, dh), self._image)
+        self._drawn = QRect(x, y, dw, dh)
+        p.drawImage(self._drawn, self._image)
+
+    def mousePressEvent(self, event):
+        r = self._drawn
+        if event.button() != Qt.LeftButton or r is None:
+            return super().mousePressEvent(event)
+        u = (event.x() - r.x()) / r.width()
+        v = (event.y() - r.y()) / r.height()
+        if 0.0 <= u <= 1.0 and 0.0 <= v <= 1.0:   # not on the letterbox
+            self.clicked.emit(u, v)

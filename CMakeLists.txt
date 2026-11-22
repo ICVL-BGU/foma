@@ -64,6 +64,7 @@ add_service_files(
   Write.srv
   Float.srv
   String.srv
+  GoTo.srv
 )
 
 ## Generate actions in the 'action' folder

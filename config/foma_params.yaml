@@ -54,6 +54,16 @@ HEADING_OFFSET_DEG: 3.6     # lidar mounting yaw vs the chassis (measured 2026-1
                             # square the robot by hand, read "heading err" in
                             # the GoHome window, enter that value here.
 
+# ---------- Go To (shared by go_home_node and gui_node) ----------
+# Points are normalised floor coordinates, as localization/location.world.
+GOTO_TARGETS:
+  door: [0.0, 0.0]          # placeholder: read the real value at the door from localization/location
+GOTO_ROOM_BOUNDS_MM: [0, 5000, 0, 5000]   # walls in floor-map mm (x_min, x_max, y_min, y_max). Placeholder: measure
+GOTO_ROBOT_SIZE_M: 1.0      # footprint side. The robot centre keeps half of it
+GOTO_WALL_MARGIN_M: 0.2     # ... plus this from every wall
+GOTO_WORLD_DET: -1          # room frame handedness seen from the body, found on the robot 2026-11-22. 0 = unknown (go_to probes twice and logs the value)
+GOTO_ROOM_CENTER: []        # room centre in camera coordinates, from the GoHome log line "GOTO_ROOM_CENTER: [x, y]". Empty = anchor on camera frames at each go_to
+
 # ---------- Motor control: heading hold while translating ----------
 motor_control_node:
   heading_hold:
@@ -190,6 +200,19 @@ go_home_node:
   timeout: 90.0       # whole routine, shared across both phases
   control_hz: 100.0
   go_home_passes: 3   # align+centre retries before giving up
+  # go_to: the camera anchors the LIDAR wall distances once at the start, then the LIDAR alone drives and verifies.
+  goto_tol: 0.035       # m. Keep above min_lin_v/goto_kp (0.031) or it cannot settle
+  verify_goto_tol: 0.07
+  goto_settle: 0.8      # s
+  goto_kp: 8.0          # duty per metre, on LIDAR + camera (as kp_lin)
+  goto_max_v: 0.95      # lower if it overshoots the target
+  goto_cam_kp: 2.0      # camera alone (a wall out of sight): its lag needs a slow approach
+  goto_cam_max_v: 0.5
+  goto_brake_m: 0.30    # closer than this: at most goto_approach_v. Raise both if it still overshoots
+  goto_approach_v: 0.45
+  goto_diag_m: 0.15     # per-axis friction floor (a true diagonal) only further than this
+  goto_lidar_clamp: true  # also keep the target inside the walls the LIDAR sees. false in a maze
+  probe_v: 0.35         # duty of the short move that finds the room axes
   # Live top-down window: room model + LIDAR returns.
   visualize: true
   viz_fps: 20

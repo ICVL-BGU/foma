@@ -14,7 +14,10 @@
     </node>
 
     <!-- Node 3 -->
-    <node pkg="foma" type="gui_node.py" name="gui_node" output="screen"/>
+    <node pkg="foma" type="gui_node.py" name="gui_node" output="screen">
+        <!-- Same mapper as localization: a click on the room image -> floor point -->
+        <param name="mapper_path" value="/home/icvl/ros_ws/src/foma/models/image_world_mapper.json"/>
+    </node>
 
     <!-- Node 4 -->
     <node pkg="foma" type="localization_node.py" name="localization_node" output="screen">

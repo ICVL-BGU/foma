@@ -1,0 +1,9 @@
+# Drive to a floor point, normalised like localization/location.world
+float64 x
+float64 y
+string name     # saved target from GOTO_TARGETS (e.g. "door"), overrides x, y
+---
+bool success
+string message
+float64 x       # the target after clamping to the allowed area
+float64 y

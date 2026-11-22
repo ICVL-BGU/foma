@@ -18,11 +18,10 @@ import rospy
 from sensor_msgs.msg import CompressedImage
 from abstract_node import AbstractNode
 from etc import jpeg
+from etc.room_mapping import load_mappers, map_point
 from foma.msg import FomaLocation
 from geometry_msgs.msg import Point
 from ultralytics import YOLO
-import json
-import numpy as np
 
 FOMA_TAG = 0
 LIDAR_TAG = 1
@@ -32,42 +31,7 @@ ALPHA_X = 0.65
 ALPHA_Y = 0.85
 
 CONF_MIN = 0.25
-
-
-def _theta(r_d, model):
-    """Map radial distance r_d to incidence angle theta per distortion model."""
-    if model == 'equisolid':
-        return 2 * np.arcsin(np.clip(r_d / 2, -1.0, 1.0))
-    if model == 'equidistant':
-        return r_d
-    if model == 'stereographic':
-        return 2 * np.arctan(r_d / 2)
-    if model == 'orthographic':
-        return np.arcsin(np.clip(r_d, -1.0, 1.0))
-    raise ValueError(f"Unknown fisheye model: {model}")
-
-
-def map_point(params, x, y):
-    """Map image px (x, y) at 2560x2560 -> world (x_w, y_w) mm via one mapper.
-
-    Two steps: fisheye undistort (model read from JSON, not hardcoded) then 3x3
-    homography. `params` is one nested mapper block (undistorter + homography).
-    """
-    u = params['undistorter']
-    cx, cy, f = u['cx'], u['cy'], u['f']
-
-    x_d = (x - cx) / f
-    y_d = (y - cy) / f
-    r_d = np.sqrt(x_d ** 2 + y_d ** 2)
-
-    theta = _theta(r_d, u['model'])
-    scale = np.tan(theta) / r_d if r_d > 1e-9 else 1.0
-    undistorted_x = x_d * scale * f + cx
-    undistorted_y = y_d * scale * f + cy
-
-    H = np.array(params['homography'], dtype=float)
-    world_h = H @ np.array([undistorted_x, undistorted_y, 1.0])
-    return world_h[0] / world_h[2], world_h[1] / world_h[2]
+DETECTION_REPORT_S = 5.0    # summary of missed frames this often
 
 
 class LocalizationNode(AbstractNode):
@@ -79,8 +43,7 @@ class LocalizationNode(AbstractNode):
         self.tracker = rospy.get_param('~tracker_path', 'bytetrack.yaml')
         self.detection_model = YOLO(detection_model_path)
         # Single JSON, both mappers nested under 'lidar' and 'foma'.
-        with open(mapper_path, 'r') as f:
-            mappers = json.load(f)
+        mappers = load_mappers(mapper_path)
         self.lidar_params = mappers['lidar']
         self.foma_params = mappers['foma']
         self.img = None
@@ -89,6 +52,8 @@ class LocalizationNode(AbstractNode):
         self.location = FomaLocation()
         self.__camera_native_shape = tuple(rospy.get_param('/ROOM_CAMERA_NATIVE_SHAPE'))
         self.__floor_map_shape = tuple(rospy.get_param('/ROOM_FLOOR_MAP_SHAPE'))
+        self.__report_t = rospy.get_time()
+        self.__counts = [0, 0, 0, 0]    # frames, FOMA seen, LIDAR seen, either
 
     def read_image(self, img_msg: CompressedImage):
         try:
@@ -109,6 +74,7 @@ class LocalizationNode(AbstractNode):
         lidar_det = self.__select_detection(prediction, LIDAR_TAG)
         foma_det = self.__select_detection(prediction, FOMA_TAG)
 
+        self.__count(foma_det, lidar_det)
         result = self.__localize(lidar_det, foma_det)
         if result is not None:
             x_i, y_i, x_w, y_w = result
@@ -116,6 +82,23 @@ class LocalizationNode(AbstractNode):
             self.location.world = Point(x_w / self.__floor_map_shape[1], y_w / self.__floor_map_shape[0], 0)
 
         self.location_pub.publish(self.location)
+
+    def __count(self, foma_det, lidar_det):
+        """Per-tag detection rate, logged every DETECTION_REPORT_S while frames
+        go missing.  The position is held at its last value meanwhile."""
+        c = self.__counts
+        c[0] += 1
+        c[1] += foma_det is not None
+        c[2] += lidar_det is not None
+        c[3] += foma_det is not None or lidar_det is not None
+        now = rospy.get_time()
+        if now - self.__report_t < DETECTION_REPORT_S:
+            return
+        if c[3] < c[0]:
+            rospy.logwarn(f"Detection last {now - self.__report_t:.0f}s: robot in "
+                          f"{c[3]}/{c[0]} frames (FOMA {c[1]}, LIDAR {c[2]})")
+        self.__report_t = now
+        self.__counts = [0, 0, 0, 0]
 
     def __select_detection(self, prediction, tag):
         """Return (xc_n, yc_n, conf) of highest-conf box of `tag`, or None.
@@ -144,7 +127,6 @@ class LocalizationNode(AbstractNode):
         fp = self.__map(self.foma_params, foma_det) if foma_det else None
 
         if lp is None and fp is None:
-            rospy.logwarn_throttle(1.0, "No FOMA/LIDAR detection; skipping frame")
             return None
 
         if fp is None:

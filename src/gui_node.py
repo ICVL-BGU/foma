@@ -48,9 +48,10 @@ from std_srvs.srv import SetBool
 
 
 # Custom ROS messages
-from foma.srv import Check, Write, Float, String
+from foma.srv import Check, Write, Float, String, GoTo
 from foma.msg import FomaLocation, TrialEvent
 from etc import jpeg
+from etc import room_mapping
 from etc.gl_image_widget import GLImageWidget
 
 class MainWindow(QMainWindow):
@@ -120,10 +121,34 @@ class MainWindow(QMainWindow):
         self.__room_camera_frame_shape = tuple(rospy.get_param('/ROOM_CAMERA_FRAME_SHAPE'))
         self.__room_floor_map_shape    = tuple(rospy.get_param('/ROOM_FLOOR_MAP_SHAPE'))
         self.__room_map_frame_shape    = tuple(rospy.get_param('/ROOM_MAP_FRAME_SHAPE'))
+        self.__room_camera_native_shape = tuple(rospy.get_param('/ROOM_CAMERA_NATIVE_SHAPE'))
+
+        # Go To: same limits and targets as go_home_node, to preview the
+        # clamped target before the robot moves.
+        floor = self.__room_floor_map_shape
+        self.__goto_bounds = room_mapping.target_bounds(
+            rospy.get_param('/GOTO_ROOM_BOUNDS_MM', [0, floor[1], 0, floor[0]]), floor,
+            float(rospy.get_param('/GOTO_ROBOT_SIZE_M', 1.0)),
+            float(rospy.get_param('/GOTO_WALL_MARGIN_M', 0.2)))
+        self.__goto_targets = dict(rospy.get_param('/GOTO_TARGETS', {}))
+        # Clicks map through the LIDAR-tag mapper: the green dot is that tag,
+        # so the robot ends where its dot is on the clicked pixel.
+        self.__goto_mapper = None
+        mapper_path = rospy.get_param('~mapper_path', None)
+        if mapper_path:
+            try:
+                self.__goto_mapper = room_mapping.load_mappers(mapper_path)['lidar']
+            except Exception as e:
+                rospy.logwarn(f"Go To: could not load {mapper_path}: {e}")
+        self.__goto_area_px = self.__goto_area_polygon()
+        self.__goto_target_px = None    # target marker on the room frame
 
         # Images and locations
         self.__foma_img_location = None
         self.__foma_world_location = None
+        # localization holds the last position while it misses the robot.
+        self.__foma_world_raw = None
+        self.__foma_seen_t = 0.0
         self.__room_image = None
         self.__room_map = np.ones((self.__room_map_frame_shape[1], self.__room_map_frame_shape[0], 3), dtype=np.uint8) * 255
         self.__fish_state = None
@@ -146,6 +171,7 @@ class MainWindow(QMainWindow):
         self.__bypass_lidar = None
         self.__go_home_enable = None
         self.__go_home_active = False
+        self.__go_to = None
         self.__rotate_quarter_turns = None
         self.__rotate_active = False
         self.__motor_set_speed = None
@@ -209,6 +235,7 @@ class MainWindow(QMainWindow):
         self.__BL_layout.addWidget(self.__room_display_group, 0, 4, 2, 1, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__rotate_container, 0, 5, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__rotate_button, 1, 5, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__go_door_button, 0, 6, alignment=Qt.AlignCenter)
 
         self.__BL_widget = QFrame()
         self.__BL_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
@@ -315,6 +342,15 @@ class MainWindow(QMainWindow):
         self.__go_home_button.clicked.connect(self.__start_go_home)
         self.__go_home_button.setDisabled(True)
 
+        # Go to Door button init. A click on the room image picks any target.
+        self.__go_door_button = QPushButton()
+        self.__go_door_button.setText("Go to Door")
+        self.__go_door_button.setMaximumHeight(50)
+        self.__go_door_button.setToolTip(
+            "Drive to the saved door point. Click the room image for any point.")
+        self.__go_door_button.clicked.connect(self.__on_go_door_click)
+        self.__go_door_button.setDisabled(True)
+
         self.__feed_loading_button = QPushButton()
         self.__feed_loading_button.setText("Load Feeder")
         self.__feed_loading_button.setMaximumHeight(50)
@@ -361,6 +397,7 @@ class MainWindow(QMainWindow):
 
         # Room image init — OpenGL surface; Qt does GPU blit + scale on repaint.
         self.__top_right_image = GLImageWidget()
+        self.__top_right_image.clicked.connect(self.__on_room_image_click)
         
         # Room image label init
         self.__room_image_label = QLabel("Room Camera")
@@ -697,6 +734,9 @@ class MainWindow(QMainWindow):
     def __update_go_home_state(self, active: bool):
         self.__go_home_active = active
         self.__go_home_button.setText("Stop Go Home" if active else "Go Home")
+        self.__go_door_button.setText("Stop" if active else "Go to Door")
+        if not active:
+            self.__goto_target_px = None
 
     # -- Rotation. ROS callbacks hop to the GUI thread via pyqtSignal.
 
@@ -797,6 +837,102 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.logwarn(f"Failed to start GoHome: {e}")
 
+    # -- Go To: a saved point or a click on the room image, confirmed first.
+
+    def __world_to_frame_px(self, x, y):
+        """Normalised floor point -> room frame pixel (int x, y)."""
+        native = self.__room_camera_native_shape
+        frame = self.__room_camera_frame_shape
+        u, v = room_mapping.unmap_point(self.__goto_mapper,
+                                        x * self.__room_floor_map_shape[1],
+                                        y * self.__room_floor_map_shape[0])
+        return (int(round(u * frame[1] / native[1])),
+                int(round(v * frame[0] / native[0])))
+
+    def __goto_area_polygon(self):
+        """Outline of where the robot centre may go, in room frame pixels.
+        Straight on the floor, curved in the fisheye image, hence sampled."""
+        if self.__goto_mapper is None:
+            return None
+        x0, x1, y0, y1 = self.__goto_bounds
+        ts = np.linspace(0.0, 1.0, 20)
+        edge = ([(x0 + (x1 - x0) * t, y0) for t in ts]
+                + [(x1, y0 + (y1 - y0) * t) for t in ts]
+                + [(x1 - (x1 - x0) * t, y1) for t in ts]
+                + [(x0, y1 - (y1 - y0) * t) for t in ts])
+        pts = [self.__world_to_frame_px(x, y) for x, y in edge]
+        return np.array(pts, dtype=np.int32).reshape(-1, 1, 2)
+
+    def __on_room_image_click(self, u, v):
+        if not self.__room_camera_display_rb.isChecked():
+            return                      # the map view has no camera geometry
+        if self.__go_to is None or self.__goto_mapper is None:
+            self.logwarn("Go To not available (service or mapper missing)")
+            return
+        if self.__go_home_active:
+            self.logwarn("Go To: stop the running Go Home / Go To first")
+            return
+        native = self.__room_camera_native_shape
+        px, py = u * native[1], v * native[0]
+        x_mm, y_mm = room_mapping.map_point(self.__goto_mapper, px, py)
+        # Past the lens horizon the fisheye model folds back: a pixel that
+        # does not map back to itself is not on the floor.
+        bx, by = room_mapping.unmap_point(self.__goto_mapper, x_mm, y_mm)
+        if math.hypot(bx - px, by - py) > 2.0:
+            self.logwarn("Go To: that point is not on the floor")
+            return
+        self.__start_go_to(x_mm / self.__room_floor_map_shape[1],
+                           y_mm / self.__room_floor_map_shape[0])
+
+    def __on_go_door_click(self):
+        """Toggle: drive to the saved door point, or stop the running routine."""
+        if self.__go_home_active:
+            self.__start_go_home()      # running -> this stops it
+            return
+        if 'door' not in self.__goto_targets:
+            self.logwarn("Go To: no 'door' in GOTO_TARGETS")
+            return
+        x, y = (float(c) for c in self.__goto_targets['door'])
+        self.__start_go_to(x, y, name='door')
+
+    def __start_go_to(self, x, y, name=''):
+        """Show the clamped target on the room image, ask, then drive."""
+        if self.__go_to is None:
+            self.logwarn("Go To service not available")
+            return
+        cx, cy, moved = room_mapping.clamp_target(x, y, self.__goto_bounds)
+        if self.__goto_mapper is not None:
+            self.__goto_target_px = self.__world_to_frame_px(cx, cy)
+        floor = self.__room_floor_map_shape
+        where = f"({cx * floor[1] / 1000:.2f}, {cy * floor[0] / 1000:.2f}) m"
+        text = f"Drive to the {name} at {where}?" if name else f"Drive to {where}?"
+        if moved:
+            text += "\n\nMoved inside the allowed area, away from the walls."
+        answer = QMessageBox.question(self, "Go To", text,
+                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            self.__goto_target_px = None
+            return
+
+        # Take the robot cleanly first, exactly as __start_go_home does.
+        if self.__manual_control_window is not None:
+            self.__motor_control_twist.publish(Twist())
+            if getattr(self, '_MainWindow__velocity_timer', None) is not None:
+                self.__velocity_timer.stop()
+            self.__manual_control_window.close()
+        try:
+            if self.__motor_set_speed is not None:
+                self.__motor_set_speed(1.0)
+            resp = self.__go_to(x, y, name)
+            if not resp.success:
+                self.logwarn(f"Go To refused: {resp.message}")
+                self.__goto_target_px = None
+                return
+            self.__log_event("go_to", f"{name or 'point'} {where}")
+        except Exception as e:
+            self.logwarn(f"Failed to start Go To: {e}")
+            self.__goto_target_px = None
+
     def __init_feeding_load_window(self):
         rospy.wait_for_service('fish_feeder/feed')
         self.__feeding_load_window = QDialog(self)
@@ -880,6 +1016,7 @@ class MainWindow(QMainWindow):
                 ('__motor_set_mode',         'motor_control/set_mode',  String),
                 ('__bypass_lidar',            'motor_control/bypass_lidar', SetBool),
                 ('__go_home_enable', 'go_home/enable', SetBool),
+                ('__go_to', 'go_home/go_to', GoTo),
                 ('__rotate_quarter_turns', 'rotate/quarter_turns', Float),
             ]
             while not rospy.is_shutdown():
@@ -1049,6 +1186,10 @@ class MainWindow(QMainWindow):
             self.logwarn(f"Unexpected error in update_room_image: {e}")
 
     def __update_foma_location(self, location: FomaLocation):
+        raw = (location.world.x, location.world.y)
+        if raw != self.__foma_world_raw:
+            self.__foma_world_raw = raw
+            self.__foma_seen_t = time.monotonic()
         # Convert normalized locations (0..1) to pixel coordinates
         self.__foma_img_location = Vector3(
             location.image.x * self.__room_camera_frame_shape[1],
@@ -1234,7 +1375,14 @@ class MainWindow(QMainWindow):
             if self.__foma_img_location is not None:
                 cx = int(self.__foma_img_location.x)
                 cy = int(self.__foma_img_location.y)
-                cv2.circle(frame, (cx, cy), 5, (0, 255, 0), -1)
+                # Gray = held position: the robot is not detected right now.
+                fresh = time.monotonic() - self.__foma_seen_t < 1.0
+                cv2.circle(frame, (cx, cy), 5, (0, 255, 0) if fresh else (150, 150, 150), -1)
+            if self.__goto_target_px is not None and self.__goto_area_px is not None:
+                cv2.polylines(frame, [self.__goto_area_px], True, (255, 200, 0), 1, cv2.LINE_AA)
+            if self.__goto_target_px is not None:
+                cv2.drawMarker(frame, self.__goto_target_px, (255, 0, 255),
+                               cv2.MARKER_CROSS, 24, 2, cv2.LINE_AA)
             self.__top_right_image.setFrame(frame)
         elif self.__map_display_rb.isChecked() and self.__room_map is not None:
             src = self.__room_map.copy()
@@ -1325,6 +1473,17 @@ class MainWindow(QMainWindow):
             # If the node died mid-run the latched topic never updates, so the
             # toggle would read "Stop" forever.
             self.__update_go_home_state(False)
+
+        # Store the Go To service proxy when available.
+        go_to_proxy = status.get('__go_to')
+        if self.__go_to is None and go_to_proxy is not None:
+            self.loginfo("Go To service available")
+            self.__go_to = go_to_proxy
+            self.__go_door_button.setDisabled(False)
+        elif self.__go_to is not None and go_to_proxy is None:
+            self.logerr("Go To service unavailable")
+            self.__go_to = None
+            self.__go_door_button.setDisabled(True)
 
         # Store the Rotate service proxy when available.
         rotate_proxy = status.get('__rotate_quarter_turns')
