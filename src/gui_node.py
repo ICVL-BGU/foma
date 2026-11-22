@@ -33,6 +33,8 @@ from PyQt5.QtWidgets import (
     QGroupBox,
     QRadioButton,
     QInputDialog,
+    QPlainTextEdit,
+    QHBoxLayout,
     )
 
 # ROS imports
@@ -161,6 +163,8 @@ class MainWindow(QMainWindow):
         self.__ongoing_trial = False
         self.__session_folder = None
         self.__current_trial = 0
+        self.__trial_folder = None
+        self.__last_trial_duration = ""
 
         # Trial timer
         self.__trial_cap_default = 600  # default trial cap = 10 minutes
@@ -237,6 +241,7 @@ class MainWindow(QMainWindow):
         self.__BR_layout.addWidget(self.__pause_button, 0, 1, alignment=Qt.AlignCenter)
         self.__BR_layout.addWidget(self.__reset_button, 1, 0, alignment=Qt.AlignCenter)
         self.__BR_layout.addWidget(self.__close_button, 1, 1, alignment=Qt.AlignCenter)
+        self.__BR_layout.addWidget(self.__notes_button, 2, 0, 1, 2, alignment=Qt.AlignCenter)
 
         self.__BR_widget = QFrame()
         self.__BR_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
@@ -462,6 +467,13 @@ class MainWindow(QMainWindow):
         self.__close_button.setDisabled(False)
         self.__close_button.setMaximumHeight(50)
         self.__close_button.clicked.connect(self.__on_close_click)
+
+        # Notes button init: add or edit the note of the last finished trial
+        self.__notes_button = QPushButton()
+        self.__notes_button.setText("Trial Notes")
+        self.__notes_button.setDisabled(True)
+        self.__notes_button.setMaximumHeight(50)
+        self.__notes_button.clicked.connect(self.__open_trial_notes)
 
     def __init_subscriptions_and_services(self):
         rospy.Subscriber('fish_camera/image', CompressedImage, self.__update_fish_image, queue_size=1, tcp_nodelay=True)
@@ -1502,6 +1514,7 @@ class MainWindow(QMainWindow):
         self.__pause_button.setDisabled(False)
         self.__reset_button.setDisabled(False)
         self.__close_button.setDisabled(True)
+        self.__notes_button.setDisabled(True)
 
         if self.__go_home_enable is not None:
             try:
@@ -1538,6 +1551,7 @@ class MainWindow(QMainWindow):
         self.__pause_button.setDisabled(False)
         self.__reset_button.setDisabled(False)
         self.__close_button.setDisabled(True)
+        self.__notes_button.setDisabled(True)
 
         self.__ongoing_trial = True
         self.__control_mode_pub.publish(StringMsg("trial"))
@@ -1582,6 +1596,7 @@ class MainWindow(QMainWindow):
 
         # Stop and reset trial timer
         self.__trial_timer.stop()
+        self.__last_trial_duration = self.__trial_timer_value_label.text()
         self.__trial_start_time = None
         self.__trial_cap_reached = False
         self.__trial_cap_seconds = self.__trial_cap_default
@@ -1617,6 +1632,87 @@ class MainWindow(QMainWindow):
                 self.__go_home_enable(False)
             except Exception as e:
                 self.logwarn(f"Failed disabling go_home: {e}")
+
+        # Optional free-text note, saved into this trial's folder
+        self.__notes_button.setDisabled(False)
+        self.__open_trial_notes()
+
+    def __open_trial_notes(self):
+        """Show a dialog for an optional note on the last finished trial.
+        Save writes notes.txt into the trial folder and updates the row in
+        session_notes.csv. Skip (or Esc / closing the window) writes nothing."""
+        if self.__trial_folder is None or not os.path.isdir(self.__trial_folder):
+            return
+        notes_path = os.path.join(self.__trial_folder, "notes.txt")
+
+        # Pre-fill with the existing note so it can be edited later
+        existing = ""
+        if os.path.isfile(notes_path):
+            try:
+                with open(notes_path, 'r') as f:
+                    existing = f.read().split("---\n", 1)[-1].rstrip("\n")
+            except Exception as e:
+                self.logwarn(f"Could not read {notes_path}: {e}")
+
+        trial_name = os.path.basename(self.__trial_folder)
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"{trial_name} notes")
+        dialog.resize(500, 300)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel(f"Notes for {trial_name} (optional):"))
+        text_edit = QPlainTextEdit()
+        text_edit.setPlainText(existing)
+        layout.addWidget(text_edit)
+        buttons = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        skip_btn = QPushButton("Skip")
+        save_btn.clicked.connect(dialog.accept)
+        skip_btn.clicked.connect(dialog.reject)
+        buttons.addWidget(save_btn)
+        buttons.addWidget(skip_btn)
+        layout.addLayout(buttons)
+        text_edit.setFocus()
+
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        note = text_edit.toPlainText().strip()
+        if not note:
+            return
+
+        written = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        subject_id = self.__subject_id_value_label.text()
+        try:
+            with open(notes_path, 'w') as f:
+                f.write(f"Trial: {trial_name}\n"
+                        f"Subject ID: {subject_id}\n"
+                        f"Duration: {self.__last_trial_duration}\n"
+                        f"Written: {written}\n"
+                        f"---\n{note}\n")
+            rospy.loginfo(f"Saved trial notes: {notes_path}")
+        except Exception as e:
+            QMessageBox.warning(self, "Notes", f"Could not save notes:\n{e}")
+            return
+
+        # Session-level table, one row per trial (an edit replaces the row)
+        csv_path = os.path.join(os.path.dirname(self.__trial_folder), "session_notes.csv")
+        header = ["trial", "subject_id", "duration", "written", "note"]
+        rows = []
+        if os.path.isfile(csv_path):
+            try:
+                with open(csv_path, 'r', newline='') as f:
+                    rows = [r for r in csv.DictReader(f) if r.get("trial") != trial_name]
+            except Exception as e:
+                self.logwarn(f"Could not read {csv_path}: {e}")
+        rows.append({"trial": trial_name, "subject_id": subject_id,
+                     "duration": self.__last_trial_duration,
+                     "written": written, "note": note})
+        try:
+            with open(csv_path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=header)
+                writer.writeheader()
+                writer.writerows(rows)
+        except Exception as e:
+            QMessageBox.warning(self, "Notes", f"Could not update session_notes.csv:\n{e}")
 
     def __spawn_sidebyside_batch(self):
         """Spawn one detached batch worker at GUI close that builds side-by-side
