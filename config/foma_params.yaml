@@ -223,7 +223,7 @@ go_home_node:
   visualize: true
   viz_fps: 20
   viz_size: 720
-  viz_range_m: 0.0   # 0 = auto-fit to the scan
+  viz_range_m: 0.0   # half the view in metres, fixed. 0 = fit the room once, when first seen
 
 
 # ---------- Writer node params (loaded into node-private namespace) ----------

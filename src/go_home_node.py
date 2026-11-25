@@ -339,10 +339,13 @@ class GoHomeNode(AbstractNode):
         self._viz_on = bool(g('~visualize', self.VIZ_ENABLED))
         self._viz_size = int(g('~viz_size', self.VIZ_SIZE))
         self._viz_fixed_range = float(g('~viz_range_m', self.VIZ_RANGE_M))
+        # Text band on top, the room in the square below it.
+        self._viz_band = 200
         self._viz_cx = self._viz_size // 2
-        self._viz_cy = self._viz_size // 2
-        self._viz_view = self._viz_fixed_range if self._viz_fixed_range > 0 else 3.0
-        self._viz_ppm = 1.0
+        self._viz_cy = self._viz_band + self._viz_size // 2
+        self._viz_ppm = None            # fixed once the room is first seen
+        self._viz_room = None           # (width, height) m, averaged slowly
+        self._viz_side = {}             # latest fitted wall distances by screen side
         self._viz_last = 0.0
         self._viz_frame = None
 
@@ -1521,176 +1524,197 @@ class GoHomeNode(AbstractNode):
 
             return PhaseResult(Status.UNSETTLED, result.error, elapsed())
 
-    #  Top-down view, robot centred. Drawn on the scan thread; run() displays it.
+    #  Top-down view of the room, fixed on screen: the robot moves and turns
+    #  inside it.  Drawn on the scan thread; run() displays it.
+    #  Room frame: u = screen right, w = screen up, metres from the room
+    #  centre.  "Up" is the room axis that faced the robot's front when the
+    #  heading tracker started, so the picture keeps still through turns.
 
-    def _viz_px(self, forward_m, left_m):
-        return (int(round(self._viz_cx - left_m * self._viz_ppm)),
-                int(round(self._viz_cy - forward_m * self._viz_ppm)))
+    def _viz_to_px(self, u, w):
+        return (int(round(self._viz_cx + u * self._viz_ppm)),
+                int(round(self._viz_cy - w * self._viz_ppm)))
 
-    def _viz_polar_px(self, angle_deg, dist_m, lidar_frame=True):
-        # The view is drawn in the robot-body frame: a lidar bearing is
-        # turned by the mounting offset, so a square robot shows a square room.
-        if lidar_frame:
-            angle_deg -= self.heading_offset
-        a = math.radians(angle_deg)
-        return self._viz_px(dist_m * math.cos(a), dist_m * math.sin(a))
+    @staticmethod
+    def _viz_dir(alpha_deg):
+        """Room unit vector alpha degrees CCW from screen up."""
+        a = math.radians(alpha_deg)
+        return np.array([-math.sin(a), math.cos(a)])
 
-    def _viz_fit(self, valid_ranges):
-        """Keep the whole room in frame without the scale twitching per frame."""
-        if self._viz_fixed_range > 0:
-            self._viz_view = self._viz_fixed_range
-        elif valid_ranges.size:
-            target = float(np.percentile(valid_ranges, 98)) * 1.15
-            target = min(max(target, 1.0), self.RANGE_MAX_M)
-            self._viz_view = 0.85 * self._viz_view + 0.15 * target
-        # Margin so the HUD text never lands on top of the far wall.
-        self._viz_ppm = (self._viz_size * 0.44) / max(self._viz_view, 0.1)
+    def _viz_pose(self, ranges_m):
+        """(theta, (u, w) or None): theta = room up in the lidar frame (deg,
+        CCW from the beam at 0), position from the fitted walls."""
+        coarse, _, dists = geom.wall_fit(ranges_m, r_min=self.RANGE_MIN_M,
+                                         r_max=self.RANGE_MAX_M)
+        if coarse is None:
+            return None, None
+        ref = self._yaw if self._yaw is not None else coarse
+        n = int(round((ref - coarse) / 90.0))
+        theta = coarse + 90.0 * n
+        # Wall k's normal is at coarse + 90k: on screen at 90 (k - n) from up.
+        side = {}                       # 0 up, 1 left, 2 down, 3 right
+        for k, d in enumerate(dists):
+            if d is not None:
+                side[(k - n) % 4] = d
+        self._viz_side = side
+        self._viz_update_room(side)
+        if self._viz_room is None:
+            return theta, None
+        half_w, half_h = self._viz_room[0] / 2.0, self._viz_room[1] / 2.0
+        us = ([-half_w + side[1]] if 1 in side else []) + \
+             ([half_w - side[3]] if 3 in side else [])
+        ws = ([half_h - side[0]] if 0 in side else []) + \
+             ([-half_h + side[2]] if 2 in side else [])
+        if not us or not ws:
+            return theta, None
+        return theta, (float(np.mean(us)), float(np.mean(ws)))
 
-    def _viz_draw_grid(self, img):
-        step = 0.5 if self._viz_view <= 3.0 else 1.0
-        for i in range(1, int(self._viz_view / step) + 1):
-            cv2.circle(img, (self._viz_cx, self._viz_cy),
-                       int(round(i * step * self._viz_ppm)), self.C_GRID, 1)
-        cv2.line(img, (0, self._viz_cy), (self._viz_size, self._viz_cy),
-                 self.C_GRID, 1)
-        cv2.line(img, (self._viz_cx, 0), (self._viz_cx, self._viz_size),
-                 self.C_GRID, 1)
-        cv2.putText(img, "ring = %.1f m" % step, (10, self._viz_size - 12),
-                    self.FONT, 0.42, self.C_TEXT_DIM, 1, cv2.LINE_AA)
+    def _viz_update_room(self, side):
+        """Room size from opposite walls, averaged slowly (the room does not
+        change), and the scale fixed once from the first estimate."""
+        size = list(self._viz_room) if self._viz_room is not None else [None, None]
+        for i, (a, b) in enumerate(((1, 3), (0, 2))):
+            if a in side and b in side:
+                m = side[a] + side[b]
+                size[i] = m if size[i] is None else 0.98 * size[i] + 0.02 * m
+        if None in size:
+            return
+        self._viz_room = tuple(size)
+        if self._viz_ppm is None:
+            extent = (self._viz_fixed_range if self._viz_fixed_range > 0
+                      else max(size) / 2.0 + 0.1)
+            self._viz_ppm = (self._viz_size * 0.47) / extent
 
-    def _viz_draw_points(self, img, ranges_m):
-        """Every valid LIDAR return, placed relative to the robot."""
+    def _viz_draw_room(self, img):
+        half_w, half_h = self._viz_room[0] / 2.0, self._viz_room[1] / 2.0
+        for g in np.arange(-math.floor(half_w), half_w, 1.0):
+            cv2.line(img, self._viz_to_px(g, -half_h), self._viz_to_px(g, half_h),
+                     self.C_GRID, 1)
+        for g in np.arange(-math.floor(half_h), half_h, 1.0):
+            cv2.line(img, self._viz_to_px(-half_w, g), self._viz_to_px(half_w, g),
+                     self.C_GRID, 1)
+        cv2.rectangle(img, self._viz_to_px(-half_w, half_h),
+                      self._viz_to_px(half_w, -half_h), self.C_TEXT_DIM, 1)
+        cv2.drawMarker(img, self._viz_to_px(0.0, 0.0), self.C_CENTRE,
+                       cv2.MARKER_CROSS, 18, 2, cv2.LINE_AA)
+        cv2.putText(img, "room %.2f x %.2f m   grid 1 m" % self._viz_room,
+                    (10, self._viz_band - 14), self.FONT, 0.42,
+                    self.C_TEXT_DIM, 1, cv2.LINE_AA)
+
+    def _viz_draw_points(self, img, ranges_m, theta, pos):
         idx = np.flatnonzero(np.isfinite(ranges_m)
                              & (ranges_m > self.RANGE_MIN_M)
                              & (ranges_m < self.RANGE_MAX_M))
         if idx.size == 0:
             return
-        a = np.radians(idx.astype(np.float64) - self.heading_offset)
+        a = np.radians(idx.astype(np.float64) - theta)
         r = ranges_m[idx]
-        xs = np.rint(self._viz_cx - r * np.sin(a) * self._viz_ppm).astype(int)
-        ys = np.rint(self._viz_cy - r * np.cos(a) * self._viz_ppm).astype(int)
-        inside = ((xs >= 0) & (xs < self._viz_size)
-                  & (ys >= 0) & (ys < self._viz_size))
+        xs = np.rint(self._viz_cx + (pos[0] - r * np.sin(a)) * self._viz_ppm).astype(int)
+        ys = np.rint(self._viz_cy - (pos[1] + r * np.cos(a)) * self._viz_ppm).astype(int)
+        inside = ((xs >= 0) & (xs < img.shape[1])
+                  & (ys >= self._viz_band) & (ys < img.shape[0]))
         for x, y in zip(xs[inside], ys[inside]):
             cv2.circle(img, (int(x), int(y)), 2, self.C_POINTS, -1, cv2.LINE_AA)
 
-    def _viz_draw_room(self, img, walls):
-        """Rectangle implied by the four cardinal wall distances."""
-        d_fwd, d_bwd, d_left, d_right = walls
-        if None in walls:
-            cv2.putText(img, "room model: incomplete scan",
-                        (10, self._viz_size - 32), self.FONT, 0.5,
-                        self.C_CENTRE, 1, cv2.LINE_AA)
-            return
-        cv2.rectangle(img, self._viz_px(d_fwd, d_left),
-                      self._viz_px(-d_bwd, -d_right), self.C_ROOM, 2)
-
-        for angle, dist in ((0, d_fwd), (90, d_left),
-                            (180, d_bwd), (270, d_right)):
-            # Along the body axes, like the rest of the (calibrated) view; the
-            # raw beams are turned by the lidar mounting offset.
-            end = self._viz_polar_px(angle, dist, lidar_frame=False)
-            cv2.line(img, (self._viz_cx, self._viz_cy), end,
-                     self.C_CARDINAL, 1, cv2.LINE_AA)
+    def _viz_draw_model(self, img, theta, pos, walls):
+        """What the robot measures right now, drawn from where it is: each
+        fitted wall as a line (it lies on the room outline when the model
+        agrees), and the four beams go_home centres on, with their length."""
+        p = np.array(pos)
+        half_w, half_h = self._viz_room[0] / 2.0, self._viz_room[1] / 2.0
+        for j, d in self._viz_side.items():
+            n = self._viz_dir(90.0 * j)             # the wall's normal on screen
+            t = np.array([-n[1], n[0]])
+            c = p + n * d
+            span = half_w if j in (0, 2) else half_h
+            cv2.line(img, self._viz_to_px(*(c - t * span)),
+                     self._viz_to_px(*(c + t * span)), self.C_PROBE, 2, cv2.LINE_AA)
+        # Along the lidar beams they are sampled on (0/180/90/270), which sit
+        # the mounting offset off the body axes.
+        for d, beam in zip(walls, (0.0, 180.0, 90.0, 270.0)):
+            if d is None:
+                continue
+            end = self._viz_to_px(*(p + self._viz_dir(beam - theta) * d))
+            cv2.line(img, self._viz_to_px(*p), end, self.C_CARDINAL, 1, cv2.LINE_AA)
             cv2.circle(img, end, 4, self.C_CARDINAL, -1, cv2.LINE_AA)
-            cv2.putText(img, "%.2f" % dist, (end[0] + 6, end[1] - 6),
+            cv2.putText(img, "%.2f" % d, (end[0] + 6, end[1] - 6),
                         self.FONT, 0.42, self.C_CARDINAL, 1, cv2.LINE_AA)
 
-    def _viz_draw_axes(self, img, m):
-        """The room axes as measured from the walls; square = on the grid."""
-        if not m.ang_valid:
-            return
-        for base in (0.0, 90.0):
-            a = base + m.ang_err
-            # ang_err is already body-relative (offset removed).
-            cv2.line(img, self._viz_polar_px(a, self._viz_view, False),
-                     self._viz_polar_px(a + 180.0, self._viz_view, False),
-                     self.C_PROBE, 1, cv2.LINE_AA)
+    def _viz_body(self, theta):
+        """Body forward and right as room vectors (the mounting offset
+        removed, so a square robot is drawn square)."""
+        fwd = self._viz_dir(self.heading_offset - theta)
+        return fwd, np.array([fwd[1], -fwd[0]])
 
-    def _viz_draw_robot(self, img):
-        half = int(round(self.ROBOT_SIZE_M / 2.0 * self._viz_ppm))
-        cv2.rectangle(img, (self._viz_cx - half, self._viz_cy - half),
-                      (self._viz_cx + half, self._viz_cy + half),
-                      self.C_ROBOT, 2)
-        cv2.arrowedLine(img, (self._viz_cx, self._viz_cy),
-                        (self._viz_cx, self._viz_cy - int(half * 2.2)),
+    def _viz_draw_robot(self, img, theta, pos):
+        fwd, right = self._viz_body(theta)
+        p, half = np.array(pos), self.ROBOT_SIZE_M / 2.0
+        corners = [p + half * (a * right + b * fwd)
+                   for a, b in ((-1, 1), (1, 1), (1, -1), (-1, -1))]
+        cv2.polylines(img, [np.array([self._viz_to_px(*c) for c in corners])],
+                      True, self.C_ROBOT, 2, cv2.LINE_AA)
+        cv2.arrowedLine(img, self._viz_to_px(*p),
+                        self._viz_to_px(*(p + fwd * half * 2.2)),
                         self.C_HEADING, 2, cv2.LINE_AA, tipLength=0.3)
-
-    def _viz_draw_centre(self, img, err_x, err_y):
-        # err_x is rightward, err_y forward — the room centre relative to us.
-        target = self._viz_px(err_y, -err_x)
-        cv2.drawMarker(img, target, self.C_CENTRE, cv2.MARKER_CROSS, 18, 2,
-                       cv2.LINE_AA)
-        cv2.circle(img, target, 7, self.C_CENTRE, 1, cv2.LINE_AA)
-        cv2.arrowedLine(img, (self._viz_cx, self._viz_cy), target,
-                        self.C_CENTRE, 1, cv2.LINE_AA, tipLength=0.25)
 
     def _on_drive_speed(self, msg):
         # motor_control publishes linear.x = right (v), linear.y = forward (h).
         self._drive_cmd = (msg.twist.linear.y, msg.twist.linear.x)
 
-    def _viz_track_motion(self, m):
-        """Room position from the wall distances (robot axes = room axes
-        while square), kept for TRAIL_S.  -> (velocity (fwd, right) m/s or
-        None, history)."""
+    def _viz_track_motion(self, pos):
+        """Room positions for TRAIL_S -> velocity (u, w) m/s or None."""
         now = time.monotonic()
-        if None not in m.walls:
-            d_fwd, d_bwd, d_left, d_right = m.walls
-            self._motion_hist.append(((now), (d_bwd - d_fwd) / 2.0,
-                                      (d_left - d_right) / 2.0))
+        if pos is not None:
+            self._motion_hist.append((now, pos[0], pos[1]))
         while self._motion_hist and now - self._motion_hist[0][0] > self.TRAIL_S:
             self._motion_hist.popleft()
         if len(self._motion_hist) < 2:
             return None
-        t1, f1, r1 = self._motion_hist[-1]
+        t1, u1, w1 = self._motion_hist[-1]
         old = [p for p in self._motion_hist if t1 - p[0] >= self.MOTION_WIN_S]
         if not old:
             return None
-        t0, f0, r0 = old[-1]
-        return (f1 - f0) / (t1 - t0), (r1 - r0) / (t1 - t0)
+        t0, u0, w0 = old[-1]
+        return np.array([(u1 - u0) / (t1 - t0), (w1 - w0) / (t1 - t0)])
 
-    def _viz_arrow(self, img, fwd, right, colour, length_m):
-        mag = math.hypot(fwd, right)
+    def _viz_arrow(self, img, pos, vec, colour, length_m):
+        mag = float(np.hypot(*vec))
         if mag < 1e-9:
             return
-        tip = self._viz_px(fwd / mag * length_m, -right / mag * length_m)
-        cv2.arrowedLine(img, (self._viz_cx, self._viz_cy), tip, colour, 3,
+        p = np.array(pos)
+        cv2.arrowedLine(img, self._viz_to_px(*p),
+                        self._viz_to_px(*(p + vec / mag * length_m)), colour, 3,
                         cv2.LINE_AA, tipLength=0.2)
 
-    def _viz_draw_motion(self, img, vel):
-        """Trail of the last TRAIL_S, commanded vs measured direction.
-        Returns (cmd_deg, motion_deg) with 0 = forward, + = right."""
-        if self._motion_hist:
-            _, fn, rn = self._motion_hist[-1]
-            for _, f, r in self._motion_hist:
-                cv2.circle(img, self._viz_px(f - fn, -(r - rn)), 2,
-                           self.C_TRAIL, -1, cv2.LINE_AA)
-        length = 0.35 * self._viz_view
+    def _viz_draw_motion(self, img, theta, pos, vel):
+        """Trail, commanded vs measured direction.  -> (cmd_deg, motion_deg),
+        both in the body frame: 0 = forward, + = right."""
+        for _, u, w in self._motion_hist:
+            cv2.circle(img, self._viz_to_px(u, w), 2, self.C_TRAIL, -1, cv2.LINE_AA)
+        fwd, right = self._viz_body(theta)
         cf, cr = self._drive_cmd
         cmd_deg = mot_deg = None
         if math.hypot(cf, cr) > 0.02:
             cmd_deg = math.degrees(math.atan2(cr, cf))
-            self._viz_arrow(img, cf, cr, self.C_DRIVE, length)
+            self._viz_arrow(img, pos, cf * fwd + cr * right, self.C_DRIVE, 0.6)
         if vel is not None and math.hypot(*vel) > 0.02:
-            mot_deg = math.degrees(math.atan2(vel[1], vel[0]))
-            self._viz_arrow(img, vel[0], vel[1], self.C_MOTION, length * 0.85)
+            mot_deg = math.degrees(math.atan2(vel @ right, vel @ fwd))
+            self._viz_arrow(img, pos, vel, self.C_MOTION, 0.5)
         return cmd_deg, mot_deg
 
     def _viz_draw_legend(self, img):
         items = (("LIDAR returns", self.C_POINTS),
-                 ("room model", self.C_ROOM),
-                 ("wall probes", self.C_CARDINAL),
-                 ("wall axes", self.C_PROBE),
+                 ("room (averaged)", self.C_TEXT_DIM),
+                 ("walls as fitted now", self.C_PROBE),
+                 ("wall distances", self.C_CARDINAL),
                  ("room centre", self.C_CENTRE),
                  ("drive command", self.C_DRIVE),
                  ("actual motion", self.C_MOTION),
                  ("path (6 s)", self.C_TRAIL))
-        y0 = self._viz_size - 12 - 18 * len(items)
         for i, (label, colour) in enumerate(items):
-            y = y0 + i * 18
-            cv2.line(img, (self._viz_size - 150, y - 4),
-                     (self._viz_size - 132, y - 4), colour, 2)
-            cv2.putText(img, label, (self._viz_size - 126, y), self.FONT,
+            y = 22 + i * 18
+            cv2.line(img, (self._viz_size - 190, y - 4),
+                     (self._viz_size - 172, y - 4), colour, 2)
+            cv2.putText(img, label, (self._viz_size - 166, y), self.FONT,
                         0.42, self.C_TEXT_DIM, 1, cv2.LINE_AA)
 
     def _viz_due(self):
@@ -1704,22 +1728,29 @@ class GoHomeNode(AbstractNode):
             return
         self._viz_last = time.monotonic()
 
-        finite = m.ranges[np.isfinite(m.ranges)
-                          & (m.ranges > self.RANGE_MIN_M)
-                          & (m.ranges < self.RANGE_MAX_M)]
-        self._viz_fit(finite)
-
-        img = np.full((self._viz_size, self._viz_size, 3), self.C_BG,
-                      dtype=np.uint8)
-        self._viz_draw_grid(img)
-        self._viz_draw_axes(img, m)
-        self._viz_draw_points(img, m.ranges)
-        self._viz_draw_room(img, m.walls)
-        if m.ctr_valid:
-            self._viz_draw_centre(img, m.err_x, m.err_y)
-        vel = self._viz_track_motion(m)
-        cmd_deg, mot_deg = self._viz_draw_motion(img, vel)
-        self._viz_draw_robot(img)
+        img = np.full((self._viz_band + self._viz_size, self._viz_size, 3),
+                      self.C_BG, dtype=np.uint8)
+        cv2.line(img, (0, self._viz_band - 1), (self._viz_size, self._viz_band - 1),
+                 self.C_GRID, 1)
+        theta, pos = self._viz_pose(m.ranges)
+        if self._viz_room is not None and self._viz_ppm is not None:
+            self._viz_draw_room(img)
+            if pos is not None:
+                self._viz_draw_points(img, m.ranges, theta, pos)
+                self._viz_draw_model(img, theta, pos, m.walls)
+                vel = self._viz_track_motion(pos)
+                cmd_deg, mot_deg = self._viz_draw_motion(img, theta, pos, vel)
+                self._viz_draw_robot(img, theta, pos)
+            else:
+                vel, cmd_deg, mot_deg = None, None, None
+                cv2.putText(img, "walls not seen: position unknown",
+                            (10, self._viz_cy), self.FONT, 0.5,
+                            self.C_CENTRE, 1, cv2.LINE_AA)
+        else:
+            vel, cmd_deg, mot_deg = None, None, None
+            cv2.putText(img, "waiting for all four walls...",
+                        (10, self._viz_cy), self.FONT, 0.6,
+                        self.C_TEXT, 1, cv2.LINE_AA)
 
         if cmd_deg is not None and mot_deg is not None:
             diff = (mot_deg - cmd_deg + 180.0) % 360.0 - 180.0
