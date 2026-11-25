@@ -76,7 +76,8 @@ motor_control_node:
     deadband_deg: 0.1
     filter_alpha: 0.5       # heading smoothing (1 = none); the fit is precise enough for light smoothing
     min_conf: 0.5           # inlier fraction of wall segments to trust heading
-    runaway_deg: 6.0        # error growing this far while correcting -> hold disables itself
+    runaway_deg: 6.0        # error growing this far while correcting -> hold pauses until the next stop
+    max_trips: 3            # ... and after this many pauses disables itself
   # Lane hold: a straight drive in any direction (axis or explicit diagonal,
   # joystick or fish) stays on the line it started on. Corrects the sideways
   # slip that the heading hold cannot see.
@@ -213,6 +214,11 @@ go_home_node:
   goto_diag_m: 0.15     # per-axis friction floor (a true diagonal) only further than this
   goto_lidar_clamp: true  # also keep the target inside the walls the LIDAR sees. false in a maze
   probe_v: 0.35         # duty of the short move that finds the room axes
+  # Walls: back off before turning in place (the corners need half the diagonal),
+  # and back off and retry a drive that stops making progress.
+  escape_clear_m: 0.46  # LIDAR returns closer than this -> back off first
+  escape_v: 0.45
+  stuck_s: 2.0          # no progress this long while driving -> back off and retry
   # Live top-down window: room model + LIDAR returns.
   visualize: true
   viz_fps: 20

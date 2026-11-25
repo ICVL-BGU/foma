@@ -54,6 +54,7 @@ class Status:
     DRIFT     = 'drift'
     NO_LOC    = 'no_location'
     PROBE     = 'probe_failed'
+    STUCK     = 'stuck'
 
 
 class PhaseResult(namedtuple('PhaseResult', 'status error elapsed')):
@@ -176,10 +177,27 @@ class GoHomeNode(AbstractNode):
     PROBE_V          = 0.35
     PROBE_DIST_M     = 0.12     # stop once the LIDAR saw this much
     PROBE_LOCS       = 7        # camera frames each end of a probe is a median of
+    PROBE_MIN_LOCS   = 3        # ... at least, within PROBE_LOC_WINDOW_S
+    PROBE_LOC_WINDOW_S = 3.0    # the detector drops frames for seconds at a time
     PROBE_MIN_M      = 0.05     # less than this is no reading
     PROBE_TIMEOUT_S  = 3.0
     PROBE_SETTLE_S   = 0.6      # camera + detection lag after the stop
     PROBE_AXIS_TOL_DEG = 30.0   # move further off a room axis than this -> fail
+    #  Axis map kept between runs: the wall heading, unwrapped scan to scan,
+    #  counts the quarter turns made since the map was found.
+    TRACK_GAP_S      = 0.3      # no usable heading this long -> map lost
+    TRACK_MAX_STEP_DEG = 20.0   # heading jump in one scan = a bad fit, skipped
+    #  One camera fix picks the map once the room centre is known: each map
+    #  predicts the camera position from the wall distances.
+    AXES_FIT_M       = 0.20     # best map within this of the camera
+    AXES_MARGIN_M    = 0.25     # ... and the runner-up this much worse
+    #  Walls: turning in place needs the corners clear, and a drive that
+    #  stops making progress is backed off the nearest wall and retried.
+    ESCAPE_CLEAR_M   = 0.46     # half the robot diagonal (0.41) + 5 cm
+    ESCAPE_V         = 0.45
+    ESCAPE_TIMEOUT_S = 4.0
+    STUCK_S          = 2.0      # residual not improved by STUCK_PROGRESS_M
+    STUCK_PROGRESS_M = 0.02
 
     #  Visualisation
     VIZ_ENABLED  = True
@@ -263,6 +281,9 @@ class GoHomeNode(AbstractNode):
         self.goto_diag_m     = float(g('~goto_diag_m', self.GOTO_DIAG_M))
         self.goto_lidar_clamp = bool(g('~goto_lidar_clamp', self.GOTO_LIDAR_CLAMP))
         self.probe_v         = float(g('~probe_v', self.PROBE_V))
+        self.escape_clear    = float(g('~escape_clear_m', self.ESCAPE_CLEAR_M))
+        self.escape_v        = float(g('~escape_v', self.ESCAPE_V))
+        self.stuck_s         = float(g('~stuck_s', self.STUCK_S))
         # Targets and limits are global: the GUI previews the clamped target.
         floor = tuple(g('/ROOM_FLOOR_MAP_SHAPE'))
         self._floor_m = (floor[1] / 1000.0, floor[0] / 1000.0)   # x, y extent
@@ -306,6 +327,12 @@ class GoHomeNode(AbstractNode):
         self._lidar_hist = deque()      # (ros time, LIDAR position) for the lag
         self._fused  = None             # which source GOTO drives on, for the log
         self._wall_clamped = False      # logged once per run
+        # Axis map tracking (runs on every scan, also between routines).
+        self._yaw = None                # unwrapped raw wall heading, deg
+        self._yaw_t = None              # when it was last usable
+        self._axes_ref = None           # body -> room map found at _yaw_ref
+        self._yaw_ref = None
+        self._goto_best = None          # (residual, time) for the stuck check
 
         #  Visualisation state
         self.viz_fps = float(g('~viz_fps', self.VIZ_FPS))
@@ -521,11 +548,12 @@ class GoHomeNode(AbstractNode):
 
     def _on_lidar(self, msg):
         """Sensor sink only — never blocks and never drives the motors."""
+        ranges_m = np.array(msg.ranges, dtype=np.float64) / 1000.0
+        self._track_heading(ranges_m)
         # ~0.5 ms a scan at 100 Hz: only sample when a phase or the overlay needs it.
         if not self._measuring and not self._viz_due():
             return
 
-        ranges_m = np.array(msg.ranges, dtype=np.float64) / 1000.0
         if self._prev_ranges is None or not np.array_equal(ranges_m,
                                                            self._prev_ranges):
             self._fresh_t = time.monotonic()
@@ -535,6 +563,41 @@ class GoHomeNode(AbstractNode):
         if self._axes is not None:
             self._track_lidar(m)
         self._render_viz(m, self._last_cmd, self._elapsed())
+
+    def _track_heading(self, ranges_m):
+        """Unwrap the raw wall heading scan to scan, so the turns made between
+        routines (joystick, quarter turns, fish) keep the axis map known."""
+        now = time.monotonic()
+        if self._yaw_t is not None and now - self._yaw_t > self.TRACK_GAP_S:
+            if self._axes_ref is not None:
+                rospy.logwarn("[GoHome] wall heading lost for %.1f s: the room "
+                              "axes will be found again", now - self._yaw_t)
+            self._yaw = self._yaw_t = self._axes_ref = self._yaw_ref = None
+        heading, conf = geom.wall_heading(ranges_m, r_min=self.RANGE_MIN_M,
+                                          r_max=self.RANGE_MAX_M)
+        if heading is None or conf < self.min_conf:
+            return
+        if self._yaw is None:
+            self._yaw = heading
+        else:
+            step = geom.unwrap_folded_delta(heading - geom.fold_angle(self._yaw))
+            if abs(step) > self.TRACK_MAX_STEP_DEG:
+                return
+            self._yaw += step
+        self._yaw_t = now
+
+    def _tracked_axes(self):
+        """The axis map carried over from an earlier run, turned by the
+        quarter turns since, or None.  Call with the robot square."""
+        if self._axes_ref is None or self._yaw is None:
+            return None
+        # The walls turn against the body: a CCW turn lowers the heading.
+        k = int(round(-(self._yaw - self._yaw_ref) / 90.0))
+        quarter = np.array([[0, -1], [1, 0]], dtype=int)    # body, 90 deg CCW
+        return self._axes_ref @ np.linalg.matrix_power(quarter, k % 4)
+
+    def _keep_axes(self, axes):
+        self._axes_ref, self._yaw_ref = axes, self._yaw
 
     def _collect(self, n, window_s):
         """Up to *n* distinct fresh measurements within *window_s* seconds."""
@@ -862,7 +925,8 @@ class GoHomeNode(AbstractNode):
                 if remaining <= 0:
                     return out_of_time()
 
-                result = self.align_to_axes(timeout=remaining)
+                self.escape_walls()
+                result = self.align_to_axes(timeout=deadline - time.monotonic())
                 if not result.ok:
                     return result
 
@@ -913,6 +977,8 @@ class GoHomeNode(AbstractNode):
         loc = self._median_loc(self.VERIFY_LOCS, 1.0)
         if loc is None:
             return
+        if self._room_centre_m is None:
+            self._room_centre_m = loc       # until a go_to anchor refines it
         rospy.loginfo("[GoHome] room centre in camera coordinates: "
                       "GOTO_ROOM_CENTER: [%.4f, %.4f]",
                       loc[0] / self._floor_m[0], loc[1] / self._floor_m[1])
@@ -1038,8 +1104,9 @@ class GoHomeNode(AbstractNode):
             return None
         return self._loc
 
-    def _median_loc(self, n, window_s):
-        """Median of up to *n* fresh positions within *window_s*, or None."""
+    def _median_loc(self, n, window_s, min_n=1):
+        """Median of up to *n* fresh positions within *window_s*, or None
+        with fewer than *min_n*."""
         out = []
         last_t = None
         end = time.monotonic() + window_s
@@ -1051,7 +1118,7 @@ class GoHomeNode(AbstractNode):
                 last_t = self._loc_t
                 out.append(loc)
             rospy.sleep(0.02)
-        if not out:
+        if len(out) < max(1, min_n):
             return None
         return tuple(float(v) for v in np.median(np.array(out), axis=0))
 
@@ -1068,7 +1135,8 @@ class GoHomeNode(AbstractNode):
         it move along, as a unit (x, y), or None."""
         # The LIDAR measures how far (precise), the camera only which way: a
         # single camera frame can jump by cm when one tag drops out.
-        start = self._median_loc(self.PROBE_LOCS, 1.5)
+        start = self._median_loc(self.PROBE_LOCS, self.PROBE_LOC_WINDOW_S,
+                                 self.PROBE_MIN_LOCS)
         if start is None:
             rospy.logwarn("[GoHome] probe: no camera position")
             return None
@@ -1097,7 +1165,8 @@ class GoHomeNode(AbstractNode):
         if self._cancel.is_set():
             return None
         rospy.sleep(self.PROBE_SETTLE_S)
-        stop = self._median_loc(self.PROBE_LOCS, 1.5)
+        stop = self._median_loc(self.PROBE_LOCS, self.PROBE_LOC_WINDOW_S,
+                                self.PROBE_MIN_LOCS)
         if stop is None:
             rospy.logwarn("[GoHome] probe: lost the camera position")
             return None
@@ -1153,6 +1222,85 @@ class GoHomeNode(AbstractNode):
                           "GOTO_WORLD_DET: %d in foma_params.yaml so go_to "
                           "probes once", self._world_det)
         return axes
+
+    def _axes_from_fix(self, tracked=None):
+        """Axis map from one camera fix at rest, the room centre known: each
+        map puts the LIDAR position (from the centre) somewhere else in the
+        room.  Checks *tracked* if given.  None if the camera has no fix or
+        the robot is too near the centre to tell the maps apart."""
+        m = self._latest
+        pb = self._lidar_pos(m) if m is not None else None
+        if pb is None or self._room_centre_m is None:
+            return tracked
+        loc = self._median_loc(5, 2.0, min_n=2)
+        if loc is None:
+            return tracked
+        centre, cam = np.array(self._room_centre_m), np.array(loc)
+        cands = [r for r in AXIS_MAPS
+                 if self._world_det in (0, int(round(np.linalg.det(r))))]
+        gaps = sorted((float(np.hypot(*(centre + r @ pb - cam))), i)
+                      for i, r in enumerate(cands))
+        (best, i), runner = gaps[0], gaps[1][0]
+        if tracked is not None:
+            gap = float(np.hypot(*(centre + tracked @ pb - cam)))
+            if gap <= self.AXES_FIT_M or runner - best < self.AXES_MARGIN_M:
+                rospy.loginfo("[GoHome] tracked room axes, camera agrees "
+                              "within %.2f m", gap)
+                return tracked
+            rospy.logwarn("[GoHome] tracked room axes off by %.2f m on the "
+                          "camera: replaced", gap)
+        if best > self.AXES_FIT_M or runner - best < self.AXES_MARGIN_M:
+            rospy.loginfo("[GoHome] camera fix cannot pick the room axes "
+                          "(best %.2f m, next %.2f m): probing", best, runner)
+            return tracked
+        rospy.loginfo("[GoHome] room axes from one camera fix (%.2f m, next "
+                      "%.2f m)", best, runner)
+        return cands[i]
+
+    def _near_walls(self, clear):
+        """Robot-frame (right, forward) unit vectors and depths of the
+        returns closer than *clear*, from the latest scan."""
+        m = self._latest
+        if m is None:
+            return None, None
+        r = m.ranges
+        idx = np.flatnonzero(np.isfinite(r) & (r > self.RANGE_MIN_M) & (r < clear))
+        a = np.radians(idx.astype(np.float64) - self.heading_offset)
+        # Beam i: forward cos, left sin -> right = -sin.
+        return np.column_stack((-np.sin(a), np.cos(a))), clear - r[idx]
+
+    def escape_walls(self, clear=None, timeout=None):
+        """Back straight off whatever is within *clear* of the LIDAR, so the
+        corners can turn and no drive starts pinned to a wall."""
+        clear = self.escape_clear if clear is None else clear
+        end = time.monotonic() + (self.ESCAPE_TIMEOUT_S if timeout is None else timeout)
+        rate = rospy.Rate(self.control_hz)
+        started = False
+        while not rospy.is_shutdown() and not self._cancel.is_set():
+            dirs, depth = self._near_walls(clear)
+            if dirs is None or not len(depth):
+                break
+            if not started:
+                started = True
+                rospy.loginfo("[GoHome] %.2f m from a wall: backing off before "
+                              "turning", clear - float(depth.max()))
+            if time.monotonic() > end:
+                rospy.logwarn("[GoHome] could not back off the wall")
+                break
+            away = -(dirs * depth[:, None]).sum(axis=0)
+            mag = float(np.hypot(*away))
+            if mag < 1e-6:
+                break                   # boxed in evenly: nowhere better
+            away /= mag
+            # An axis share under the friction floor would stall that pair.
+            away[np.abs(away) < 0.3] = 0.0
+            away *= self.escape_v / max(np.abs(away).max(), 1e-6)
+            cmd = Twist()
+            cmd.linear.x, cmd.linear.y = float(away[0]), float(away[1])
+            self._publish(cmd)
+            rate.sleep()
+        if started:
+            self._hard_stop()
 
     def _goto_error(self, m):
         """(target - position along the body (right, forward) in metres,
@@ -1228,6 +1376,18 @@ class GoHomeNode(AbstractNode):
             rospy.logwarn("[GoHome] GOTO: no camera position for %.1f s",
                           self.LOC_WAIT_S)
             return Status.NO_LOC
+        # Pinned (motor_control blocks a wheel pair near a wall) or pushing
+        # into something: no progress for STUCK_S.
+        err, _ = self._goto_error(m)
+        if err is not None:
+            res, now = float(math.hypot(*err)), time.monotonic()
+            best = self._goto_best
+            if best is None or res < best[0] - self.STUCK_PROGRESS_M:
+                self._goto_best = (res, now)
+            elif res > self.goto_tol * self.release_scale and now - best[1] > self.stuck_s:
+                rospy.logwarn("[GoHome] GOTO stuck at %.2f m from the target",
+                              res)
+                return Status.STUCK
         return self._guard_center(m)
 
     def _verify_loc(self):
@@ -1254,12 +1414,35 @@ class GoHomeNode(AbstractNode):
         """Translate the robot to a floor point (metres) on the camera
         position.  Needs the axis map from _find_axes in self._axes."""
         self._goto = target
+        self._goto_best = None
         return self._run_phase(
             'GOTO', self.ST_GOTO, self._sense_goto, self._drive_goto,
             self.goto_tol if tol is None else tol,
             self.goto_settle if settle_s is None else settle_s,
             self.timeout_s if timeout is None else timeout,
             guard=self._guard_goto)
+
+    def _acquire_axes(self, aligned):
+        """Axis map and anchor for this run, cheapest source first: carried
+        over from the last run (the camera only checks it), one camera fix,
+        then probe moves.  The LIDAR drives either way, the camera is only
+        needed while no room centre is known."""
+        started = time.monotonic()
+        axes = self._axes_from_fix(self._tracked_axes())
+        if axes is None:
+            axes = self._find_axes()
+        if axes is None:
+            status = Status.CANCELLED if self._cancel.is_set() else Status.PROBE
+            return PhaseResult(status, aligned.error,
+                               aligned.elapsed + time.monotonic() - started)
+        self._axes = axes
+        self._keep_axes(axes)
+        if self._room_centre_m is not None:
+            self._anchor_fixed()
+        elif self._anchor():
+            # A constant of the room: later runs need no camera frames.
+            self._room_centre_m = tuple(float(v) for v in self._axes @ self._off)
+        return aligned
 
     def go_to(self, x, y, timeout=None, passes=None):
         """GOTO: square up, find the room axes, drive to (x, y), square up
@@ -1275,9 +1458,6 @@ class GoHomeNode(AbstractNode):
             return time.monotonic() - started
 
         with self._run_scope():
-            if self._median_loc(1, self.LOC_WAIT_S) is None:
-                rospy.logwarn("[GoHome] go_to: no camera position")
-                return PhaseResult(Status.NO_LOC, result.error, elapsed())
             self._reset_speed()
             self._axes = None
             self._off = None
@@ -1289,28 +1469,23 @@ class GoHomeNode(AbstractNode):
             for attempt in range(1, passes + 1):
                 if deadline - time.monotonic() <= 0:
                     return PhaseResult(Status.TIMEOUT, result.error, elapsed())
+                self.escape_walls()
                 result = self.align_to_axes(timeout=deadline - time.monotonic())
                 if not result.ok:
                     return result
 
                 # Once per run: a drift re-align returns to the same axis.
                 if self._axes is None:
-                    self._axes = self._find_axes()
-                    if self._axes is None:
-                        status = (Status.CANCELLED if self._cancel.is_set()
-                                  else Status.PROBE)
-                        return PhaseResult(status, result.error, elapsed())
-                    if self._room_centre_m is not None:
-                        self._anchor_fixed()
-                    else:
-                        self._anchor()
+                    result = self._acquire_axes(result)
+                    if not result.ok:
+                        return result
 
                 if deadline - time.monotonic() <= 0:
                     return PhaseResult(Status.TIMEOUT, result.error, elapsed())
                 result = self.drive_to_point(   # a clamped target stays
                     self._goto, timeout=deadline - time.monotonic())
-                if result.status == Status.DRIFT:
-                    continue
+                if result.status in (Status.DRIFT, Status.STUCK):
+                    continue                    # back off, square up, again
                 if not result.ok:
                     return result
 

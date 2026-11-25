@@ -39,9 +39,11 @@
     <node pkg="foma" type="joystick_node.py" name="joystick_node" output="screen"/>
     
     <node pkg="joy" type="joy_node" name="joy_node" output="screen">
-        <!-- by-id, not jsN: jsN follows USB enumeration order and has been
-             swapped with the keyboard's media keys -->
-        <param name="dev" value="/dev/input/by-id/usb-_GAME_FOR_WINDOWS_AE931A2B0000-joystick"/>
+        <!-- The USB port, not jsN (jsN follows enumeration order and has been
+             swapped with the keyboard's media keys) and not by-id: the pad
+             re-enumerates under two names (GAME_FOR_WINDOWS / Speedlink RAIT
+             wireless, serial AE931A2B0000). Keep the dongle in this port. -->
+        <param name="dev" value="/dev/input/by-path/pci-0000:00:14.0-usb-0:6:1.0-joystick"/>
         <param name="deadzone" value="0.05"/>
         <param name="autorepeat_rate" value="20.0"/>
     </node> 

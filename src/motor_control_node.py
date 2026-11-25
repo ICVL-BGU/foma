@@ -15,6 +15,7 @@ import numpy as np
 from std_srvs.srv import SetBool, SetBoolRequest, SetBoolResponse
 from foma.srv import Float, FloatRequest, FloatResponse, String
 import math
+import traceback
 
 class MotorControlNode(AbstractNode):
     def __init__(self):
@@ -99,6 +100,10 @@ class MotorControlNode(AbstractNode):
             sign=1 if int(g('/ALIGN_SIGN', 1)) >= 0 else -1))
         self.__hold_engaged = False
         self.__hold_last_t = None
+        # A trip (wheel slip, a bad wall fit) re-arms at the next stop; only
+        # repeated trips mean the sign is really wrong.
+        self.__hold_trips = 0
+        self.__hold_max_trips = int(hh('max_trips', 3))
 
         # Lane hold: driving along a room axis, keep the side-wall offset it
         # started with, so sideways wheel slip cannot add up to a diagonal.
@@ -122,40 +127,53 @@ class MotorControlNode(AbstractNode):
     def run(self):
         rate = rospy.Rate(self.__rate_hz)  # 10 Hz
         while not rospy.is_shutdown():
-            now = rospy.Time.now()
-            dt  = (now - self.__last_cmd_time).to_sec()
-
-            if dt > self.__fresh_threshold:
-                self.__desired_h = 0.0
-                self.__desired_v = 0.0
-                self.__desired_rotate = 0.0
-
-            # command expired → ramp back to zero
-            self.__current_h      = self.__ramp(self.__current_h,      self.__desired_h)
-            self.__current_v      = self.__ramp(self.__current_v,      self.__desired_v)
-            self.__current_rotate = self.__ramp(self.__current_rotate, self.__desired_rotate)
-
-            if abs(self.__current_rotate) > 1e-6:
-                self.__release_hold()       # an explicit turn always wins
-                self.__rotate_motor(self.__current_rotate)
-            else:
-                self.__current_h, self.__current_v = self.__check_blocking(self.__current_h, self.__current_v)
-                h, v = self.__lane_correction(self.__current_h, self.__current_v)
-                h, v = self.__check_blocking(h, v)
-                corr = self.__heading_correction(h, v)
-                if corr is None:
-                    self.__move_by_components(h, v)
-                else:
-                    self.__move_with_rotation(h, v, corr)
-
-                self.__speed_publisher.publish(
-                    TwistStamped(
-                        twist = Twist(linear = Vector3(self.__current_v * self.__speed, self.__current_h * self.__speed, 0.0),
-                                    angular = Vector3(0.0, 0.0, self.__current_rotate * self.__speed)),
-                        header = Header(stamp = rospy.Time.now())
-                    )
-                )
+            # One bad tick (a race, a NaN, a serial hiccup) must not take the
+            # node down with the motors in whatever state they were left in.
+            try:
+                self.__tick()
+            except Exception:
+                rospy.logerr_throttle(1.0, "Motor control: tick failed, motors "
+                                      "stopped:\n" + traceback.format_exc())
+                try:
+                    self.__stop_motor()
+                except Exception:
+                    pass
             rate.sleep()
+
+    def __tick(self):
+        now = rospy.Time.now()
+        dt  = (now - self.__last_cmd_time).to_sec()
+
+        if dt > self.__fresh_threshold:
+            self.__desired_h = 0.0
+            self.__desired_v = 0.0
+            self.__desired_rotate = 0.0
+
+        # command expired → ramp back to zero
+        self.__current_h      = self.__ramp(self.__current_h,      self.__desired_h)
+        self.__current_v      = self.__ramp(self.__current_v,      self.__desired_v)
+        self.__current_rotate = self.__ramp(self.__current_rotate, self.__desired_rotate)
+
+        if abs(self.__current_rotate) > 1e-6:
+            self.__release_hold()       # an explicit turn always wins
+            self.__rotate_motor(self.__current_rotate)
+        else:
+            self.__current_h, self.__current_v = self.__check_blocking(self.__current_h, self.__current_v)
+            h, v = self.__lane_correction(self.__current_h, self.__current_v)
+            h, v = self.__check_blocking(h, v)
+            corr = self.__heading_correction(h, v)
+            if corr is None:
+                self.__move_by_components(h, v)
+            else:
+                self.__move_with_rotation(h, v, corr)
+
+            self.__speed_publisher.publish(
+                TwistStamped(
+                    twist = Twist(linear = Vector3(self.__current_v * self.__speed, self.__current_h * self.__speed, 0.0),
+                                angular = Vector3(0.0, 0.0, self.__current_rotate * self.__speed)),
+                    header = Header(stamp = rospy.Time.now())
+                )
+            )
 
     def __ramp(self, current, target):
         '''
@@ -178,10 +196,13 @@ class MotorControlNode(AbstractNode):
     def __set_heading_hold(self, request:SetBoolRequest):
         self.__hold_enabled = bool(request.data)
         self.__hold.tripped = False
+        self.__hold_trips = 0
         self.__release_hold()
         return SetBoolResponse(success = True, message = f"Heading hold {'on' if self.__hold_enabled else 'off'}.")
 
     def __release_hold(self):
+        if self.__hold.tripped and self.__hold_trips < self.__hold_max_trips:
+            self.__hold.tripped = False
         if self.__hold_engaged:
             self.__hold.reset()
         self.__hold_engaged = False
@@ -200,10 +221,14 @@ class MotorControlNode(AbstractNode):
         return h, v
 
     def __wall_fit(self):
-        '''One wall-line fit per scan, shared by the heading and lane holds.'''
-        if getattr(self, '_MotorControlNode__fit', None) is None:
-            self.__fit = geom.wall_fit(self.__scans / 1000.0)
-        return self.__fit
+        '''One wall-line fit per scan, shared by the heading and lane holds.
+        The scan callback clears the cache from another thread at any time,
+        so the attribute is read once and the result kept in a local.'''
+        fit = getattr(self, '_MotorControlNode__fit', None)
+        if fit is None:
+            fit = geom.wall_fit(self.__scans / 1000.0)
+            self.__fit = fit
+        return fit
 
     def __lane_position(self):
         '''(forward, right) position in the room, metres, from the
@@ -263,9 +288,11 @@ class MotorControlNode(AbstractNode):
             direction folded to [-45, 45), so the target is always the
             nearest room axis.
         '''
-        if not self.__hold_enabled or self.__hold.tripped or self.__scans is None \
+        if not self.__hold_enabled or self.__scans is None \
                 or math.hypot(h_component, v_component) < 0.05:
-            self.__release_hold()
+            self.__release_hold()       # a stop re-arms a tripped hold
+            return None
+        if self.__hold.tripped:
             return None
 
         now = rospy.get_time()
@@ -280,9 +307,15 @@ class MotorControlNode(AbstractNode):
             heading = None
         corr = self.__hold.update(heading, dt, now)
         if self.__hold.tripped:
-            self.logwarn("Heading hold disabled: error kept growing while "
-                         "correcting (ALIGN_SIGN wrong?). Re-enable with "
-                         "motor_control/heading_hold.")
+            self.__hold_trips += 1
+            if self.__hold_trips < self.__hold_max_trips:
+                self.logwarn(f"Heading hold paused: error kept growing while "
+                             f"correcting (trip {self.__hold_trips}/"
+                             f"{self.__hold_max_trips}). Back on at the next stop.")
+            else:
+                self.logwarn("Heading hold disabled: error kept growing while "
+                             "correcting (ALIGN_SIGN wrong?). Re-enable with "
+                             "motor_control/heading_hold.")
             return None
         self.__heading_pub.publish(Vector3(
             float('nan') if heading is None else heading, conf, corr))
