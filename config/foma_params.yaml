@@ -55,14 +55,14 @@ HEADING_OFFSET_DEG: 3.6     # lidar mounting yaw vs the chassis (measured 2026-1
                             # the GoHome window, enter that value here.
 
 # ---------- Go To (shared by go_home_node and gui_node) ----------
-# Points are normalised floor coordinates, as localization/location.world.
+# Points: normalised floor coordinates, as localization/location.world.
 GOTO_TARGETS:
-  door: [0.0, 0.0]          # placeholder: read the real value at the door from localization/location
-GOTO_ROOM_BOUNDS_MM: [0, 5000, 0, 5000]   # walls in floor-map mm (x_min, x_max, y_min, y_max). Placeholder: measure
-GOTO_ROBOT_SIZE_M: 1.0      # footprint side. The robot centre keeps half of it
-GOTO_WALL_MARGIN_M: 0.2     # ... plus this from every wall
-GOTO_WORLD_DET: -1          # room frame handedness seen from the body, found on the robot 2026-11-22. 0 = unknown (go_to probes twice and logs the value)
-GOTO_ROOM_CENTER: []        # room centre in camera coordinates, from the GoHome log line "GOTO_ROOM_CENTER: [x, y]". Empty = anchor on camera frames at each go_to
+  door: [0.0, 0.0]          # placeholder: read localization/location at the door
+GOTO_ROOM_BOUNDS_MM: [0, 5000, 0, 5000]   # walls, floor-map mm (x0, x1, y0, y1). Placeholder
+GOTO_ROBOT_SIZE_M: 1.0      # target kept half of this
+GOTO_WALL_MARGIN_M: 0.2     # plus this from the walls
+GOTO_WORLD_DET: -1          # room frame handedness (measured 2026-11-22). 0 = unknown
+GOTO_ROOM_CENTER: []        # camera coords, from the log line "GOTO_ROOM_CENTER". Empty = learned on the first go_to
 
 # ---------- Motor control: heading hold while translating ----------
 motor_control_node:
@@ -76,8 +76,7 @@ motor_control_node:
     deadband_deg: 0.1
     filter_alpha: 0.5       # heading smoothing (1 = none); the fit is precise enough for light smoothing
     min_conf: 0.5           # inlier fraction of wall segments to trust heading
-    runaway_deg: 6.0        # error growing this far while correcting -> hold pauses until the next stop
-    max_trips: 3            # ... and after this many pauses disables itself
+    runaway_deg: 6.0        # error growing this much while correcting -> pause until the next stop
   # Lane hold: a straight drive in any direction (axis or explicit diagonal,
   # joystick or fish) stays on the line it started on. Corrects the sideways
   # slip that the heading hold cannot see.
@@ -201,29 +200,27 @@ go_home_node:
   timeout: 90.0       # whole routine, shared across both phases
   control_hz: 100.0
   go_home_passes: 3   # align+centre retries before giving up
-  # go_to: the camera anchors the LIDAR wall distances once at the start, then the LIDAR alone drives and verifies.
-  goto_tol: 0.035       # m. Keep above min_lin_v/goto_kp (0.031) or it cannot settle
+  # go_to: the LIDAR drives, the camera only fixes where the room is.
+  goto_tol: 0.035       # m. Keep above min_lin_v/goto_kp (0.031)
   verify_goto_tol: 0.07
   goto_settle: 0.8      # s
-  goto_kp: 8.0          # duty per metre, on LIDAR + camera (as kp_lin)
-  goto_max_v: 0.95      # lower if it overshoots the target
-  goto_cam_kp: 2.0      # camera alone (a wall out of sight): its lag needs a slow approach
+  goto_kp: 8.0          # duty per metre
+  goto_max_v: 0.95      # lower if it overshoots
+  goto_cam_kp: 2.0      # camera only (a wall unseen): slower, it lags
   goto_cam_max_v: 0.5
-  goto_brake_m: 0.30    # closer than this: at most goto_approach_v. Raise both if it still overshoots
+  goto_brake_m: 0.30    # closer: at most goto_approach_v
   goto_approach_v: 0.45
-  goto_diag_m: 0.15     # per-axis friction floor (a true diagonal) only further than this
-  goto_lidar_clamp: true  # also keep the target inside the walls the LIDAR sees. false in a maze
-  probe_v: 0.35         # duty of the short move that finds the room axes
-  # Walls: back off before turning in place (the corners need half the diagonal),
-  # and back off and retry a drive that stops making progress.
-  escape_clear_m: 0.46  # LIDAR returns closer than this -> back off first
+  goto_diag_m: 0.15     # per-axis friction floor only further than this
+  goto_lidar_clamp: true  # keep the target inside the seen walls. false in a maze
+  probe_v: 0.35         # short move that finds the room axes
+  escape_clear_m: 0.46  # back off walls closer than this before turning
   escape_v: 0.45
-  stuck_s: 2.0          # no progress this long while driving -> back off and retry
+  stuck_s: 2.0          # no progress this long -> stuck, retry
   # Live top-down window: room model + LIDAR returns.
   visualize: true
   viz_fps: 20
   viz_size: 720
-  viz_range_m: 0.0   # half the view in metres, fixed. 0 = fit the room once, when first seen
+  viz_range_m: 0.0   # half the view, m. 0 = fit the room once
 
 
 # ---------- Writer node params (loaded into node-private namespace) ----------

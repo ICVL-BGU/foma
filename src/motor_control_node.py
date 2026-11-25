@@ -3,7 +3,7 @@
 from pickletools import dis
 import rospy
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import Float32, Header
+from std_msgs.msg import Bool, Float32, Header
 from geometry_msgs.msg import Twist, TwistStamped, Vector3
 from abstract_node import AbstractNode
 from etc.MotorControl import *
@@ -40,6 +40,9 @@ class MotorControlNode(AbstractNode):
         rospy.Service('motor_control/set_speed', Float, self.__set_speed)
         rospy.Service('motor_control/heading_hold', SetBool, self.__set_heading_hold)
         self.__heading_pub = rospy.Publisher('motor_control/heading', Vector3, queue_size=1)
+        # Latched: the GUI's toggle shows the real state, also after a restart.
+        self.__hold_state_pub = rospy.Publisher('motor_control/heading_hold_enabled', Bool,
+                                                queue_size=1, latch=True)
         # x = drift across the line (m, + = right of it), y = correction duty
         self.__lane_pub = rospy.Publisher('motor_control/lane', Vector3, queue_size=1)
 
@@ -100,10 +103,9 @@ class MotorControlNode(AbstractNode):
             sign=1 if int(g('/ALIGN_SIGN', 1)) >= 0 else -1))
         self.__hold_engaged = False
         self.__hold_last_t = None
-        # A trip (wheel slip, a bad wall fit) re-arms at the next stop; only
-        # repeated trips mean the sign is really wrong.
+        # A trip (error grows while correcting) pauses the hold until the next
+        # stop. Only motor_control/heading_hold turns it off.
         self.__hold_trips = 0
-        self.__hold_max_trips = int(hh('max_trips', 3))
 
         # Lane hold: driving along a room axis, keep the side-wall offset it
         # started with, so sideways wheel slip cannot add up to a diagonal.
@@ -122,13 +124,13 @@ class MotorControlNode(AbstractNode):
         # Joystick: within this many degrees of an axis counts as on it.
         self.__axis_snap_deg = float(g('~axis_snap_deg', 12.0))
 
+        self.__hold_state_pub.publish(Bool(self.__hold_enabled))
         rospy.on_shutdown(self.__on_shutdown)
 
     def run(self):
         rate = rospy.Rate(self.__rate_hz)  # 10 Hz
         while not rospy.is_shutdown():
-            # One bad tick (a race, a NaN, a serial hiccup) must not take the
-            # node down with the motors in whatever state they were left in.
+            # A failed tick stops the motors, not the node.
             try:
                 self.__tick()
             except Exception:
@@ -198,11 +200,11 @@ class MotorControlNode(AbstractNode):
         self.__hold.tripped = False
         self.__hold_trips = 0
         self.__release_hold()
+        self.__hold_state_pub.publish(Bool(self.__hold_enabled))
         return SetBoolResponse(success = True, message = f"Heading hold {'on' if self.__hold_enabled else 'off'}.")
 
     def __release_hold(self):
-        if self.__hold.tripped and self.__hold_trips < self.__hold_max_trips:
-            self.__hold.tripped = False
+        self.__hold.tripped = False
         if self.__hold_engaged:
             self.__hold.reset()
         self.__hold_engaged = False
@@ -222,8 +224,7 @@ class MotorControlNode(AbstractNode):
 
     def __wall_fit(self):
         '''One wall-line fit per scan, shared by the heading and lane holds.
-        The scan callback clears the cache from another thread at any time,
-        so the attribute is read once and the result kept in a local.'''
+        Read once into a local: the scan thread may clear it meanwhile.'''
         fit = getattr(self, '_MotorControlNode__fit', None)
         if fit is None:
             fit = geom.wall_fit(self.__scans / 1000.0)
@@ -308,14 +309,9 @@ class MotorControlNode(AbstractNode):
         corr = self.__hold.update(heading, dt, now)
         if self.__hold.tripped:
             self.__hold_trips += 1
-            if self.__hold_trips < self.__hold_max_trips:
-                self.logwarn(f"Heading hold paused: error kept growing while "
-                             f"correcting (trip {self.__hold_trips}/"
-                             f"{self.__hold_max_trips}). Back on at the next stop.")
-            else:
-                self.logwarn("Heading hold disabled: error kept growing while "
-                             "correcting (ALIGN_SIGN wrong?). Re-enable with "
-                             "motor_control/heading_hold.")
+            self.logwarn(f"Heading hold paused for this drive: error kept growing "
+                         f"while correcting (trip {self.__hold_trips} since start). "
+                         f"Back on at the next stop.")
             return None
         self.__heading_pub.publish(Vector3(
             float('nan') if heading is None else heading, conf, corr))

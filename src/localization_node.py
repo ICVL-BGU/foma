@@ -84,8 +84,8 @@ class LocalizationNode(AbstractNode):
         self.location_pub.publish(self.location)
 
     def __count(self, foma_det, lidar_det):
-        """Per-tag detection rate, logged every DETECTION_REPORT_S while frames
-        go missing.  The position is held at its last value meanwhile."""
+        """Log the per-tag detection rate every DETECTION_REPORT_S when frames
+        are missed."""
         c = self.__counts
         c[0] += 1
         c[1] += foma_det is not None

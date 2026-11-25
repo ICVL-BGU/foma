@@ -63,6 +63,7 @@ class MainWindow(QMainWindow):
     # frame at the display rate; older frames are discarded by construction.
     services_updated = pyqtSignal(dict)
     go_home_state_signal = pyqtSignal(bool)
+    heading_hold_signal = pyqtSignal(bool)
     rotate_state_signal = pyqtSignal(bool)
     rotate_result_signal = pyqtSignal(str)
 
@@ -91,6 +92,7 @@ class MainWindow(QMainWindow):
     def __init_signals(self):
         self.services_updated.connect(self.__update_services)
         self.go_home_state_signal.connect(self.__update_go_home_state)
+        self.heading_hold_signal.connect(self.__update_heading_hold)
         self.rotate_state_signal.connect(self.__update_rotate_state)
         self.rotate_result_signal.connect(self.__update_rotate_result)
 
@@ -123,16 +125,14 @@ class MainWindow(QMainWindow):
         self.__room_map_frame_shape    = tuple(rospy.get_param('/ROOM_MAP_FRAME_SHAPE'))
         self.__room_camera_native_shape = tuple(rospy.get_param('/ROOM_CAMERA_NATIVE_SHAPE'))
 
-        # Go To: same limits and targets as go_home_node, to preview the
-        # clamped target before the robot moves.
+        # Go To: same limits as go_home_node, to preview the clamped target.
         floor = self.__room_floor_map_shape
         self.__goto_bounds = room_mapping.target_bounds(
             rospy.get_param('/GOTO_ROOM_BOUNDS_MM', [0, floor[1], 0, floor[0]]), floor,
             float(rospy.get_param('/GOTO_ROBOT_SIZE_M', 1.0)),
             float(rospy.get_param('/GOTO_WALL_MARGIN_M', 0.2)))
         self.__goto_targets = dict(rospy.get_param('/GOTO_TARGETS', {}))
-        # Clicks map through the LIDAR-tag mapper: the green dot is that tag,
-        # so the robot ends where its dot is on the clicked pixel.
+        # LIDAR-tag mapper: the robot's dot ends on the clicked pixel.
         self.__goto_mapper = None
         mapper_path = rospy.get_param('~mapper_path', None)
         if mapper_path:
@@ -141,7 +141,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 rospy.logwarn(f"Go To: could not load {mapper_path}: {e}")
         self.__goto_area_px = self.__goto_area_polygon()
-        self.__goto_target_px = None    # target marker on the room frame
+        self.__goto_target_px = None    # target marker
 
         # Images and locations
         self.__foma_img_location = None
@@ -172,6 +172,12 @@ class MainWindow(QMainWindow):
         self.__go_home_enable = None
         self.__go_home_active = False
         self.__go_to = None
+        # A Go To in a trial takes the drive from the fish until it ends.
+        self.__goto_in_trial = False
+        self.__control_mode = None
+        self.__heading_hold = None
+        self.__heading_hold_on = bool(rospy.get_param(
+            '/motor_control_node/heading_hold/enabled', True))
         self.__rotate_quarter_turns = None
         self.__rotate_active = False
         self.__motor_set_speed = None
@@ -236,6 +242,7 @@ class MainWindow(QMainWindow):
         self.__BL_layout.addWidget(self.__rotate_container, 0, 5, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__rotate_button, 1, 5, alignment=Qt.AlignCenter)
         self.__BL_layout.addWidget(self.__go_door_button, 0, 6, alignment=Qt.AlignCenter)
+        self.__BL_layout.addWidget(self.__heading_hold_button, 1, 6, alignment=Qt.AlignCenter)
 
         self.__BL_widget = QFrame()
         self.__BL_widget.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
@@ -342,7 +349,7 @@ class MainWindow(QMainWindow):
         self.__go_home_button.clicked.connect(self.__start_go_home)
         self.__go_home_button.setDisabled(True)
 
-        # Go to Door button init. A click on the room image picks any target.
+        # Go to Door button. A click on the room image picks any target.
         self.__go_door_button = QPushButton()
         self.__go_door_button.setText("Go to Door")
         self.__go_door_button.setMaximumHeight(50)
@@ -350,6 +357,15 @@ class MainWindow(QMainWindow):
             "Drive to the saved door point. Click the room image for any point.")
         self.__go_door_button.clicked.connect(self.__on_go_door_click)
         self.__go_door_button.setDisabled(True)
+
+        # Heading hold toggle (keep square while driving). On by default.
+        self.__heading_hold_button = QPushButton()
+        self.__heading_hold_button.setMaximumHeight(50)
+        self.__heading_hold_button.setToolTip(
+            "Keep the robot square to the walls while it drives")
+        self.__heading_hold_button.clicked.connect(self.__on_heading_hold_click)
+        self.__heading_hold_button.setDisabled(True)
+        self.__show_heading_hold()
 
         self.__feed_loading_button = QPushButton()
         self.__feed_loading_button.setText("Load Feeder")
@@ -505,7 +521,7 @@ class MainWindow(QMainWindow):
         self.__close_button.setMaximumHeight(50)
         self.__close_button.clicked.connect(self.__on_close_click)
 
-        # Notes button init: add or edit the note of the last finished trial
+        # Notes for the running trial, or the last one between trials
         self.__notes_button = QPushButton()
         self.__notes_button.setText("Trial Notes")
         self.__notes_button.setDisabled(True)
@@ -520,6 +536,8 @@ class MainWindow(QMainWindow):
         rospy.Subscriber('lidar/blocked', Int16MultiArray, self.__update_blocked_directions, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('motor_control/speed', TwistStamped, self.__update_foma_speed, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('go_home/enabled', Bool, self.__on_go_home_state, queue_size=1, tcp_nodelay=True)
+        rospy.Subscriber('motor_control/heading_hold_enabled', Bool,
+                         lambda m: self.heading_hold_signal.emit(m.data), queue_size=1)
         rospy.Subscriber('rotate/active', Bool, self.__on_rotate_state, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('rotate/result', StringMsg, self.__on_rotate_result, queue_size=1, tcp_nodelay=True)
         rospy.Subscriber('fish_feeder/feed_inc', TriggerResponse, self.__update_feeder_status, queue_size=1, tcp_nodelay=True)
@@ -527,6 +545,9 @@ class MainWindow(QMainWindow):
         self.__motor_control_dir = rospy.Publisher('motor_control/angle', Float32, queue_size=1, tcp_nodelay=True)
         self.__motor_control_vector = rospy.Publisher('motor_control/vector', Vector3, queue_size=1, tcp_nodelay=True)
         self.__control_mode_pub = rospy.Publisher("control/mode", StringMsg, queue_size=1)
+        # Who drives (trial, joystick, ...): the controller announces itself here.
+        rospy.Subscriber("control/mode", StringMsg,
+                         lambda m: setattr(self, '_MainWindow__control_mode', m.data))
         self.__event_pub = rospy.Publisher('trial_events', TrialEvent, queue_size=100)
         
         # Writer services - one for each writer node
@@ -737,6 +758,7 @@ class MainWindow(QMainWindow):
         self.__go_door_button.setText("Stop" if active else "Go to Door")
         if not active:
             self.__goto_target_px = None
+            self.__return_drive_to_fish()
 
     # -- Rotation. ROS callbacks hop to the GUI thread via pyqtSignal.
 
@@ -837,6 +859,27 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.logwarn(f"Failed to start GoHome: {e}")
 
+    def __update_heading_hold(self, on: bool):
+        """The state motor_control reports (also after it restarts)."""
+        self.__heading_hold_on = on
+        self.__show_heading_hold()
+
+    def __show_heading_hold(self):
+        self.__heading_hold_button.setText(
+            "Straighten: ON" if self.__heading_hold_on else "Straighten: OFF")
+
+    def __on_heading_hold_click(self):
+        if self.__heading_hold is None:
+            self.logwarn("Heading hold service not available")
+            return
+        want = not self.__heading_hold_on
+        try:
+            self.__heading_hold(want)
+        except Exception as e:
+            self.logwarn(f"Failed to switch the heading hold: {e}")
+            return
+        self.__log_event("heading_hold", "on" if want else "off")
+
     # -- Go To: a saved point or a click on the room image, confirmed first.
 
     def __world_to_frame_px(self, x, y):
@@ -850,8 +893,8 @@ class MainWindow(QMainWindow):
                 int(round(v * frame[0] / native[0])))
 
     def __goto_area_polygon(self):
-        """Outline of where the robot centre may go, in room frame pixels.
-        Straight on the floor, curved in the fisheye image, hence sampled."""
+        """Allowed area outline in room frame pixels (sampled: the fisheye
+        bends straight lines)."""
         if self.__goto_mapper is None:
             return None
         x0, x1, y0, y1 = self.__goto_bounds
@@ -875,8 +918,7 @@ class MainWindow(QMainWindow):
         native = self.__room_camera_native_shape
         px, py = u * native[1], v * native[0]
         x_mm, y_mm = room_mapping.map_point(self.__goto_mapper, px, py)
-        # Past the lens horizon the fisheye model folds back: a pixel that
-        # does not map back to itself is not on the floor.
+        # Off the floor (past the lens horizon) the mapping does not invert.
         bx, by = room_mapping.unmap_point(self.__goto_mapper, x_mm, y_mm)
         if math.hypot(bx - px, by - py) > 2.0:
             self.logwarn("Go To: that point is not on the floor")
@@ -908,6 +950,10 @@ class MainWindow(QMainWindow):
         text = f"Drive to the {name} at {where}?" if name else f"Drive to {where}?"
         if moved:
             text += "\n\nMoved inside the allowed area, away from the walls."
+        in_trial = self.__ongoing_trial
+        if in_trial:
+            text += ("\n\nA trial is running: the fish stops driving the robot "
+                     "until Go To ends, then gets it back.")
         answer = QMessageBox.question(self, "Go To", text,
                                       QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if answer != QMessageBox.Yes:
@@ -920,18 +966,41 @@ class MainWindow(QMainWindow):
             if getattr(self, '_MainWindow__velocity_timer', None) is not None:
                 self.__velocity_timer.stop()
             self.__manual_control_window.close()
+        if in_trial and self.__motor_set_mode is None:
+            # Otherwise the fish would fight Go To for the wheels.
+            self.logwarn("Go To refused: cannot take the drive from the fish "
+                         "(motor_control/set_mode unavailable)")
+            self.__goto_target_px = None
+            return
         try:
+            if in_trial:
+                # motor_control ignores the fish outside "trial" mode.
+                self.__motor_set_mode("go_to")
+                self.__goto_in_trial = True
             if self.__motor_set_speed is not None:
                 self.__motor_set_speed(1.0)
             resp = self.__go_to(x, y, name)
             if not resp.success:
                 self.logwarn(f"Go To refused: {resp.message}")
                 self.__goto_target_px = None
+                self.__return_drive_to_fish()
                 return
-            self.__log_event("go_to", f"{name or 'point'} {where}")
+            self.__log_event("go_to", f"{name or 'point'} {where}"
+                             + (" (in trial, fish paused)" if in_trial else ""))
         except Exception as e:
             self.logwarn(f"Failed to start Go To: {e}")
             self.__goto_target_px = None
+            self.__return_drive_to_fish()
+
+    def __return_drive_to_fish(self):
+        """After a Go To in a trial, give the fish the drive back, unless the
+        trial was paused or reset, or the controller took over meanwhile."""
+        if not self.__goto_in_trial:
+            return
+        self.__goto_in_trial = False
+        if self.__ongoing_trial and self.__control_mode != "joystick":
+            self.__motor_set_mode("trial")
+            self.__log_event("go_to_end", "fish drives again")
 
     def __init_feeding_load_window(self):
         rospy.wait_for_service('fish_feeder/feed')
@@ -1017,6 +1086,7 @@ class MainWindow(QMainWindow):
                 ('__bypass_lidar',            'motor_control/bypass_lidar', SetBool),
                 ('__go_home_enable', 'go_home/enable', SetBool),
                 ('__go_to', 'go_home/go_to', GoTo),
+                ('__heading_hold', 'motor_control/heading_hold', SetBool),
                 ('__rotate_quarter_turns', 'rotate/quarter_turns', Float),
             ]
             while not rospy.is_shutdown():
@@ -1375,7 +1445,7 @@ class MainWindow(QMainWindow):
             if self.__foma_img_location is not None:
                 cx = int(self.__foma_img_location.x)
                 cy = int(self.__foma_img_location.y)
-                # Gray = held position: the robot is not detected right now.
+                # Gray: not detected now, last position held.
                 fresh = time.monotonic() - self.__foma_seen_t < 1.0
                 cv2.circle(frame, (cx, cy), 5, (0, 255, 0) if fresh else (150, 150, 150), -1)
             if self.__goto_target_px is not None and self.__goto_area_px is not None:
@@ -1473,6 +1543,15 @@ class MainWindow(QMainWindow):
             # If the node died mid-run the latched topic never updates, so the
             # toggle would read "Stop" forever.
             self.__update_go_home_state(False)
+
+        # Store the heading hold service proxy when available.
+        hold_proxy = status.get('__heading_hold')
+        if self.__heading_hold is None and hold_proxy is not None:
+            self.__heading_hold = hold_proxy
+            self.__heading_hold_button.setDisabled(False)
+        elif self.__heading_hold is not None and hold_proxy is None:
+            self.__heading_hold = None
+            self.__heading_hold_button.setDisabled(True)
 
         # Store the Go To service proxy when available.
         go_to_proxy = status.get('__go_to')
@@ -1624,6 +1703,10 @@ class MainWindow(QMainWindow):
             self.__current_trial = trial_count
             self.__subject_id_value_label.setText(subject_id)
             self.__trial_num_value_label.setText(str(trial_count) if trial_count > 0 else "N/A")
+            last = os.path.join(session_path, f"trial_{trial_count}")
+            self.__trial_folder = last if os.path.isdir(last) else None
+            self.__last_trial_duration = ""
+            self.__notes_button.setDisabled(self.__trial_folder is None)
 
             # Count total feedings across all existing trial event logs
             total_fed = 0
@@ -1673,7 +1756,7 @@ class MainWindow(QMainWindow):
         self.__pause_button.setDisabled(False)
         self.__reset_button.setDisabled(False)
         self.__close_button.setDisabled(True)
-        self.__notes_button.setDisabled(True)
+        self.__notes_button.setDisabled(False)
 
         if self.__go_home_enable is not None:
             try:
@@ -1710,7 +1793,7 @@ class MainWindow(QMainWindow):
         self.__pause_button.setDisabled(False)
         self.__reset_button.setDisabled(False)
         self.__close_button.setDisabled(True)
-        self.__notes_button.setDisabled(True)
+        self.__notes_button.setDisabled(False)
 
         self.__ongoing_trial = True
         self.__control_mode_pub.publish(StringMsg("trial"))
@@ -1730,6 +1813,13 @@ class MainWindow(QMainWindow):
         self.__start_button.clicked.connect(self.__on_continue_click)
 
         self.__ongoing_trial = False
+
+        # Stop a running Go To / Go Home (speed 0 alone only stalls it).
+        if self.__go_home_active and self.__go_home_enable is not None:
+            try:
+                self.__go_home_enable(False)
+            except Exception as e:
+                self.logwarn(f"Failed to stop Go To: {e}")
 
         self.__motor_set_mode("idle")
         self.__control_mode_pub.publish(StringMsg("idle"))
@@ -1793,32 +1883,34 @@ class MainWindow(QMainWindow):
                 self.logwarn(f"Failed disabling go_home: {e}")
 
         # Optional free-text note, saved into this trial's folder
-        self.__notes_button.setDisabled(False)
         self.__open_trial_notes()
 
     def __open_trial_notes(self):
-        """Show a dialog for an optional note on the last finished trial.
-        Save writes notes.txt into the trial folder and updates the row in
-        session_notes.csv. Skip (or Esc / closing the window) writes nothing."""
-        if self.__trial_folder is None or not os.path.isdir(self.__trial_folder):
+        """Edit the note of the running trial, or of the last one.  Save writes
+        notes.txt and the trial's row in session_notes.csv, empty removes
+        both, Skip changes nothing."""
+        folder = self.__trial_folder
+        if folder is None or not os.path.isdir(folder):
             return
-        notes_path = os.path.join(self.__trial_folder, "notes.txt")
+        notes_path = os.path.join(folder, "notes.txt")
+        csv_path = os.path.join(os.path.dirname(folder), "session_notes.csv")
 
-        # Pre-fill with the existing note so it can be edited later
         existing = ""
         if os.path.isfile(notes_path):
             try:
-                with open(notes_path, 'r') as f:
+                with open(notes_path, 'r', encoding='utf-8') as f:
                     existing = f.read().split("---\n", 1)[-1].rstrip("\n")
             except Exception as e:
                 self.logwarn(f"Could not read {notes_path}: {e}")
 
-        trial_name = os.path.basename(self.__trial_folder)
+        trial_name = os.path.basename(folder)
+        running = self.__ongoing_trial
         dialog = QDialog(self)
         dialog.setWindowTitle(f"{trial_name} notes")
         dialog.resize(500, 300)
         layout = QVBoxLayout(dialog)
-        layout.addWidget(QLabel(f"Notes for {trial_name} (optional):"))
+        layout.addWidget(QLabel(f"Notes for {trial_name}"
+                                f"{' (running now)' if running else ''} (optional):"))
         text_edit = QPlainTextEdit()
         text_edit.setPlainText(existing)
         layout.addWidget(text_edit)
@@ -1835,38 +1927,46 @@ class MainWindow(QMainWindow):
         if dialog.exec_() != QDialog.Accepted:
             return
         note = text_edit.toPlainText().strip()
-        if not note:
+        if not note and not existing:
             return
 
-        written = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        subject_id = self.__subject_id_value_label.text()
-        try:
-            with open(notes_path, 'w') as f:
-                f.write(f"Trial: {trial_name}\n"
-                        f"Subject ID: {subject_id}\n"
-                        f"Duration: {self.__last_trial_duration}\n"
-                        f"Written: {written}\n"
-                        f"---\n{note}\n")
-            rospy.loginfo(f"Saved trial notes: {notes_path}")
-        except Exception as e:
-            QMessageBox.warning(self, "Notes", f"Could not save notes:\n{e}")
-            return
-
-        # Session-level table, one row per trial (an edit replaces the row)
-        csv_path = os.path.join(os.path.dirname(self.__trial_folder), "session_notes.csv")
+        # Read the table first: if that fails, write nothing (never lose rows).
         header = ["trial", "subject_id", "duration", "written", "note"]
         rows = []
         if os.path.isfile(csv_path):
             try:
-                with open(csv_path, 'r', newline='') as f:
+                with open(csv_path, 'r', newline='', encoding='utf-8') as f:
                     rows = [r for r in csv.DictReader(f) if r.get("trial") != trial_name]
             except Exception as e:
-                self.logwarn(f"Could not read {csv_path}: {e}")
-        rows.append({"trial": trial_name, "subject_id": subject_id,
-                     "duration": self.__last_trial_duration,
-                     "written": written, "note": note})
+                QMessageBox.warning(self, "Notes", f"Could not read {csv_path}, "
+                                    f"nothing saved:\n{e}")
+                return
+
+        written = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        subject_id = self.__subject_id_value_label.text()
+        duration = (self.__trial_timer_value_label.text() if running
+                    else self.__last_trial_duration)
         try:
-            with open(csv_path, 'w', newline='') as f:
+            if note:
+                with open(notes_path, 'w', encoding='utf-8') as f:
+                    f.write(f"Trial: {trial_name}\n"
+                            f"Subject ID: {subject_id}\n"
+                            f"Duration: {duration}{' (running)' if running else ''}\n"
+                            f"Written: {written}\n"
+                            f"---\n{note}\n")
+                rows.append({"trial": trial_name, "subject_id": subject_id,
+                             "duration": duration, "written": written,
+                             "note": note})
+                rospy.loginfo(f"Saved trial notes: {notes_path}")
+            elif os.path.isfile(notes_path):
+                os.remove(notes_path)
+                rospy.loginfo(f"Removed trial notes: {notes_path}")
+        except Exception as e:
+            QMessageBox.warning(self, "Notes", f"Could not save notes:\n{e}")
+            return
+
+        try:
+            with open(csv_path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=header)
                 writer.writeheader()
                 writer.writerows(rows)
